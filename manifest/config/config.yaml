@@ -1,0 +1,49 @@
+# GoFrame 应用配置。
+# 生产环境通过环境变量覆盖（GF 支持配置项与环境变量映射）。
+# 密钥严禁硬编码于此 —— 仅放非敏感默认值，敏感项走环境变量/密钥管理器。
+
+server:
+  address: ":8000"
+  serverRoot: "resource/public"
+  errorStack: false
+  accessLogEnabled: true
+
+logger:
+  level: "info"
+  stdout: true
+  path: "resource/log/agent"
+
+# 关系型数据库（遵循全局 rules/database/**：PostgreSQL + UUID + 软删除 + ORM 优先）。
+# 本地和生产都通过环境变量覆盖，例如：
+#   GF_DATABASE_DEFAULT_LINK="postgres://user:password@127.0.0.1:5432/ashjazz?sslmode=disable"
+database:
+  default:
+    type: "pgsql"
+    link: ""
+    debug: true
+    createdAt: "created_at"
+    updatedAt: "updated_at"
+    deletedAt: "deleted_at"
+
+# Redis：会话状态、限流计数器、语义缓存（准备清单 §12）。
+redis:
+  default:
+    address: "127.0.0.1:6379"
+    db: 0
+
+# AI 框架内核配置（pkg/ai 消费）。按 provider 分组，支持多 provider 故障切换（§10）。
+ai:
+  llm:
+    defaultProvider: "openai"
+    # 单次 LLM 调用默认超时（§ai/integration.md：默认 60s）。
+    timeout: "60s"
+    retry:
+      max: 2
+      backoffMs: 1000
+  ratelimit:
+    # 全局 + 用户 + provider 三级限流默认值（§11）。
+    globalQps: 100
+    userPerMin: 20
+  eval:
+    # 评估门禁阈值（§6）：指标恶化超过阈值即拦截 PR 合并。
+    faithfulnessDropPct: 2

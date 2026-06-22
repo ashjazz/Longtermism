@@ -1,0 +1,19 @@
+# gf CLI 代码生成配置。见 https://goframe.org/docs/开发工具
+# `gf gen ctrl`     按 api/ 生成 controller
+# `gf gen dao`      按数据库表生成 dao/entity/do
+# `gf gen service`  按 logic/ 生成 service 接口
+
+gfcli:
+  gen:
+    dao:
+      link: "pgsql:default"
+      jsonCase: "CamelLower"
+      gJsonSupport: true
+      clear: false
+    ctrl:
+      clear: false
+  build:
+    arch: "amd64"
+    system: "linux,darwin"
+    pack: ""
+    version: ""

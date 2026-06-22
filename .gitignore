@@ -1,0 +1,23 @@
+# 二进制构建产物
+/bin/
+/*.exe
+/ashjazz-aiagent
+
+# 本地运行产物
+resource/log/
+resource/cache/
+
+# IDE
+.idea/
+.vscode/
+**/.DS_Store
+
+# 环境与密钥（绝不入库）
+.env
+.env.*
+!.env.example
+*.local.yaml
+
+# 测试覆盖率
+coverage.out
+coverage.html
