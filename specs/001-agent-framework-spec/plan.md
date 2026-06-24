@@ -96,8 +96,8 @@ docs/journal/        真实开发问题、修复和学习记录
 
 后续 `/speckit-tasks` 应按以下垂直切片拆分任务：
 
-1. P0-A RED：为 provider 正常响应、tool call、错误映射、流式、ctx cancel 编写失败测试。
-2. P0-A GREEN：实现 OpenAI-compatible provider 最小版本。
+1. P0-A RED：为 provider 正常响应、非流式 tool call、流式 tool call、错误映射、流式文本、ctx cancel 编写失败测试。
+2. P0-A GREEN：实现 OpenAI-compatible provider 最小版本；普通 streaming 与 streaming tool call 可分两步完成，后者必须在公共 provider 契约接入前完成。
 3. P0-B：实现文件模板 registry、渲染、hash、路径安全测试。
 4. P0-C：实现日志型 Tracer 和敏感内容边界测试。
 5. P0-D：实现 JSON dataset、确定性 metrics、runner、report。

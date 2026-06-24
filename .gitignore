@@ -2,15 +2,22 @@
 /bin/
 /*.exe
 /ashjazz-aiagent
+*.test
+*.out
 
 # 本地运行产物
 resource/log/
 resource/cache/
+tmp/
+temp/
+*.tmp
+*.swp
 
 # IDE
 .idea/
 .vscode/
 **/.DS_Store
+Thumbs.db
 
 # 环境与密钥（绝不入库）
 .env
@@ -21,3 +28,4 @@ resource/cache/
 # 测试覆盖率
 coverage.out
 coverage.html
+coverage/

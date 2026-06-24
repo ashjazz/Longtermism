@@ -14,15 +14,83 @@
 
 - 已阅读 `specs/001-agent-framework-spec/spec.md`。
 - 已阅读 `specs/001-agent-framework-spec/plan.md`。
+- 已阅读 `specs/001-agent-framework-spec/tasks.md`，并确认当前第一个未完成任务。
 - 已阅读 `docs/ROADMAP.md` 的 P0 冷启动执行计划。
+- 已阅读 `AGENTS.md` 的项目完成定义、学习型代码注释约定和常用命令。
 - 本地 Go 环境可运行项目测试命令。
+
+## 新会话恢复步骤
+
+当上下文被新消息淹没，或由新的 AI 会话接手时，按以下顺序恢复项目状态：
+
+1. 阅读 `AGENTS.md`，确认项目定位、技术栈、完成定义和当前 spec-kit 入口。
+2. 阅读 `docs/ROADMAP.md` 的“当前 spec-kit 入口”和 P0 阶段说明，理解为什么先做最小 AI 工程闭环。
+3. 阅读 `specs/001-agent-framework-spec/spec.md` 和 `plan.md`，确认本版本范围与技术计划。
+4. 阅读 `specs/001-agent-framework-spec/tasks.md`，找到第一个未勾选的任务，作为下一步执行入口。
+5. 阅读本文件，确认该任务所属 P0 子阶段需要运行哪些验证命令。
+6. 如任务涉及架构边界，先查 `docs/adr/README.md`；如任务涉及学习记录，先查 `docs/journal/README.md`。
+7. 执行任务后，更新 `tasks.md` 状态，并按任务要求同步 ADR、journal、ROADMAP 或 quickstart。
+
+恢复完成后，执行者应能用一句话说明：
+
+```text
+当前要做的任务是 Txxx，它属于 P0-x，完成后必须通过哪些本地验证，并同步哪些文档。
+```
+
+## 任务执行顺序
+
+当前版本采用 spec-kit 的任务顺序推进。除非 `tasks.md` 明确标记 `[P]` 可并行，默认按任务编号顺序执行。
+
+```text
+Phase 1 Setup：T001-T008
+  建立 ADR、journal、忽略规则、Makefile、prompt/eval 文档和 spec-kit 导航。
+
+Phase 2 Foundational：T009-T016
+  建立共享测试工具、错误分类 ADR、离线验证 ADR 和本 quickstart 接力手册。
+
+Phase 3 US1：T017-T022
+  强化学习路径治理，让新会话可以从静态文档判断下一步。
+
+Phase 4 US2 / P0 最小闭环：T023-T055
+  P0-A llm provider -> P0-B prompt -> P0-C obs -> P0-D eval -> P0-E local gate。
+
+Phase 5+：
+  在 P0 最小闭环稳定后，再推进 RAG、Agent、resilience、ratelimit、cache 和后端可替换边界。
+```
+
+P0 子阶段的执行依赖如下：
+
+```text
+P0-A 模型供应商 Adapter
+  -> P0-B Prompt as Code
+  -> P0-C 本地 Trace
+  -> P0-D Eval Runner
+  -> P0-E 本地门禁与闭环
+```
+
+这条顺序不是为了追求串行，而是为了保证每一步都有可验证的前置能力：模型调用需要 prompt，prompt 与模型调用需要 trace，trace 与输出需要 eval，最后由本地门禁统一证明。
+
+## P0 验证清单
+
+每完成一个 P0 子阶段，先运行该阶段的局部验证，再运行仍然可用的全局验证。P0 默认验证必须遵守 ADR-0003：不得强制依赖真实 API key、真实向量库、真实可观测平台或实时外部服务。
+
+| 阶段 | 任务范围 | 必跑验证 | 完成信号 |
+|------|----------|----------|----------|
+| Foundation | T009-T016 | `go test ./pkg/ai/...`、相关包 `go test -race` | fake provider、trace recorder、static dataset、错误分类与离线验证策略可被后续任务复用。 |
+| P0-A | T023-T034B + T034 | `go test ./pkg/ai/llm/...` | OpenAI-compatible adapter 的正常响应、非流式 tool call、流式 tool call、错误映射、stream、cancel 均通过 mock/httptest 验证。 |
+| P0-B | T035-T039 | `go test ./pkg/ai/prompt/...` | prompt 模板可加载、缺失变量失败、hash 稳定、路径穿越被拒绝。 |
+| P0-C | T040-T043 | `go test ./pkg/ai/obs/...` | trace 字段完整，普通输出不泄露原始 query、完整 prompt 或 tool 参数。 |
+| P0-D | T044-T050 | `go test ./pkg/ai/eval/...` | JSON dataset、确定性 metrics、runner/report 和错误样例处理可回归。 |
+| P0-E | T051-T055 | `make test`、`make test-race`、`make vet`、`make eval-smoke` | 本地形成 `prompt -> llm -> obs -> eval` 闭环，默认不需要真实 API key。 |
+
+如果某个阶段的包尚未存在，说明对应任务尚未执行；不要为了让命令“看起来完整”提前创建空实现。
 
 ## 验证 1：规格和计划完整性
 
 运行：
 
 ```bash
-find specs/001-agent-framework-spec -maxdepth 2 -type f | sort
+find specs/001-agent-framework-spec -maxdepth 2 -type f ! -name '.DS_Store' | sort
 ```
 
 期望看到：
@@ -37,6 +105,7 @@ specs/001-agent-framework-spec/plan.md
 specs/001-agent-framework-spec/quickstart.md
 specs/001-agent-framework-spec/research.md
 specs/001-agent-framework-spec/spec.md
+specs/001-agent-framework-spec/tasks.md
 ```
 
 ## 验证 2：当前代码测试基线
@@ -67,6 +136,7 @@ go test ./pkg/ai/llm/...
 - 429、5xx、timeout 错误分类。
 - 400、401 错误分类。
 - 流式输出。
+- 流式工具调用分片聚合与结构化输出。
 - 上下文取消。
 - 缺少必需字段时快速失败。
 

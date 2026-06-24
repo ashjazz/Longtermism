@@ -7,6 +7,20 @@
 
 ---
 
+## 当前 spec-kit 入口
+
+当前版本规划已标准化到 spec-kit 文档中。新会话或新执行者应优先从以下静态文件恢复上下文：
+
+- 规格文档：`specs/001-agent-framework-spec/spec.md`
+- 技术计划：`specs/001-agent-framework-spec/plan.md`
+- 任务拆解：`specs/001-agent-framework-spec/tasks.md`
+- 调研决策：`specs/001-agent-framework-spec/research.md`
+- 数据模型：`specs/001-agent-framework-spec/data-model.md`
+- 验证指南：`specs/001-agent-framework-spec/quickstart.md`
+- 契约目录：`specs/001-agent-framework-spec/contracts/`
+
+---
+
 ## 0. 推进的底层逻辑（先理解方法论，再看路线）
 
 ### 0.1 三条铁律
@@ -87,6 +101,7 @@
 > **理念**：先把"调用模型 + 知道它表现如何 + 能追踪它"三件事立起来。后面所有能力都站在这三者上。
 
 **P0.1 `pkg/ai/llm`（§2）—— 模型抽象层**
+- 任务入口：`specs/001-agent-framework-spec/tasks.md` Phase 4 / P0-A（T023-T034B，随后 T034 接入公共契约测试）。
 - 实现 `Provider` 接口的首个适配器（建议 OpenAI 兼容协议起步，可同时对接 DeepSeek/本地 vLLM；但核心接口不能被 Chat Completions 风格绑死）。
 - 必备：`Chat`、`ChatStream`、`ToolCall`/`ToolResult` 抽象、`Usage`（input/output/reasoning/cache tokens）、`TokenCounter`、`ctx` 超时（默认 60s）、对 429/5xx/timeout 返回 `ErrUpstream`。
 - 定义 `ProviderCapabilities`：是否支持 tool calling、strict structured output、streaming tool call、reasoning effort、prompt caching、vision。P1 failover 和 P3 agent 都必须基于 capability 选择候选模型。
@@ -94,17 +109,20 @@
 - ⚠️ 面试点：能讲清楚为什么 4xx 不重试、为什么流式要单独接口（§2.3）。
 
 **P0.2 `pkg/ai/prompt`（§9.1）—— Prompt as Code**
+- 任务入口：`specs/001-agent-framework-spec/tasks.md` Phase 4 / P0-B（T035-T039）。
 - 文件系统模板 + `Render` 产出带 `Hash`/`Version` 的 `Rendered`。
 - 模板放 `resource/prompt/<feature>/vN.tmpl`；首版使用 Go 标准库 `text/template` + `missingkey=error`，需要更强过滤/继承能力时再 ADR 评估 `pongo2` 等 Jinja-like 引擎。
 - ⚠️ 关键：每次渲染的 `Hash` 必须进 trace（§8.3），这是后续 A/B 分析的锚点。
 
 **P0.3 `pkg/ai/obs`（§8）—— Trace 骨架**
+- 任务入口：`specs/001-agent-framework-spec/tasks.md` Phase 4 / P0-C（T040-T043）。
 - 定义 `Trace` 结构（字段集严格对齐 §8.3：trace_id、tenant_id、model、prompt_template_version、token、ttft、cost…）。
 - 隐私边界第一天就内置：普通 trace/log 只记录 query hash、脱敏摘要、长度、语言、分类标签；原始 query/prompt/tool 参数只能进入加密审计存储并设置 retention。
 - 先实现一个日志型 `Tracer`（写 glog），后续接 OTEL/LangFuse 不改业务代码。
 - ⚠️ 区分 AI 特有指标 vs 传统后端（§8.1）：TTFT、幻觉率、token/请求、单请求成本。
 
 **P0.4 `pkg/ai/eval`（§6）—— 评估骨架（本阶段灵魂）**
+- 任务入口：`specs/001-agent-framework-spec/tasks.md` Phase 4 / P0-D（T044-T050）。
 - `Dataset`/`Sample`/`Metric`/`Runner`/`Report` 接口落地。
 - 先建一个**最小 golden dataset（20-30 条）**，覆盖简单/中等/边界三类。
 - 实现一个确定性 `Metric`（如格式/引用校验）作为 CI 可跑的基线。
@@ -112,6 +130,7 @@
 - ⚠️ 面试最大考点：能就 §6.5（golden dataset 构建五步法）讲 10 分钟。
 
 **P0.5 最小 CI / 本地门禁**
+- 任务入口：`specs/001-agent-framework-spec/tasks.md` Phase 4 / P0-E（T051-T055）。
 - `Makefile` 或等价脚本：`test`、`test-race`、`lint/vet`、`eval-smoke`。
 - GitHub Actions（或当前仓库选定 CI）先跑 `go test ./...` + 最小 golden dataset；P5 再升级为 baseline 对比和 PR comment。
 
@@ -326,6 +345,7 @@ pkg/ai/llm/
   - 返回只读 channel。
   - 首 token/usage 统计由消费端和 `obs` 记录，provider 只负责完整转发 chunk。
   - 流中错误放入 `ChatChunk.Err`，随后关闭 channel。
+  - 流式 tool call 需要单独聚合：按 `index` 隔离多路 `delta.tool_calls`，拼接 `function.arguments` 分片，并在 JSON 完整后产出结构化 `ToolCall`。
 - 错误映射：
   - timeout/context deadline、429、5xx -> 包装/归一为 `llm.ErrUpstream`。
   - 400/401/403/404 -> 返回明确错误，不标记为 `ErrUpstream`。
@@ -340,6 +360,8 @@ pkg/ai/llm/
 - RED 5：`ChatStream` 能按顺序产出 delta，最终 chunk 携带 finish/usage。
 - RED 6：ctx canceled 后请求尽快返回，不能泄漏 goroutine。
 - RED 7：缺少 model/messages 时 fail fast，错误信息可读。
+- RED 8：流式 `delta.tool_calls` 能按 index 聚合，并在 `finish_reason=tool_calls` 后产出结构化 tool call。
+- RED 9：流式 tool call 的 arguments JSON 未完整前不得提前解析失败，多 tool call 并行分片不得串线。
 
 **不在 P0-A 做的事**
 
@@ -351,7 +373,7 @@ pkg/ai/llm/
 **验收标准**
 
 - `go test ./pkg/ai/llm/...` 通过。
-- mock provider 覆盖成功、错误、流式、tool call、usage。
+- mock provider 覆盖成功、错误、流式文本、非流式 tool call、流式 tool call、usage。
 - 没有硬编码 API key、真实网络依赖或生产 `console/log` 调试输出。
 - 能用一个小 demo 调起 `llm.Provider.Chat`，但 demo 不能成为测试的必需外部依赖。
 
@@ -360,6 +382,7 @@ pkg/ai/llm/
 - 上游超时/限流/5xx：P0-A 只返回 `ErrUpstream`，P1 负责重试、熔断、failover。
 - 认证/参数错误：快速失败并暴露可诊断错误，避免无意义重试。
 - 流式中途断开：通过 `ChatChunk.Err` 暴露给上层，后续由 API 层决定是否给用户友好提示。
+- 流式 tool call 分片乱序或 JSON 不完整：adapter 不提前执行工具，必须等待聚合完成；协议无法恢复时通过 `ChatChunk.Err` 暴露。
 - usage 缺失：允许返回零值，但 trace 中必须能看出 provider 未返回 usage，避免成本统计误判。
 
 ### 4.3 P0-B：`pkg/ai/prompt` 文件模板 Registry

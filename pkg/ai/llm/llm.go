@@ -34,11 +34,15 @@ type Message struct {
 
 // ChatRequest 是一次聊天补全请求。
 type ChatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Tools       []Tool    `json:"tools,omitempty"`
-	Temperature float64   `json:"temperature,omitempty"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+	Tools    []Tool    `json:"tools,omitempty"`
+	// Temperature 使用指针区分“调用方未设置”和“显式设置为 0”。
+	//
+	// 0 是合法且常用的确定性采样参数，若使用 float64 零值配合 omitempty，
+	// adapter 会错误地把显式 0 当成缺省值并丢弃。
+	Temperature *float64 `json:"temperature,omitempty"`
+	MaxTokens   int      `json:"max_tokens,omitempty"`
 	// StructuredOutput 约束最终输出的 JSON Schema；strict=true 时 provider 必须强校验。
 	StructuredOutput *StructuredOutput `json:"structured_output,omitempty"`
 	// ReasoningEffort 调节推理模型的 test-time compute，如 none/low/medium/high/xhigh。
