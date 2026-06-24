@@ -163,8 +163,11 @@ func TestProviderNameAndCapabilities(t *testing.T) {
 	if !defaultCapabilities.ToolCalling || !defaultCapabilities.Streaming {
 		t.Fatalf("Capabilities(unknown model) = %#v, want basic tool calling and streaming support", defaultCapabilities)
 	}
-	if defaultCapabilities.StreamingToolCall || defaultCapabilities.PromptCaching || defaultCapabilities.Vision {
-		t.Fatalf("Capabilities(unknown model) = %#v, want conservative advanced capabilities disabled", defaultCapabilities)
+	if !defaultCapabilities.StreamingToolCall {
+		t.Fatalf("Capabilities(unknown model) = %#v, want implemented streaming tool call support", defaultCapabilities)
+	}
+	if defaultCapabilities.PromptCaching || defaultCapabilities.Vision {
+		t.Fatalf("Capabilities(unknown model) = %#v, want unsupported advanced capabilities disabled", defaultCapabilities)
 	}
 }
 

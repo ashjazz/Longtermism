@@ -94,8 +94,9 @@ func (p *Provider) Name() string {
 
 // Capabilities 返回模型能力声明。
 //
-// P0 不做运行时能力探测：默认能力表保守开启 OpenAI-compatible 路径中最常见的
-// tool calling / streaming / strict structured output，高风险或模型差异明显的能力保持关闭。
+// P0 不做运行时能力探测：当前 adapter 已完整实现普通/流式 tool calling、
+// streaming 与 strict structured output，因此默认声明这些协议能力；prompt caching、
+// vision 等仍依赖具体模型或供应商的能力保持关闭。
 func (p *Provider) Capabilities(model string) llm.ProviderCapabilities {
 	if p == nil {
 		return llm.ProviderCapabilities{}
@@ -179,6 +180,7 @@ func defaultCapabilities() llm.ProviderCapabilities {
 		ToolCalling:         true,
 		StrictStructuredOut: true,
 		Streaming:           true,
+		StreamingToolCall:   true,
 	}
 }
 
