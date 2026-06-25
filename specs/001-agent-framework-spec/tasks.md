@@ -119,7 +119,7 @@
 - [X] T033 [US2] 在 `pkg/ai/llm/openai/stream.go` 实现 SSE/流式 chunk 解析；质量门控：流结束必须关闭 channel，流中错误必须通过 chunk 暴露。
 - [X] T034A [US2] 在 `pkg/ai/llm/openai/stream_tool_call_test.go` 编写流式 tool call 聚合测试；质量门控：必须覆盖 `delta.tool_calls` 分片、按 index 隔离聚合、arguments 延迟 JSON 解析、`finish_reason=tool_calls` 后产出结构化 `ToolCall`。
 - [X] T034B [US2] 在 `pkg/ai/llm/openai/stream_tool_call.go` 实现流式 tool call 聚合器并接入 `ChatStream`；质量门控：JSON arguments 不完整时不得提前失败，多 tool call 并行分片不得串线，能力声明必须在支持模型上启用 `StreamingToolCall`。
-- [ ] T034 [US2] 在 `pkg/ai/llm/llm_contract_test.go` 接入 openai provider mock server 契约测试；质量门控：契约测试必须覆盖 fake 与真实 adapter 的共同语义。
+- [X] T034 [US2] 在 `pkg/ai/llm/llm_contract_test.go` 接入 openai provider mock server 契约测试；质量门控：契约测试必须覆盖 fake 与真实 adapter 的共同语义。
 
 ### P0-B：Prompt as Code
 

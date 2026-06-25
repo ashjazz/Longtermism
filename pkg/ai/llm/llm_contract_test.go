@@ -2,11 +2,15 @@ package llm_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
+	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/openai"
 	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/testutil"
 )
 
@@ -14,31 +18,34 @@ import (
 //
 // 这里刻意不直接依赖某个 fake 或真实 provider，而是要求调用方传入 NewProvider。
 // 这样同一套契约测试可以同时约束：
-//   - T010 将要实现的 fake provider；
-//   - P0-A 将要实现的 OpenAI-compatible adapter；
+//   - 测试专用 fake provider；
+//   - P0-A 的 OpenAI-compatible adapter；
 //   - 未来 DeepSeek、Ollama、Anthropic 等 adapter。
 //
 // 契约测试关注的是“框架上层可以依赖的稳定语义”，而不是某个供应商协议细节。
 type ProviderContractCase struct {
-	Name             string
-	NewProvider      func(t *testing.T) llm.Provider
-	ChatRequest      *llm.ChatRequest
-	WantChat         llm.ChatResponse
-	ToolRequest      *llm.ChatRequest
-	WantToolCall     llm.ToolCall
-	StreamRequest    *llm.ChatRequest
-	WantStreamDeltas []string
-	WantCapabilities llm.ProviderCapabilities
-	UpstreamRequest  *llm.ChatRequest
-	CancelRequest    *llm.ChatRequest
+	Name               string
+	NewProvider        func(t *testing.T) llm.Provider
+	ChatRequest        *llm.ChatRequest
+	WantChat           llm.ChatResponse
+	ToolRequest        *llm.ChatRequest
+	WantToolCall       llm.ToolCall
+	StreamRequest      *llm.ChatRequest
+	WantStreamDeltas   []string
+	StreamToolRequest  *llm.ChatRequest
+	WantStreamToolCall llm.ToolCall
+	WantCapabilities   llm.ProviderCapabilities
+	UpstreamRequest    *llm.ChatRequest
+	CancelRequest      *llm.ChatRequest
 }
 
 func TestFakeProviderContract(t *testing.T) {
 	t.Parallel()
 
 	capabilities := llm.ProviderCapabilities{
-		ToolCalling: true,
-		Streaming:   true,
+		ToolCalling:       true,
+		Streaming:         true,
+		StreamingToolCall: true,
 	}
 	usage := llm.Usage{
 		InputTokens:  7,
@@ -61,11 +68,12 @@ func TestFakeProviderContract(t *testing.T) {
 			return testutil.NewFakeProvider(testutil.FakeProviderConfig{
 				Name: "fake-provider",
 				Capabilities: map[string]llm.ProviderCapabilities{
-					"chat-model":     capabilities,
-					"tool-model":     capabilities,
-					"stream-model":   capabilities,
-					"upstream-model": capabilities,
-					"cancel-model":   capabilities,
+					"chat-model":        capabilities,
+					"tool-model":        capabilities,
+					"stream-model":      capabilities,
+					"stream-tool-model": capabilities,
+					"upstream-model":    capabilities,
+					"cancel-model":      capabilities,
 				},
 				ChatResponses: map[string]llm.ChatResponse{
 					"chat-model": {
@@ -95,6 +103,10 @@ func TestFakeProviderContract(t *testing.T) {
 						{DeltaContent: "hel"},
 						{DeltaContent: "lo"},
 						{FinishReason: llm.FinishStop, Usage: &usage},
+					},
+					"stream-tool-model": {
+						{FinishReason: llm.FinishToolCall},
+						{DeltaToolCall: &toolCall},
 					},
 				},
 			})
@@ -128,7 +140,19 @@ func TestFakeProviderContract(t *testing.T) {
 			Messages: []llm.Message{{Role: llm.RoleUser, Content: "stream"}},
 		},
 		WantStreamDeltas: []string{"hel", "lo"},
-		WantCapabilities: capabilities,
+		StreamToolRequest: &llm.ChatRequest{
+			Model:    "stream-tool-model",
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "stream weather tool"}},
+			Tools: []llm.Tool{
+				{
+					Name:        "get_weather",
+					Description: "Get weather by city.",
+					Parameters:  map[string]any{"type": "object"},
+				},
+			},
+		},
+		WantStreamToolCall: toolCall,
+		WantCapabilities:   capabilities,
 		UpstreamRequest: &llm.ChatRequest{
 			Model:    "upstream-model",
 			Messages: []llm.Message{{Role: llm.RoleUser, Content: "fail"}},
@@ -138,6 +162,281 @@ func TestFakeProviderContract(t *testing.T) {
 			Messages: []llm.Message{{Role: llm.RoleUser, Content: "cancel"}},
 		},
 	})
+}
+
+func TestOpenAIProviderContract(t *testing.T) {
+	t.Parallel()
+
+	capabilities := llm.ProviderCapabilities{
+		ToolCalling:         true,
+		StrictStructuredOut: true,
+		Streaming:           true,
+		StreamingToolCall:   true,
+	}
+	usage := llm.Usage{
+		InputTokens:  7,
+		OutputTokens: 5,
+		TotalTokens:  12,
+	}
+	toolCall := llm.ToolCall{
+		ID:   "call_weather",
+		Name: "get_weather",
+		Arguments: map[string]any{
+			"city": "Shanghai",
+		},
+	}
+
+	RunProviderContractTests(t, ProviderContractCase{
+		Name: "openai-provider",
+		NewProvider: func(t *testing.T) llm.Provider {
+			t.Helper()
+
+			// 每个并行契约子测试都获得独立 mock server，避免请求记录、连接生命周期
+			// 或服务端状态在测试之间共享。这里走真实 HTTP/JSON/SSE adapter 路径，
+			// 而不是直接调用 openai 包内部解析函数。
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handleOpenAIContractRequest(t, w, r)
+			}))
+			t.Cleanup(server.Close)
+
+			provider, err := openai.NewProvider(openai.Config{
+				BaseURL:      server.URL,
+				APIKey:       "test-api-key",
+				DefaultModel: "chat-model",
+			})
+			if err != nil {
+				t.Fatalf("openai.NewProvider() error = %v", err)
+			}
+			return provider
+		},
+		ChatRequest: &llm.ChatRequest{
+			Model:    "chat-model",
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "hello"}},
+		},
+		WantChat: llm.ChatResponse{
+			Content:      "hello from openai adapter",
+			Model:        "chat-model",
+			Usage:        usage,
+			FinishReason: llm.FinishStop,
+		},
+		ToolRequest: &llm.ChatRequest{
+			Model:    "tool-model",
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "weather"}},
+			Tools: []llm.Tool{
+				{
+					Name:        "get_weather",
+					Description: "Get weather by city.",
+					Parameters:  map[string]any{"type": "object"},
+				},
+			},
+		},
+		WantToolCall: toolCall,
+		StreamRequest: &llm.ChatRequest{
+			Model:    "stream-model",
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "stream"}},
+		},
+		WantStreamDeltas: []string{"hel", "lo"},
+		StreamToolRequest: &llm.ChatRequest{
+			Model:    "stream-tool-model",
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "stream weather tool"}},
+			Tools: []llm.Tool{
+				{
+					Name:        "get_weather",
+					Description: "Get weather by city.",
+					Parameters:  map[string]any{"type": "object"},
+				},
+			},
+		},
+		WantStreamToolCall: toolCall,
+		WantCapabilities:   capabilities,
+		UpstreamRequest: &llm.ChatRequest{
+			Model:    "upstream-model",
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "fail"}},
+		},
+		CancelRequest: &llm.ChatRequest{
+			Model:    "cancel-model",
+			Messages: []llm.Message{{Role: llm.RoleUser, Content: "cancel"}},
+		},
+	})
+}
+
+func handleOpenAIContractRequest(t *testing.T, w http.ResponseWriter, r *http.Request) {
+	t.Helper()
+
+	var request struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, `{"error":{"message":"invalid request"}}`, http.StatusBadRequest)
+		return
+	}
+
+	switch request.Model {
+	case "chat-model":
+		writeOpenAIContractJSON(t, w, http.StatusOK, map[string]any{
+			"model": "chat-model",
+			"choices": []map[string]any{
+				{
+					"message":       map[string]any{"content": "hello from openai adapter"},
+					"finish_reason": "stop",
+				},
+			},
+			"usage": openAIContractUsage(),
+		})
+	case "tool-model":
+		writeOpenAIContractJSON(t, w, http.StatusOK, map[string]any{
+			"model": "tool-model",
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"tool_calls": []map[string]any{
+							{
+								"id":   "call_weather",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "get_weather",
+									"arguments": `{"city":"Shanghai"}`,
+								},
+							},
+						},
+					},
+					"finish_reason": "tool_calls",
+				},
+			},
+			"usage": openAIContractUsage(),
+		})
+	case "stream-model":
+		if !request.Stream {
+			http.Error(w, `{"error":{"message":"stream flag is required"}}`, http.StatusBadRequest)
+			return
+		}
+		writeOpenAIContractStream(t, w)
+	case "stream-tool-model":
+		if !request.Stream {
+			http.Error(w, `{"error":{"message":"stream flag is required"}}`, http.StatusBadRequest)
+			return
+		}
+		writeOpenAIContractToolStream(t, w)
+	case "upstream-model":
+		writeOpenAIContractJSON(t, w, http.StatusTooManyRequests, map[string]any{
+			"error": map[string]any{
+				"message": "contract rate limit",
+				"type":    "rate_limit_error",
+			},
+		})
+	default:
+		writeOpenAIContractJSON(t, w, http.StatusNotFound, map[string]any{
+			"error": map[string]any{"message": "unknown contract model"},
+		})
+	}
+}
+
+func writeOpenAIContractJSON(t *testing.T, w http.ResponseWriter, status int, payload map[string]any) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		t.Errorf("encode OpenAI contract JSON response: %v", err)
+	}
+}
+
+func writeOpenAIContractStream(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	writeOpenAIContractSSE(t, w, map[string]any{
+		"choices": []map[string]any{
+			{"index": 0, "delta": map[string]any{"content": "hel"}},
+		},
+	})
+	writeOpenAIContractSSE(t, w, map[string]any{
+		"choices": []map[string]any{
+			{"index": 0, "delta": map[string]any{"content": "lo"}},
+		},
+	})
+	writeOpenAIContractSSE(t, w, map[string]any{
+		"choices": []map[string]any{
+			{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"},
+		},
+		"usage": openAIContractUsage(),
+	})
+	if _, err := w.Write([]byte("data: [DONE]\n\n")); err != nil {
+		t.Errorf("write OpenAI contract stream done marker: %v", err)
+	}
+}
+
+func writeOpenAIContractToolStream(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	writeOpenAIContractSSE(t, w, map[string]any{
+		"choices": []map[string]any{
+			{
+				"index": 0,
+				"delta": map[string]any{
+					"tool_calls": []map[string]any{
+						{
+							"index": 0,
+							"id":    "call_weather",
+							"type":  "function",
+							"function": map[string]any{
+								"name":      "get_weather",
+								"arguments": `{"city":"`,
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	writeOpenAIContractSSE(t, w, map[string]any{
+		"choices": []map[string]any{
+			{
+				"index": 0,
+				"delta": map[string]any{
+					"tool_calls": []map[string]any{
+						{
+							"index": 0,
+							"function": map[string]any{
+								"arguments": `Shanghai"}`,
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	writeOpenAIContractSSE(t, w, map[string]any{
+		"choices": []map[string]any{
+			{"index": 0, "delta": map[string]any{}, "finish_reason": "tool_calls"},
+		},
+	})
+	if _, err := w.Write([]byte("data: [DONE]\n\n")); err != nil {
+		t.Errorf("write OpenAI contract tool stream done marker: %v", err)
+	}
+}
+
+func writeOpenAIContractSSE(t *testing.T, w http.ResponseWriter, payload map[string]any) {
+	t.Helper()
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Errorf("marshal OpenAI contract SSE payload: %v", err)
+		return
+	}
+	if _, err := w.Write([]byte("data: " + string(encoded) + "\n\n")); err != nil {
+		t.Errorf("write OpenAI contract SSE payload: %v", err)
+	}
+}
+
+func openAIContractUsage() map[string]any {
+	return map[string]any{
+		"prompt_tokens":     7,
+		"completion_tokens": 5,
+		"total_tokens":      12,
+	}
 }
 
 // RunProviderContractTests 执行所有 llm.Provider 都必须满足的最低行为契约。
@@ -235,6 +534,39 @@ func RunProviderContractTests(t *testing.T, tc ProviderContractCase) {
 		if finalUsage == nil {
 			t.Fatal("ChatStream() did not emit final usage")
 		}
+	})
+
+	t.Run(tc.Name+"/stream-tool-call", func(t *testing.T) {
+		t.Parallel()
+
+		// StreamingToolCall 不只是能力位：provider 必须等待完整 arguments，
+		// 再输出与非流式 ToolCall 相同的结构化 ID、名称和参数语义。
+		provider := tc.NewProvider(t)
+		chunks, err := provider.ChatStream(context.Background(), cloneChatRequest(tc.StreamToolRequest))
+		if err != nil {
+			t.Fatalf("ChatStream() tool call error = %v", err)
+		}
+
+		var gotCalls []llm.ToolCall
+		var sawFinish bool
+		for chunk := range chunks {
+			if chunk.Err != nil {
+				t.Fatalf("ChatStream() tool call chunk error = %v", chunk.Err)
+			}
+			if chunk.FinishReason == llm.FinishToolCall {
+				sawFinish = true
+			}
+			if chunk.DeltaToolCall != nil {
+				if !sawFinish {
+					t.Fatal("ChatStream() emitted tool call before finish_reason=tool_calls")
+				}
+				gotCalls = append(gotCalls, *chunk.DeltaToolCall)
+			}
+		}
+		if len(gotCalls) != 1 {
+			t.Fatalf("ChatStream() tool calls length = %d, want 1", len(gotCalls))
+		}
+		assertToolCall(t, gotCalls[0], tc.WantStreamToolCall)
 	})
 
 	t.Run(tc.Name+"/upstream-error", func(t *testing.T) {
