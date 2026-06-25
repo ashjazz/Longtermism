@@ -123,11 +123,11 @@
 
 ### P0-B：Prompt as Code
 
-- [ ] T035 [P] [US2] 在 `pkg/ai/prompt/filesystem_test.go` 编写文件模板 registry 测试；质量门控：覆盖正常加载、模板不存在、版本不存在、路径穿越拒绝。
-- [ ] T036 [P] [US2] 在 `pkg/ai/prompt/render_test.go` 编写渲染测试；质量门控：缺失变量必须失败，hash 对同一内容稳定、对不同内容变化。
-- [ ] T037 [US2] 在 `pkg/ai/prompt/filesystem.go` 实现文件系统 registry；质量门控：路径必须通过 clean/join 后限制在根目录内。
-- [ ] T038 [US2] 在 `pkg/ai/prompt/render.go` 实现 text/template 渲染与 SHA-256 短 hash；质量门控：使用 `missingkey=error`，不允许静默空值。
-- [ ] T039 [P] [US2] 在 `resource/prompt/p0_smoke/v1.tmpl` 添加 P0 冒烟 prompt 模板；质量门控：模板变量必须与测试样例一致。
+- [X] T035 [P] [US2] 在 `pkg/ai/prompt/filesystem_test.go` 编写文件模板 registry 测试；质量门控：覆盖正常加载、模板不存在、版本不存在、路径穿越拒绝。
+- [X] T036 [P] [US2] 在 `pkg/ai/prompt/render_test.go` 编写渲染测试；质量门控：缺失变量必须失败，hash 对同一内容稳定、对不同内容变化。
+- [X] T037 [US2] 在 `pkg/ai/prompt/filesystem.go` 实现文件系统 registry；质量门控：路径必须通过 clean/join 后限制在根目录内。
+- [X] T038 [US2] 在 `pkg/ai/prompt/render.go` 实现 text/template 渲染与 SHA-256 短 hash；质量门控：使用 `missingkey=error`，不允许静默空值。
+- [X] T039 [P] [US2] 在 `resource/prompt/p0_smoke/v1.tmpl` 添加 P0 冒烟 prompt 模板；质量门控：模板变量必须与测试样例一致。
 
 ### P0-C：本地 Trace
 
