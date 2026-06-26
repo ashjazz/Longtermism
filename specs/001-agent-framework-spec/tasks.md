@@ -131,10 +131,10 @@
 
 ### P0-C：本地 Trace
 
-- [ ] T040 [P] [US2] 在 `pkg/ai/obs/logger_test.go` 编写日志型 tracer 测试；质量门控：必须断言 trace id、model、prompt hash、tokens、latency、status。
-- [ ] T041 [P] [US2] 在 `pkg/ai/obs/privacy_test.go` 编写隐私边界测试；质量门控：普通 trace 输出不得包含原始 query、完整 prompt 或 tool 参数。
-- [ ] T042 [US2] 在 `pkg/ai/obs/logger.go` 实现日志型 Tracer；质量门控：记录失败不得影响主流程，字段名保持稳定。
-- [ ] T043 [US2] 在 `pkg/ai/obs/trace_helpers.go` 实现 trace 构建辅助函数；质量门控：辅助函数必须使用不可变输入，不修改调用方对象。
+- [X] T040 [P] [US2] 在 `pkg/ai/obs/logger_test.go` 编写日志型 tracer 测试；质量门控：必须断言 trace id、model、prompt hash、tokens、latency、status。
+- [X] T041 [P] [US2] 在 `pkg/ai/obs/privacy_test.go` 编写隐私边界测试；质量门控：普通 trace 输出不得包含原始 query、完整 prompt 或 tool 参数。
+- [X] T042 [US2] 在 `pkg/ai/obs/logger.go` 实现日志型 Tracer；质量门控：记录失败不得影响主流程，字段名保持稳定。
+- [X] T043 [US2] 在 `pkg/ai/obs/trace_helpers.go` 实现 trace 构建辅助函数；质量门控：辅助函数必须使用不可变输入，不修改调用方对象。
 
 ### P0-D：Eval Runner
 

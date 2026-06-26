@@ -44,7 +44,8 @@ type Trace struct {
 	RetrievalLatencyMs int64     `json:"retrievalLatencyMs,omitempty"`
 
 	// 成本
-	CostUSD float64 `json:"costUsd,omitempty"`
+	CostUSD       float64 `json:"costUsd,omitempty"`
+	OutcomeStatus string  `json:"outcomeStatus,omitempty"`
 
 	// 反馈（后续回填）
 	UserRating    *int     `json:"userRating,omitempty"`    // -1/0/+1
