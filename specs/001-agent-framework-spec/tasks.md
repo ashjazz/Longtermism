@@ -148,11 +148,11 @@
 
 ### P0-E：本地门禁与闭环
 
-- [ ] T051 [US2] 在 `cmd/eval-smoke/main.go` 实现 eval smoke 命令；质量门控：默认使用 fake predict，不需要真实 API key。
-- [ ] T052 [US2] 在 `Makefile` 接入 `eval-smoke` 实际命令；质量门控：失败时必须返回非零退出码并打印报告路径或失败原因。
-- [ ] T053 [US2] 在 `internal/eval/smoke/p0.go` 组合 prompt、fake llm、trace recorder、eval runner；质量门控：必须形成完整 `prompt -> llm -> obs -> eval` 路径。
-- [ ] T054 [US2] 在 `specs/001-agent-framework-spec/quickstart.md` 更新 P0 实际命令与期望输出；质量门控：文档命令必须与 Makefile 保持一致。
-- [ ] T055 [US2] 在 `docs/journal/0002-p0-minimum-loop.md` 记录 P0 闭环实现经验；质量门控：必须包含至少一个失败模式和对应修复。
+- [X] T051 [US2] 在 `cmd/eval-smoke/main.go` 实现 eval smoke 命令；质量门控：默认使用 fake predict，不需要真实 API key。
+- [X] T052 [US2] 在 `Makefile` 接入 `eval-smoke` 实际命令；质量门控：失败时必须返回非零退出码并打印报告路径或失败原因。
+- [X] T053 [US2] 在 `internal/eval/smoke/p0.go` 组合 prompt、fake llm、trace recorder、eval runner；质量门控：必须形成完整 `prompt -> llm -> obs -> eval` 路径。
+- [X] T054 [US2] 在 `specs/001-agent-framework-spec/quickstart.md` 更新 P0 实际命令与期望输出；质量门控：文档命令必须与 Makefile 保持一致。
+- [X] T055 [US2] 在 `docs/journal/0002-p0-minimum-loop.md` 记录 P0 闭环实现经验；质量门控：必须包含至少一个失败模式和对应修复。
 
 ## Phase 5：US3 - 证明检索与 Agent 能力改进（优先级：P2）
 

@@ -10,5 +10,4 @@ vet:
 	go vet ./...
 
 eval-smoke:
-	@printf '%s\n' 'TODO: eval-smoke is not implemented yet. Complete P0-E tasks T051-T053 before enabling this gate.'
-	@exit 1
+	go run ./cmd/eval-smoke

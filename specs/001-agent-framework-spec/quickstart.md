@@ -189,24 +189,55 @@ go test ./pkg/ai/eval/...
 在 P0-E 实现后运行：
 
 ```bash
-go test ./...
-go test -race ./pkg/ai/...
-go vet ./...
-```
-
-如果提供 Makefile，运行：
-
-```bash
 make test
 make test-race
 make vet
 make eval-smoke
 ```
 
+当前 `Makefile` 中的命令定义为：
+
+```makefile
+test:
+	go test ./...
+
+test-race:
+	go test -race ./...
+
+vet:
+	go vet ./...
+
+eval-smoke:
+	go run ./cmd/eval-smoke
+```
+
+`make eval-smoke` 默认读取 `internal/eval/golden/p0_smoke.json` 和
+`resource/prompt/p0_smoke/v1.tmpl`，通过 `internal/eval/smoke` 组合层完成：
+
+```text
+golden dataset -> prompt 渲染 -> fake LLM -> trace recorder -> eval runner -> JSON report
+```
+
+期望输出形态：
+
+```text
+go run ./cmd/eval-smoke
+{
+  "datasetVersion": "p0-smoke-local",
+  "sampleCount": 3,
+  "scores": {
+    "context_hit": 1,
+    "exact_match": 1
+  }
+}
+```
+
 期望结果：
 
 - 默认命令不要求真实 API key。
-- `eval-smoke` 输出稳定报告。
+- `eval-smoke` 输出稳定 JSON 报告，`sampleCount` 与 golden case 数量一致。
+- `context_hit` 和 `exact_match` 当前应为 `1`，证明 fake LLM 输出、上下文回传和 eval runner 都已串通。
+- 每条样例都会产生 trace 记录；普通 trace 只保存 query hash、prompt hash、token、模型和状态等摘要字段，不保存原始 query 或完整 prompt。
 - 任何失败都能定位到测试、评估或静态检查。
 
 ## 可选真实服务 smoke
