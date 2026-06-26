@@ -1,0 +1,58 @@
+{
+  "samples": [
+    {
+      "id": "p0-smoke-happy-path",
+      "query": "P0 最小 AI 工程闭环包含哪些关键环节？",
+      "groundTruth": "prompt -> llm -> obs -> eval",
+      "relevantCtx": [
+        "P0 最小闭环需要串联 prompt、llm、obs 和 eval，且默认不依赖真实外部服务。"
+      ],
+      "difficulty": "simple",
+      "category": "happy_path",
+      "meta": {
+        "coverage": "normal",
+        "expected_metrics": [
+          "exact_match",
+          "contains_all",
+          "context_hit"
+        ],
+        "notes": "验证默认 smoke 能证明最小工程闭环被完整串起。"
+      }
+    },
+    {
+      "id": "p0-smoke-boundary-minimal-query",
+      "query": "P0?",
+      "groundTruth": "prompt -> llm -> obs -> eval",
+      "relevantCtx": [
+        "即使用户输入很短，P0 smoke 也应能稳定返回最小闭环结构。"
+      ],
+      "difficulty": "edge",
+      "category": "boundary",
+      "meta": {
+        "coverage": "short_input",
+        "expected_metrics": [
+          "contains_all",
+          "context_hit"
+        ],
+        "notes": "验证短 query 不应导致评估 runner、prompt 渲染或 fake predict 崩溃。"
+      }
+    },
+    {
+      "id": "p0-smoke-missing-context-diagnostic",
+      "query": "如果评估样例缺少应命中的上下文，系统应如何表现？",
+      "groundTruth": "评估应返回可诊断错误，而不是静默生成不可信平均分。",
+      "relevantCtx": [
+        "当检索上下文缺失或预测上下文为空时，context_hit 指标应返回带样例 ID 和指标名的错误。"
+      ],
+      "difficulty": "moderate",
+      "category": "error_case",
+      "meta": {
+        "coverage": "missing_context",
+        "expected_metrics": [
+          "context_hit"
+        ],
+        "notes": "验证缺失上下文类故障能被评估门禁定位，而不是被吞掉。"
+      }
+    }
+  ]
+}

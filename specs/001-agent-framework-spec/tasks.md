@@ -138,13 +138,13 @@
 
 ### P0-D：Eval Runner
 
-- [ ] T044 [P] [US2] 在 `pkg/ai/eval/dataset_json_test.go` 编写 JSON dataset 加载测试；质量门控：覆盖正常、空文件、非法 JSON、缺少样例 ID。
-- [ ] T045 [P] [US2] 在 `pkg/ai/eval/metrics_test.go` 编写 ExactMatch、ContainsAll、ContextHit 指标测试；质量门控：每个指标覆盖 happy path、边界、错误输入。
-- [ ] T046 [P] [US2] 在 `pkg/ai/eval/runner_test.go` 编写 runner/report 测试；质量门控：必须断言 sample count、metric averages、prediction error 处理。
-- [ ] T047 [US2] 在 `pkg/ai/eval/dataset_json.go` 实现 JSON dataset；质量门控：Load 返回样本副本，避免调用方修改内部状态。
-- [ ] T048 [US2] 在 `pkg/ai/eval/metrics.go` 实现确定性 metrics；质量门控：分数范围必须稳定在 0 到 1。
-- [ ] T049 [US2] 在 `pkg/ai/eval/runner.go` 实现评估 runner；质量门控：单样本错误必须可诊断，不得静默吞掉。
-- [ ] T050 [P] [US2] 在 `internal/eval/golden/p0_smoke.json` 添加 P0 冒烟 golden case；质量门控：至少包含正常、边界、错误或缺失上下文三类样例。
+- [X] T044 [P] [US2] 在 `pkg/ai/eval/dataset_json_test.go` 编写 JSON dataset 加载测试；质量门控：覆盖正常、空文件、非法 JSON、缺少样例 ID。
+- [X] T045 [P] [US2] 在 `pkg/ai/eval/metrics_test.go` 编写 ExactMatch、ContainsAll、ContextHit 指标测试；质量门控：每个指标覆盖 happy path、边界、错误输入。
+- [X] T046 [P] [US2] 在 `pkg/ai/eval/runner_test.go` 编写 runner/report 测试；质量门控：必须断言 sample count、metric averages、prediction error 处理。
+- [X] T047 [US2] 在 `pkg/ai/eval/dataset_json.go` 实现 JSON dataset；质量门控：Load 返回样本副本，避免调用方修改内部状态。
+- [X] T048 [US2] 在 `pkg/ai/eval/metrics.go` 实现确定性 metrics；质量门控：分数范围必须稳定在 0 到 1。
+- [X] T049 [US2] 在 `pkg/ai/eval/runner.go` 实现评估 runner；质量门控：单样本错误必须可诊断，不得静默吞掉。
+- [X] T050 [P] [US2] 在 `internal/eval/golden/p0_smoke.json` 添加 P0 冒烟 golden case；质量门控：至少包含正常、边界、错误或缺失上下文三类样例。
 
 ### P0-E：本地门禁与闭环
 
