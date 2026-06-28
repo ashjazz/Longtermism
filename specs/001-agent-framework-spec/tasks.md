@@ -167,8 +167,8 @@
 - [X] T061 [US3] 在 `pkg/ai/rag/retriever.go` 实现基础 retriever；质量门控：错误必须带查询上下文但不得记录原始敏感内容。
 - [X] T062 [P] [US3] 在 `pkg/ai/eval/retrieval_metrics_test.go` 编写 Recall@k、MRR、NDCG 初始测试；质量门控：指标必须可解释且分数范围稳定。
 - [X] T063 [US3] 在 `pkg/ai/eval/retrieval_metrics.go` 实现检索指标；质量门控：空结果、空相关集必须有明确返回语义。
-- [ ] T064 [P] [US3] 在 `pkg/ai/agent/registry_test.go` 编写工具注册中心测试；质量门控：重复注册、未知工具、schema 缺失必须有明确错误。
-- [ ] T065 [US3] 在 `pkg/ai/agent/registry.go` 实现工具注册中心；质量门控：读操作必须并发安全，注册后不得暴露可变内部 map。
+- [X] T064 [P] [US3] 在 `pkg/ai/agent/registry_test.go` 编写工具注册中心测试；质量门控：重复注册、未知工具、schema 缺失必须有明确错误。
+- [X] T065 [US3] 在 `pkg/ai/agent/registry.go` 实现工具注册中心；质量门控：读操作必须并发安全，注册后不得暴露可变内部 map。
 - [ ] T066 [P] [US3] 在 `pkg/ai/agent/executor_limits_test.go` 编写 Agent executor 限制测试；质量门控：覆盖 max steps、loop detected、step timeout、token budget。
 - [ ] T067 [US3] 在 `pkg/ai/agent/executor.go` 实现最小 native tool calling executor；质量门控：不得解析旧式 Thought/Action 文本，只消费结构化 tool call。
 - [ ] T068 [P] [US3] 在 `internal/eval/golden/agent_smoke.json` 添加 Agent 评估样例；质量门控：至少覆盖成功、工具错误、自我纠错或步数限制。
