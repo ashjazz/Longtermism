@@ -163,8 +163,8 @@
 - [X] T057 [US3] 在 `pkg/ai/rag/chunker_recursive.go` 实现 recursive chunker；质量门控：不得修改输入 Document，chunk ID 必须稳定可复现。
 - [X] T058 [P] [US3] 在 `pkg/ai/vectordb/memory_store_test.go` 编写内存向量库测试；质量门控：覆盖 Upsert、Search、Delete、Health、metadata filter。
 - [X] T059 [US3] 在 `pkg/ai/vectordb/memory_store.go` 实现内存 Store；质量门控：仅用于测试和本地 demo，不作为生产向量库决策。
-- [ ] T060 [P] [US3] 在 `pkg/ai/rag/retriever_test.go` 编写基础 retriever 测试；质量门控：检索为空不得 panic，filter 必须传递到 Store。
-- [ ] T061 [US3] 在 `pkg/ai/rag/retriever.go` 实现基础 retriever；质量门控：错误必须带查询上下文但不得记录原始敏感内容。
+- [X] T060 [P] [US3] 在 `pkg/ai/rag/retriever_test.go` 编写基础 retriever 测试；质量门控：检索为空不得 panic，filter 必须传递到 Store。
+- [X] T061 [US3] 在 `pkg/ai/rag/retriever.go` 实现基础 retriever；质量门控：错误必须带查询上下文但不得记录原始敏感内容。
 - [ ] T062 [P] [US3] 在 `pkg/ai/eval/retrieval_metrics_test.go` 编写 Recall@k、MRR、NDCG 初始测试；质量门控：指标必须可解释且分数范围稳定。
 - [ ] T063 [US3] 在 `pkg/ai/eval/retrieval_metrics.go` 实现检索指标；质量门控：空结果、空相关集必须有明确返回语义。
 - [ ] T064 [P] [US3] 在 `pkg/ai/agent/registry_test.go` 编写工具注册中心测试；质量门控：重复注册、未知工具、schema 缺失必须有明确错误。
