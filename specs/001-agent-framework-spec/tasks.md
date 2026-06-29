@@ -180,8 +180,8 @@
 
 - [X] T069 [P] [US4] 在 `pkg/ai/resilience/circuit_breaker_test.go` 编写断路器状态测试；质量门控：覆盖 closed/open/half-open/恢复和快速失败。
 - [X] T070 [US4] 在 `pkg/ai/resilience/circuit_breaker.go` 实现断路器；质量门控：状态转换必须可测试，错误必须保留 cause。
-- [ ] T071 [P] [US4] 在 `pkg/ai/resilience/provider_wrapper_test.go` 编写 provider wrapper 测试；质量门控：ErrUpstream 触发熔断记录，4xx 不触发上游熔断。
-- [ ] T072 [US4] 在 `pkg/ai/resilience/provider_wrapper.go` 实现 llm.Provider 包装器；质量门控：不得改变原始 Provider 接口语义。
+- [X] T071 [P] [US4] 在 `pkg/ai/resilience/provider_wrapper_test.go` 编写 provider wrapper 测试；质量门控：ErrUpstream 触发熔断记录，4xx 不触发上游熔断。
+- [X] T072 [US4] 在 `pkg/ai/resilience/provider_wrapper.go` 实现 llm.Provider 包装器；质量门控：不得改变原始 Provider 接口语义。
 - [ ] T073 [P] [US4] 在 `pkg/ai/obs/failure_trace_test.go` 编写失败 trace 测试；质量门控：覆盖 timeout、rate limit、retrieval miss、loop detected、budget exceeded。
 - [ ] T074 [US4] 在 `pkg/ai/obs/failure_trace.go` 实现失败状态 trace helper；质量门控：状态枚举必须稳定并可被 eval/journal 引用。
 - [ ] T075 [P] [US4] 在 `pkg/ai/ratelimit/memory_limiter_test.go` 编写内存限流测试；质量门控：覆盖全局、用户、provider key，不使用真实 Redis。
