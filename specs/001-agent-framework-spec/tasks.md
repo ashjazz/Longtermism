@@ -188,7 +188,7 @@
 - [X] T076 [US4] 在 `pkg/ai/ratelimit/memory_limiter.go` 实现内存 token bucket；质量门控：并发访问不得产生 data race。
 - [X] T077 [P] [US4] 在 `pkg/ai/cache/memory_fallback_test.go` 编写 exact/stale cache 测试；质量门控：必须验证 tenant/user scope 隔离。
 - [X] T078 [US4] 在 `pkg/ai/cache/memory_fallback.go` 实现内存 fallback cache；质量门控：返回结果必须标记 exact 或 stale。
-- [ ] T079 [US4] 在 `docs/journal/0003-failure-diagnostics.md` 记录故障诊断演练；质量门控：至少包含一个模拟上游失败和一个模拟 Agent 循环。
+- [X] T079 [US4] 在 `docs/journal/0003-failure-diagnostics.md` 记录故障诊断演练；质量门控：至少包含一个模拟上游失败和一个模拟 Agent 循环。
 
 ## Phase 7：US5 - 替换后端而不重写核心能力（优先级：P3）
 
