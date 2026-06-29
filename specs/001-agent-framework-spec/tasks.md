@@ -178,8 +178,8 @@
 **用户故事目标**：让上游故障、检索失败、Agent 循环、超时和预算耗尽都有可诊断输出。  
 **独立测试标准**：模拟失败时，trace、错误和降级结果能明确说明发生了什么，不泄露敏感原文。
 
-- [ ] T069 [P] [US4] 在 `pkg/ai/resilience/circuit_breaker_test.go` 编写断路器状态测试；质量门控：覆盖 closed/open/half-open/恢复和快速失败。
-- [ ] T070 [US4] 在 `pkg/ai/resilience/circuit_breaker.go` 实现断路器；质量门控：状态转换必须可测试，错误必须保留 cause。
+- [X] T069 [P] [US4] 在 `pkg/ai/resilience/circuit_breaker_test.go` 编写断路器状态测试；质量门控：覆盖 closed/open/half-open/恢复和快速失败。
+- [X] T070 [US4] 在 `pkg/ai/resilience/circuit_breaker.go` 实现断路器；质量门控：状态转换必须可测试，错误必须保留 cause。
 - [ ] T071 [P] [US4] 在 `pkg/ai/resilience/provider_wrapper_test.go` 编写 provider wrapper 测试；质量门控：ErrUpstream 触发熔断记录，4xx 不触发上游熔断。
 - [ ] T072 [US4] 在 `pkg/ai/resilience/provider_wrapper.go` 实现 llm.Provider 包装器；质量门控：不得改变原始 Provider 接口语义。
 - [ ] T073 [P] [US4] 在 `pkg/ai/obs/failure_trace_test.go` 编写失败 trace 测试；质量门控：覆盖 timeout、rate limit、retrieval miss、loop detected、budget exceeded。

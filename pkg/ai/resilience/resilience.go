@@ -27,6 +27,8 @@ type Config struct {
 	FailureThreshold int           `json:"failureThreshold"` // 连续失败次数达此值 → OPEN
 	RecoveryTimeout  time.Duration `json:"recoveryTimeout"`  // OPEN 后多久尝试 HALF_OPEN
 	HalfOpenMaxProbe int           `json:"halfOpenMaxProbe"` // HALF_OPEN 探测请求数
+	// Now 注入时间源，生产默认 time.Now；测试可注入手动时钟，避免 time.Sleep 带来的不稳定。
+	Now func() time.Time `json:"-"`
 }
 
 // CircuitBreaker 断路器契约。
