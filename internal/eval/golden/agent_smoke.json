@@ -1,0 +1,146 @@
+{
+  "samples": [
+    {
+      "id": "agent-smoke-success-tool-loop",
+      "query": "根据项目文档回答：Agent Harness 使用哪类工具调用方式？",
+      "groundTruth": "Agent Harness 使用 native tool calling，并且只消费结构化 ToolCall。",
+      "relevantCtx": [
+        "Agent executor 只消费 provider 返回的结构化 llm.ToolCall，不解析旧式 Thought/Action 文本。",
+        "工具调用成功后，executor 会把 ToolResult 回传给模型，再继续下一轮直到最终答案。"
+      ],
+      "difficulty": "simple",
+      "category": "agent_success",
+      "meta": {
+        "coverage": "successful_tool_call_loop",
+        "expected_terminated_by": "finished",
+        "expected_steps_taken": 1,
+        "expected_tool_calls": [
+          {
+            "name": "search_docs",
+            "arguments": {
+              "query": "Agent Harness native tool calling"
+            },
+            "result_is_error": false
+          }
+        ],
+        "expected_metrics": [
+          "contains_all",
+          "context_hit"
+        ],
+        "notes": "验证 Agent 能完成一次结构化 tool call，并基于工具结果返回最终答案。"
+      }
+    },
+    {
+      "id": "agent-smoke-tool-error-visible",
+      "query": "调用天气工具查询一个不存在的城市，并说明系统应如何处理工具错误。",
+      "groundTruth": "工具错误应被标记为 tool result error，并保留对模型有用的错误信息。",
+      "relevantCtx": [
+        "工具失败时应返回对 LLM 有用的错误信息，而不是裸 Error。",
+        "Agent 轨迹需要记录 ToolResult.IsError，便于后续诊断工具故障。"
+      ],
+      "difficulty": "moderate",
+      "category": "agent_tool_error",
+      "meta": {
+        "coverage": "tool_error",
+        "expected_terminated_by": "finished",
+        "expected_steps_taken": 1,
+        "expected_tool_calls": [
+          {
+            "name": "get_weather",
+            "arguments": {
+              "city": "不存在的城市"
+            },
+            "result_is_error": true
+          }
+        ],
+        "expected_metrics": [
+          "contains_all",
+          "context_hit"
+        ],
+        "notes": "验证工具错误不会被静默吞掉，后续 evaluator 可以检查错误是否进入 Agent trajectory。"
+      }
+    },
+    {
+      "id": "agent-smoke-self-correction-after-tool-error",
+      "query": "当检索工具第一次因为查询过宽失败时，Agent 应如何调整并继续完成任务？",
+      "groundTruth": "Agent 应读取工具错误，缩小查询范围后再次调用工具并完成回答。",
+      "relevantCtx": [
+        "工具错误应该对模型有用，使模型能够基于错误信息自我纠错。",
+        "自我纠错轨迹通常包含一次失败工具调用、一次修正后的成功工具调用和最终答案。"
+      ],
+      "difficulty": "hard",
+      "category": "agent_self_correction",
+      "meta": {
+        "coverage": "self_correction",
+        "expected_terminated_by": "finished",
+        "expected_steps_taken": 2,
+        "expected_tool_calls": [
+          {
+            "name": "search_docs",
+            "arguments": {
+              "query": "Agent"
+            },
+            "result_is_error": true
+          },
+          {
+            "name": "search_docs",
+            "arguments": {
+              "query": "Agent executor native tool calling limit"
+            },
+            "result_is_error": false
+          }
+        ],
+        "expected_metrics": [
+          "trajectory_match",
+          "contains_all",
+          "context_hit"
+        ],
+        "notes": "验证 Agent 能把工具错误作为可行动反馈，而不是反复调用同一失败参数。"
+      }
+    },
+    {
+      "id": "agent-smoke-max-steps-limit",
+      "query": "如果模型持续要求调用同一个检索工具但无法给出最终答案，executor 应该如何终止？",
+      "groundTruth": "executor 应在达到 max_steps 后终止，并将 terminated_by 标记为 max_steps。",
+      "relevantCtx": [
+        "Agent executor 必须内置最大步数限制，避免无限循环和成本失控。",
+        "命中最大步数时，Result.TerminatedBy 应记录 max_steps，便于 trace 和 eval 诊断。"
+      ],
+      "difficulty": "edge",
+      "category": "agent_limit",
+      "meta": {
+        "coverage": "max_steps",
+        "expected_terminated_by": "max_steps",
+        "expected_steps_taken": 3,
+        "expected_tool_calls": [
+          {
+            "name": "search_docs",
+            "arguments": {
+              "query": "retry-1"
+            },
+            "result_is_error": false
+          },
+          {
+            "name": "search_docs",
+            "arguments": {
+              "query": "retry-2"
+            },
+            "result_is_error": false
+          },
+          {
+            "name": "search_docs",
+            "arguments": {
+              "query": "retry-3"
+            },
+            "result_is_error": false
+          }
+        ],
+        "expected_metrics": [
+          "terminated_by",
+          "trajectory_length"
+        ],
+        "notes": "验证 runaway Agent 被安全边界拦住，后续 report 可以明确看到终止原因。"
+      }
+    }
+  ]
+}
