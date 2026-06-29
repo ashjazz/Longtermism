@@ -20,6 +20,7 @@
 | [0003](0003-p0-local-validation-without-live-services.md) | P0 默认离线验证策略 | accepted | 默认门禁使用 fake/in-memory/本地数据；真实服务 smoke 必须显式 opt-in。 |
 | [0004](0004-lightweight-harness-first.md) | 优先自建 lightweight Agent Harness | accepted | 核心 Agent Harness 自建，第三方框架只能作为 adapter 或 app-layer integration。 |
 | [0005](0005-vector-store-adapter-boundary.md) | 向量库 Adapter 边界 | accepted | `vectordb.Store` 是 RAG 上层唯一依赖，pgvector、Milvus、memory fake 都只能作为 adapter 实现同一契约。 |
+| [0006](0006-observability-adapter-boundary.md) | 可观测平台 Adapter 边界 | accepted | `obs.Tracer` 是 AI 内核唯一依赖，LangFuse、OTEL、本地日志都只能作为 adapter 映射同一 Trace 契约。 |
 
 ## 维护规则
 
