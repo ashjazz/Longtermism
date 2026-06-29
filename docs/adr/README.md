@@ -19,6 +19,7 @@
 | [0002](0002-p0-error-classification.md) | P0 模型调用错误分类策略 | accepted | 429/5xx/timeout 进入 ErrUpstream 路径，4xx 快速失败且不触发重试/熔断。 |
 | [0003](0003-p0-local-validation-without-live-services.md) | P0 默认离线验证策略 | accepted | 默认门禁使用 fake/in-memory/本地数据；真实服务 smoke 必须显式 opt-in。 |
 | [0004](0004-lightweight-harness-first.md) | 优先自建 lightweight Agent Harness | accepted | 核心 Agent Harness 自建，第三方框架只能作为 adapter 或 app-layer integration。 |
+| [0005](0005-vector-store-adapter-boundary.md) | 向量库 Adapter 边界 | accepted | `vectordb.Store` 是 RAG 上层唯一依赖，pgvector、Milvus、memory fake 都只能作为 adapter 实现同一契约。 |
 
 ## 维护规则
 

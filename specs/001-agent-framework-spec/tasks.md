@@ -198,7 +198,7 @@
 - [X] T080 [P] [US5] 在 `pkg/ai/vectordb/store_contract_test.go` 编写 Store 契约测试；质量门控：任何 pgvector/Milvus/memory 实现都必须通过同一套契约测试。
 - [X] T081 [P] [US5] 在 `pkg/ai/obs/tracer_contract_test.go` 编写 Tracer 契约测试；质量门控：日志、LangFuse、OTEL adapter 均应能复用。
 - [X] T082 [P] [US5] 在 `pkg/ai/eval/dataset_contract_test.go` 编写 Dataset 契约测试；质量门控：local JSON 和未来平台同步实现都应能复用。
-- [ ] T083 [US5] 在 `docs/adr/0005-vector-store-adapter-boundary.md` 记录向量库 adapter 边界；质量门控：必须比较 pgvector、Milvus、memory fake 的职责差异。
+- [X] T083 [US5] 在 `docs/adr/0005-vector-store-adapter-boundary.md` 记录向量库 adapter 边界；质量门控：必须比较 pgvector、Milvus、memory fake 的职责差异。
 - [ ] T084 [US5] 在 `docs/adr/0006-observability-adapter-boundary.md` 记录观测平台 adapter 边界；质量门控：必须说明 LangFuse/OTEL/本地日志不进入核心契约。
 - [ ] T085 [US5] 在 `pkg/ai/cache/cache_contract_test.go` 编写 cache 契约测试；质量门控：必须覆盖 scope 隔离、ttl、miss、stale 行为。
 - [ ] T086 [US5] 在 `pkg/ai/llm/provider_contract_test.go` 编写 provider adapter 替换测试；质量门控：fake 与 openai-compatible adapter 的契约语义必须一致。
