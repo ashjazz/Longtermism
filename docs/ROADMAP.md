@@ -505,11 +505,33 @@ make eval-smoke
 ## 5. 当前进度
 
 - [x] P0.0 GoFrame v2 应用骨架 + `pkg/ai` 内核接口骨架（本次完成）
-- [ ] P0-A llm 首个 OpenAI-compatible provider 实现
-- [ ] P0-B prompt 文件模板渲染
-- [ ] P0-C obs 日志型 trace 骨架
-- [ ] P0-D eval runner + 首批 golden case
-- [ ] P0-E 最小 CI / 本地门禁
+- [x] P0-A llm 首个 OpenAI-compatible provider 实现
+- [x] P0-B prompt 文件模板渲染
+- [x] P0-C obs 日志型 trace 骨架
+- [x] P0-D eval runner + 首批 golden case
+- [x] P0-E 最小 CI / 本地门禁
+- [x] US3 检索与 Agent 能力证明基础：recursive chunker、memory vector store、retriever、检索指标、tool registry、native tool calling executor、agent smoke case。
+- [x] US4 生产式故障诊断基础：circuit breaker、provider wrapper、失败 trace、连续 refill token bucket、exact/stale fallback cache。
+- [x] US5 后端可替换边界：provider、vectordb、obs、eval dataset、fallback cache 契约测试，向量库和可观测 adapter ADR。
 - [ ] P1 / P2 / P3 / P4 / P5 …
+
+当前默认验证命令：
+
+```bash
+make test
+make test-race
+make vet
+make eval-smoke
+```
+
+关键局部契约验证：
+
+```bash
+go test ./pkg/ai/llm -run TestProviderAdaptersAreReplaceable -count=1
+go test ./pkg/ai/vectordb -run TestMemoryStoreContract -count=1
+go test ./pkg/ai/obs -run TestLoggerTracerContract -count=1
+go test ./pkg/ai/eval -run TestJSONDatasetContract -count=1
+go test ./pkg/ai/cache -run TestMemoryFallbackCacheContract -count=1
+```
 
 > 进度更新规则：每完成一个子项，勾选并在 `docs/journal/` 留一条记录。

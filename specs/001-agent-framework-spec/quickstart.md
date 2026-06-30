@@ -195,6 +195,21 @@ make vet
 make eval-smoke
 ```
 
+当前最终验证输出示例来自 2026-06-30 的真实本地命令：
+
+```bash
+$ make eval-smoke
+go run ./cmd/eval-smoke
+{
+  "datasetVersion": "p0-smoke-local",
+  "sampleCount": 3,
+  "scores": {
+    "context_hit": 1,
+    "exact_match": 1
+  }
+}
+```
+
 当前 `Makefile` 中的命令定义为：
 
 ```makefile
@@ -239,6 +254,24 @@ go run ./cmd/eval-smoke
 - `context_hit` 和 `exact_match` 当前应为 `1`，证明 fake LLM 输出、上下文回传和 eval runner 都已串通。
 - 每条样例都会产生 trace 记录；普通 trace 只保存 query hash、prompt hash、token、模型和状态等摘要字段，不保存原始 query 或完整 prompt。
 - 任何失败都能定位到测试、评估或静态检查。
+
+## 验证 8：后端可替换契约
+
+US5 完成后运行：
+
+```bash
+go test ./pkg/ai/llm -run TestProviderAdaptersAreReplaceable -count=1
+go test ./pkg/ai/vectordb -run TestMemoryStoreContract -count=1
+go test ./pkg/ai/obs -run TestLoggerTracerContract -count=1
+go test ./pkg/ai/eval -run TestJSONDatasetContract -count=1
+go test ./pkg/ai/cache -run TestMemoryFallbackCacheContract -count=1
+```
+
+期望结果：
+
+- fake provider 与 OpenAI-compatible adapter 对上层暴露一致的 Chat、tool call、stream、错误分类和取消语义。
+- memory vector store、logger tracer、JSON dataset、memory fallback cache 均通过同一套契约测试。
+- 后续 pgvector、Milvus、LangFuse、OTEL、Redis 或评估平台 adapter 接入时，必须复用这些契约测试，而不是只写 adapter 私有测试。
 
 ## 可选真实服务 smoke
 

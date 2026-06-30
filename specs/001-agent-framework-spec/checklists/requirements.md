@@ -44,3 +44,12 @@
 
 - 第 1 轮校验通过。规格避免了具体技术选型，并将后端选择记录为可替换、可暂缓的决策。
 - 第 2 轮校验补充任务就绪度检查，重点覆盖自解释性、独立执行性、质量门控和文件路径完整性。
+- 第 3 轮校验完成于 2026-06-30，对应 T092 P0 收口审查。
+
+## P0 执行完成审查
+
+- [x] 测试：`make test` 和 `make test-race` 均通过；新增 provider、vectordb、obs、eval dataset、fallback cache 契约测试可作为后续 adapter 替换门禁。
+- [x] 评估：`make eval-smoke` 通过，真实输出 `datasetVersion=p0-smoke-local`、`sampleCount=3`、`context_hit=1`、`exact_match=1`。
+- [x] 可观测：`pkg/ai/obs` 已提供日志型 tracer、失败 trace helper 和 Tracer 契约测试；普通 trace 隐私边界已有测试保护。
+- [x] 降级：`pkg/ai/resilience`、`pkg/ai/ratelimit`、`pkg/ai/cache` 已覆盖断路器、provider wrapper、限流和 exact/stale fallback cache 的本地语义。
+- [x] 文档：ROADMAP、quickstart、ADR 索引、核心契约、journal 和 AGENTS SPECKIT 区已同步，后续会话可从静态文件恢复上下文。

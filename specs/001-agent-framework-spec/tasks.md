@@ -201,21 +201,21 @@
 - [X] T083 [US5] 在 `docs/adr/0005-vector-store-adapter-boundary.md` 记录向量库 adapter 边界；质量门控：必须比较 pgvector、Milvus、memory fake 的职责差异。
 - [X] T084 [US5] 在 `docs/adr/0006-observability-adapter-boundary.md` 记录观测平台 adapter 边界；质量门控：必须说明 LangFuse/OTEL/本地日志不进入核心契约。
 - [X] T085 [US5] 在 `pkg/ai/cache/cache_contract_test.go` 编写 cache 契约测试；质量门控：必须覆盖 scope 隔离、ttl、miss、stale 行为。
-- [ ] T086 [US5] 在 `pkg/ai/llm/provider_contract_test.go` 编写 provider adapter 替换测试；质量门控：fake 与 openai-compatible adapter 的契约语义必须一致。
-- [ ] T087 [US5] 在 `specs/001-agent-framework-spec/contracts/core-framework-contract.md` 更新后端替换验收条件；质量门控：必须明确“替换后不改变用户可见能力预期”。
+- [X] T086 [US5] 在 `pkg/ai/llm/provider_contract_test.go` 编写 provider adapter 替换测试；质量门控：fake 与 openai-compatible adapter 的契约语义必须一致。
+- [X] T087 [US5] 在 `specs/001-agent-framework-spec/contracts/core-framework-contract.md` 更新后端替换验收条件；质量门控：必须明确“替换后不改变用户可见能力预期”。
 
 ## Final Phase：Polish & Cross-Cutting Concerns
 
 **目标**：收口文档、门禁、覆盖率、审查和路线图状态。  
 **独立验收**：所有 P0 默认命令通过；ROADMAP 与任务状态一致；关键 ADR 和 journal 已补齐。
 
-- [ ] T088 [P] 在 `docs/ROADMAP.md` 勾选已完成的 P0 子项并补充验证命令；质量门控：只能勾选真实完成项，不得提前标记。
-- [ ] T089 [P] 在 `specs/001-agent-framework-spec/quickstart.md` 更新最终 P0 验证输出示例；质量门控：示例必须来自真实命令输出或明确标记为示意。
-- [ ] T090 [P] 在 `docs/adr/README.md` 更新 ADR 索引状态；质量门控：所有新增 ADR 都必须出现在索引中。
-- [ ] T091 在 `Makefile` 确认 `test`、`test-race`、`vet`、`eval-smoke` 全部可运行；质量门控：任一失败必须阻止完成。
-- [ ] T092 在 `specs/001-agent-framework-spec/checklists/requirements.md` 追加任务执行完成审查结果；质量门控：必须检查测试、评估、可观测、降级、文档五项。
-- [ ] T093 在 `docs/journal/0004-p0-retrospective.md` 记录 P0 阶段复盘；质量门控：必须包含至少三条“出过事 -> 修好了 -> 学到了”的候选故事素材。
-- [ ] T094 在 `AGENTS.md` 更新 SPECKIT 区包含 `tasks.md`；质量门控：保留现有 spec-kit 标记，并确保路径为项目相对路径。
+- [X] T088 [P] 在 `docs/ROADMAP.md` 勾选已完成的 P0 子项并补充验证命令；质量门控：只能勾选真实完成项，不得提前标记。
+- [X] T089 [P] 在 `specs/001-agent-framework-spec/quickstart.md` 更新最终 P0 验证输出示例；质量门控：示例必须来自真实命令输出或明确标记为示意。
+- [X] T090 [P] 在 `docs/adr/README.md` 更新 ADR 索引状态；质量门控：所有新增 ADR 都必须出现在索引中。
+- [X] T091 在 `Makefile` 确认 `test`、`test-race`、`vet`、`eval-smoke` 全部可运行；质量门控：任一失败必须阻止完成。
+- [X] T092 在 `specs/001-agent-framework-spec/checklists/requirements.md` 追加任务执行完成审查结果；质量门控：必须检查测试、评估、可观测、降级、文档五项。
+- [X] T093 在 `docs/journal/0004-p0-retrospective.md` 记录 P0 阶段复盘；质量门控：必须包含至少三条“出过事 -> 修好了 -> 学到了”的候选故事素材。
+- [X] T094 在 `AGENTS.md` 更新 SPECKIT 区包含 `tasks.md`；质量门控：保留现有 spec-kit 标记，并确保路径为项目相对路径。
 
 ## 依赖关系
 

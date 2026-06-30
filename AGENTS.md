@@ -108,7 +108,7 @@ docs/ adr/ journal/       设计文档、架构决策、开发日志
 <!-- SPECKIT START -->
 当前 spec-kit 规格：`specs/001-agent-framework-spec/spec.md`
 当前 spec-kit 实施计划：`specs/001-agent-framework-spec/plan.md`
-当前 spec-kit 任务拆解：`specs/001-agent-framework-spec/tasks.md`
+当前 spec-kit 任务拆解与状态源：`specs/001-agent-framework-spec/tasks.md`
 <!-- SPECKIT END -->
 
 ## 常用命令
