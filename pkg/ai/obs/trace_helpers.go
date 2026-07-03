@@ -62,6 +62,39 @@ func WithQuery(queryHash, queryLang string, queryLen int) TraceOption {
 	}
 }
 
+// WithCorrelationIdentity 设置双平面观测关联身份。
+//
+// TraceID 仍然保持 AI trace 主身份；这里补充 request/span/eval 链路所需的
+// 基础设施平面字段，方便后续从任意观测记录回查完整请求链路。
+func WithCorrelationIdentity(identity CorrelationIdentity) TraceOption {
+	return func(trace Trace) Trace {
+		if identity.RequestID != "" {
+			trace.RequestID = identity.RequestID
+		}
+		if identity.ServiceTraceID != "" {
+			trace.ServiceTraceID = identity.ServiceTraceID
+		}
+		if identity.SpanID != "" {
+			trace.SpanID = identity.SpanID
+		}
+		if identity.AITraceID != "" {
+			trace.TraceID = identity.AITraceID
+		}
+		if identity.SessionID != "" {
+			trace.SessionID = identity.SessionID
+		}
+		return trace
+	}
+}
+
+// WithObservationType 设置 AI 语义观测类型。
+func WithObservationType(observationType ObservationType) TraceOption {
+	return func(trace Trace) Trace {
+		trace.ObservationType = observationType
+		return trace
+	}
+}
+
 // WithModel 设置本次调用使用的模型标识。
 func WithModel(model string) TraceOption {
 	return func(trace Trace) Trace {
@@ -151,6 +184,17 @@ func WithOutcome(status string) TraceOption {
 	}
 }
 
+// WithSafeSummaries 设置普通观测 payload 可携带的低敏摘要。
+func WithSafeSummaries(query, prompt, retrieval, tool SafeSummary) TraceOption {
+	return func(trace Trace) Trace {
+		trace.QuerySummary = cloneSafeSummary(query)
+		trace.PromptSummary = cloneSafeSummary(prompt)
+		trace.RetrievalSummary = cloneSafeSummary(retrieval)
+		trace.ToolSummary = cloneSafeSummary(tool)
+		return trace
+	}
+}
+
 // WithFeedback 设置人工反馈和自动评估分。
 //
 // 指针字段也要复制，避免调用方复用局部变量时把历史 trace 的反馈值一起改掉。
@@ -167,5 +211,9 @@ func cloneTraceValue(trace Trace) Trace {
 	cloned.TopScores = cloneFloat64s(trace.TopScores)
 	cloned.UserRating = cloneIntPointer(trace.UserRating)
 	cloned.AutoEvalScore = cloneFloat64Pointer(trace.AutoEvalScore)
+	cloned.QuerySummary = cloneSafeSummary(trace.QuerySummary)
+	cloned.PromptSummary = cloneSafeSummary(trace.PromptSummary)
+	cloned.RetrievalSummary = cloneSafeSummary(trace.RetrievalSummary)
+	cloned.ToolSummary = cloneSafeSummary(trace.ToolSummary)
 	return cloned
 }

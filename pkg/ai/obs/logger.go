@@ -66,6 +66,12 @@ type logEntry struct {
 	Feature   string `json:"feature"`
 	Timestamp string `json:"timestamp"`
 
+	RequestID       string          `json:"request_id,omitempty"`
+	ServiceTraceID  string          `json:"service_trace_id,omitempty"`
+	SpanID          string          `json:"span_id,omitempty"`
+	ObservationType ObservationType `json:"observation_type,omitempty"`
+	FailureStatus   string          `json:"failure_status,omitempty"`
+
 	QueryHash string `json:"query_hash,omitempty"`
 	QueryLang string `json:"query_lang,omitempty"`
 	QueryLen  int    `json:"query_len,omitempty"`
@@ -87,6 +93,11 @@ type logEntry struct {
 	TopScores          []float64 `json:"top_scores,omitempty"`
 	RetrievalLatencyMs int64     `json:"retrieval_latency_ms,omitempty"`
 
+	QuerySummary     SafeSummary `json:"query_summary,omitempty"`
+	PromptSummary    SafeSummary `json:"prompt_summary,omitempty"`
+	RetrievalSummary SafeSummary `json:"retrieval_summary,omitempty"`
+	ToolSummary      SafeSummary `json:"tool_summary,omitempty"`
+
 	CostUSD       float64  `json:"cost_usd,omitempty"`
 	OutcomeStatus string   `json:"outcome_status"`
 	UserRating    *int     `json:"user_rating,omitempty"`
@@ -101,6 +112,12 @@ func newLogEntry(trace Trace) logEntry {
 		SessionID: trace.SessionID,
 		Feature:   trace.Feature,
 		Timestamp: formatTraceTimestamp(trace.Timestamp),
+
+		RequestID:       trace.RequestID,
+		ServiceTraceID:  trace.ServiceTraceID,
+		SpanID:          trace.SpanID,
+		ObservationType: trace.ObservationType,
+		FailureStatus:   trace.FailureStatus,
 
 		QueryHash: trace.QueryHash,
 		QueryLang: trace.QueryLang,
@@ -122,6 +139,11 @@ func newLogEntry(trace Trace) logEntry {
 		QueryRewrittenHash: trace.QueryRewrittenHash,
 		TopScores:          cloneFloat64s(trace.TopScores),
 		RetrievalLatencyMs: trace.RetrievalLatencyMs,
+
+		QuerySummary:     cloneSafeSummary(trace.QuerySummary),
+		PromptSummary:    cloneSafeSummary(trace.PromptSummary),
+		RetrievalSummary: cloneSafeSummary(trace.RetrievalSummary),
+		ToolSummary:      cloneSafeSummary(trace.ToolSummary),
 
 		CostUSD:       trace.CostUSD,
 		OutcomeStatus: trace.OutcomeStatus,

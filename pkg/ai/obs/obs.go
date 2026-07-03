@@ -20,9 +20,17 @@ type Trace struct {
 	SessionID string    `json:"sessionId,omitempty"`
 	Feature   string    `json:"feature"` // 功能模块标识，如 rag_qa
 	Timestamp time.Time `json:"timestamp"`
-	QueryHash string    `json:"queryHash,omitempty"`
-	QueryLang string    `json:"queryLang,omitempty"`
-	QueryLen  int       `json:"queryLen,omitempty"`
+
+	// 双平面关联字段
+	RequestID       string          `json:"requestId,omitempty"`
+	ServiceTraceID  string          `json:"serviceTraceId,omitempty"`
+	SpanID          string          `json:"spanId,omitempty"`
+	ObservationType ObservationType `json:"observationType,omitempty"`
+	FailureStatus   string          `json:"failureStatus,omitempty"`
+
+	QueryHash string `json:"queryHash,omitempty"`
+	QueryLang string `json:"queryLang,omitempty"`
+	QueryLen  int    `json:"queryLen,omitempty"`
 
 	// 生成阶段
 	Model             string  `json:"model,omitempty"`
@@ -42,6 +50,12 @@ type Trace struct {
 	QueryRewrittenHash string    `json:"queryRewrittenHash,omitempty"`
 	TopScores          []float64 `json:"topScores,omitempty"`
 	RetrievalLatencyMs int64     `json:"retrievalLatencyMs,omitempty"`
+
+	// 低敏语义摘要
+	QuerySummary     SafeSummary `json:"querySummary,omitempty"`
+	PromptSummary    SafeSummary `json:"promptSummary,omitempty"`
+	RetrievalSummary SafeSummary `json:"retrievalSummary,omitempty"`
+	ToolSummary      SafeSummary `json:"toolSummary,omitempty"`
 
 	// 成本
 	CostUSD       float64 `json:"costUsd,omitempty"`

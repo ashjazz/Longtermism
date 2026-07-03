@@ -24,6 +24,9 @@ const (
 
 	// FailureBudgetExceeded 表示 token、成本或步骤预算被耗尽。
 	FailureBudgetExceeded FailureStatus = "budget_exceeded"
+
+	// FailureTelemetryExportFailed 表示观测上报失败，但主业务流程不应受影响。
+	FailureTelemetryExportFailed FailureStatus = "telemetry_export_failed"
 )
 
 // NewFailureTrace 创建带失败状态的 trace。
@@ -41,9 +44,8 @@ func NewFailureTrace(traceID, feature string, timestamp time.Time, status Failur
 
 // WithFailureStatus 把稳定失败状态写入 Trace.OutcomeStatus。
 //
-// 继续复用 OutcomeStatus 是一个有意的克制：P2 阶段先让“发生了哪类终止/降级”
-// 可聚合，而不急着扩展 Trace schema。后续如果需要 severity、retryable、
-// fallback_used 等维度，可以在不破坏这些状态常量的前提下再扩展字段。
+// 继续复用 OutcomeStatus 是为了保持历史 logger/eval 兼容。Trace.FailureStatus
+// 后续用于观测链路自身失败诊断，不能自动覆盖业务 outcome。
 func WithFailureStatus(status FailureStatus) TraceOption {
 	return WithOutcome(string(status))
 }

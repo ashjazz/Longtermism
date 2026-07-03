@@ -43,12 +43,12 @@
 - [X] T012 在 `pkg/ai/obs/observation_type.go` 实现 observation type 枚举与验证；质量门控：必须通过 T011，错误信息必须可诊断。
 - [X] T013 [P] 在 `pkg/ai/obs/safe_summary_test.go` 编写安全摘要测试；质量门控：先写失败测试，覆盖 hash、length、category、count、score、status、error_class，且敏感原文不得进入摘要。
 - [X] T014 在 `pkg/ai/obs/safe_summary.go` 实现 SafeSummary helper；质量门控：必须通过 T013，输入不可变，禁止保留原始字符串。
-- [ ] T015 [P] 在 `pkg/ai/obs/contract_record_test.go` 扩展契约记录测试；质量门控：先写失败测试，新增 request_id、service_trace_id、span_id、observation_type、failure_status、safe summaries 字段断言。
-- [ ] T016 在 `pkg/ai/obs/tracer_contract_test.go` 扩展 TracerContractRecord 与断言；质量门控：必须通过 T015，并保持现有 logger contract 兼容。
-- [ ] T017 [P] 在 `pkg/ai/obs/testutil/span_sink_test.go` 编写内存 span sink 测试；质量门控：先写失败测试，覆盖并发写入、顺序读取、防御性拷贝和 raw payload 隐私扫描。
-- [ ] T018 在 `pkg/ai/obs/testutil/span_sink.go` 实现内存 span sink；质量门控：必须通过 T017，`go test -race ./pkg/ai/obs/testutil` 不得出现数据竞争。
-- [ ] T019 [P] 在 `pkg/ai/obs/export_failure_test.go` 编写上报失败保护测试；质量门控：先写失败测试，验证 exporter 失败不会导致 `Tracer.Record` panic 或返回业务错误。
-- [ ] T020 在 `pkg/ai/obs/export_failure.go` 实现 telemetry export failure 状态 helper；质量门控：必须通过 T019，失败状态必须稳定为 `telemetry_export_failed`。
+- [X] T015 [P] 在 `pkg/ai/obs/contract_record_test.go` 扩展契约记录测试；质量门控：先写失败测试，新增 request_id、service_trace_id、span_id、observation_type、failure_status、safe summaries 字段断言。
+- [X] T016 在 `pkg/ai/obs/tracer_contract_test.go` 扩展 TracerContractRecord 与断言；质量门控：必须通过 T015，并保持现有 logger contract 兼容。
+- [X] T017 [P] 在 `pkg/ai/obs/testutil/span_sink_test.go` 编写内存 span sink 测试；质量门控：先写失败测试，覆盖并发写入、顺序读取、防御性拷贝和 raw payload 隐私扫描。
+- [X] T018 在 `pkg/ai/obs/testutil/span_sink.go` 实现内存 span sink；质量门控：必须通过 T017，`go test -race ./pkg/ai/obs/testutil` 不得出现数据竞争。
+- [X] T019 [P] 在 `pkg/ai/obs/export_failure_test.go` 编写上报失败保护测试；质量门控：先写失败测试，验证 exporter 失败不会导致 `Tracer.Record` panic 或返回业务错误。
+- [X] T020 在 `pkg/ai/obs/export_failure.go` 实现 telemetry export failure 状态 helper；质量门控：必须通过 T019，失败状态必须稳定为 `telemetry_export_failed`。
 
 ## Phase 3：US1 - 基础设施观测平面（优先级：P1）
 
