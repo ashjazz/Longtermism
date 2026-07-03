@@ -35,14 +35,14 @@
 
 **独立验收**：`go test ./pkg/ai/obs/...` 可以验证 request/span/AI/eval 关联身份、observation type、安全摘要、契约记录、本地 span sink 和上报失败状态，不访问真实外部平台。
 
-- [ ] T007 [P] 在 `pkg/ai/obs/correlation_test.go` 编写关联身份测试；质量门控：先写失败测试，覆盖 request_id、service_trace_id、span_id、ai_trace_id、session_id、eval_run_id 的构造与不可变复制。
-- [ ] T008 在 `pkg/ai/obs/correlation.go` 实现 CorrelationIdentity 与上下文辅助；质量门控：必须通过 T007，不得从 context 序列化任意敏感值。
-- [ ] T009 [P] 在 `pkg/ai/obs/baggage_policy_test.go` 编写 baggage 白名单测试；质量门控：先写失败测试，覆盖允许传播字段、禁止传播字段和敏感值拒绝。
-- [ ] T010 在 `pkg/ai/obs/baggage_policy.go` 实现 baggage 白名单策略；质量门控：必须通过 T009，只允许低敏关联字段跨服务传播。
-- [ ] T011 [P] 在 `pkg/ai/obs/observation_type_test.go` 编写 observation type 验证测试；质量门控：先写失败测试，覆盖 generation、retriever、tool、agent、evaluator 和未知类型失败。
-- [ ] T012 在 `pkg/ai/obs/observation_type.go` 实现 observation type 枚举与验证；质量门控：必须通过 T011，错误信息必须可诊断。
-- [ ] T013 [P] 在 `pkg/ai/obs/safe_summary_test.go` 编写安全摘要测试；质量门控：先写失败测试，覆盖 hash、length、category、count、score、status、error_class，且敏感原文不得进入摘要。
-- [ ] T014 在 `pkg/ai/obs/safe_summary.go` 实现 SafeSummary helper；质量门控：必须通过 T013，输入不可变，禁止保留原始字符串。
+- [X] T007 [P] 在 `pkg/ai/obs/correlation_test.go` 编写关联身份测试；质量门控：先写失败测试，覆盖 request_id、service_trace_id、span_id、ai_trace_id、session_id、eval_run_id 的构造与不可变复制。
+- [X] T008 在 `pkg/ai/obs/correlation.go` 实现 CorrelationIdentity 与上下文辅助；质量门控：必须通过 T007，不得从 context 序列化任意敏感值。
+- [X] T009 [P] 在 `pkg/ai/obs/baggage_policy_test.go` 编写 baggage 白名单测试；质量门控：先写失败测试，覆盖允许传播字段、禁止传播字段和敏感值拒绝。
+- [X] T010 在 `pkg/ai/obs/baggage_policy.go` 实现 baggage 白名单策略；质量门控：必须通过 T009，只允许低敏关联字段跨服务传播。
+- [X] T011 [P] 在 `pkg/ai/obs/observation_type_test.go` 编写 observation type 验证测试；质量门控：先写失败测试，覆盖 generation、retriever、tool、agent、evaluator 和未知类型失败。
+- [X] T012 在 `pkg/ai/obs/observation_type.go` 实现 observation type 枚举与验证；质量门控：必须通过 T011，错误信息必须可诊断。
+- [X] T013 [P] 在 `pkg/ai/obs/safe_summary_test.go` 编写安全摘要测试；质量门控：先写失败测试，覆盖 hash、length、category、count、score、status、error_class，且敏感原文不得进入摘要。
+- [X] T014 在 `pkg/ai/obs/safe_summary.go` 实现 SafeSummary helper；质量门控：必须通过 T013，输入不可变，禁止保留原始字符串。
 - [ ] T015 [P] 在 `pkg/ai/obs/contract_record_test.go` 扩展契约记录测试；质量门控：先写失败测试，新增 request_id、service_trace_id、span_id、observation_type、failure_status、safe summaries 字段断言。
 - [ ] T016 在 `pkg/ai/obs/tracer_contract_test.go` 扩展 TracerContractRecord 与断言；质量门控：必须通过 T015，并保持现有 logger contract 兼容。
 - [ ] T017 [P] 在 `pkg/ai/obs/testutil/span_sink_test.go` 编写内存 span sink 测试；质量门控：先写失败测试，覆盖并发写入、顺序读取、防御性拷贝和 raw payload 隐私扫描。
