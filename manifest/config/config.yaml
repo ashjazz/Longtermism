@@ -47,3 +47,17 @@ ai:
   eval:
     # 评估门禁阈值（§6）：指标恶化超过阈值即拦截 PR 合并。
     faithfulnessDropPct: 2
+
+# Observability v1：默认只启用本地/离线验证。
+# 真实平台 smoke 必须显式 opt-in，并通过环境变量或密钥管理器注入 endpoint 与凭据。
+observability:
+  enabled: false
+  serviceName: "ashjazz-aiagent"
+  environment: "local"
+  smoke:
+    enabled: false
+    # endpoint、publicKey、secretKey 等敏感或环境相关配置不得写入源码。
+    endpoint: ""
+    provider: ""
+  privacy:
+    allowRawContent: false

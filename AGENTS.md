@@ -106,9 +106,9 @@ docs/ adr/ journal/       设计文档、架构决策、开发日志
 - **推进顺序参见 `docs/ROADMAP.md`**：分阶段、带依赖关系，先立 §2 LLM 抽象层与 §6 评估骨架，其余能力才能"被证明有效"地增长。
 
 <!-- SPECKIT START -->
-当前 spec-kit 规格：`specs/001-agent-framework-spec/spec.md`
-当前 spec-kit 实施计划：`specs/001-agent-framework-spec/plan.md`
-当前 spec-kit 任务拆解与状态源：`specs/001-agent-framework-spec/tasks.md`
+当前 spec-kit 规格：`specs/002-dual-plane-observability/spec.md`
+当前 spec-kit 实施计划：`specs/002-dual-plane-observability/plan.md`
+当前 spec-kit 任务拆解与状态源：`specs/002-dual-plane-observability/tasks.md`
 <!-- SPECKIT END -->
 
 ## 常用命令

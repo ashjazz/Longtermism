@@ -32,3 +32,4 @@
 ## Notes
 
 - Validation iteration 1 passed. The spec keeps external platform names out of functional requirements and treats them as ADR-level assumptions, while preserving the user-facing outcomes: full request traceability, AI evaluation evidence, privacy boundaries, and learning-oriented delivery.
+- Validation iteration 2 passed. User Story 4 was expanded from retrospective-only learning to a full learning track covering observability theory, distributed tracing, AI Agent observability, engineering experiments, best practices, and reviewable learning assets.

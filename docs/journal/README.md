@@ -53,3 +53,14 @@
 - 不记录 API key、token、用户隐私、完整 prompt 或原始 tool 参数。
 - 每条日志应尽量链接到任务编号、ADR、测试命令或具体模块。
 - 如果只是设计判断且没有故障经过，优先写入 `docs/adr/`。
+
+## Observability v1 复盘分类
+
+Observability v1 的复盘不只记录“出了什么问题”，也记录理论概念如何在工程中被验证。建议优先记录以下四类场景：
+
+- **观测链路断裂**：request、service trace、AI trace、eval evidence 之间无法互相回链。
+- **字段泄露**：普通 trace、日志、span、score 或 smoke 输出中出现原始 query、完整 prompt、tool args、token、密钥或外部响应原文。
+- **eval 回链失败**：评估样例、指标、得分无法定位到对应请求和 AI 阶段。
+- **平台上报失败**：真实观测平台、collector 或 exporter 不可用时，主流程是否被影响，以及本地 fallback 是否保留诊断价值。
+
+记录这些场景时，应同时说明关联的理论概念、工程根因、修复方式和后续预防，使 journal 能和 `docs/observability/` 学习资产互相引用。
