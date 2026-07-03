@@ -21,6 +21,7 @@
 | [0004](0004-lightweight-harness-first.md) | 优先自建 lightweight Agent Harness | accepted | 核心 Agent Harness 自建，第三方框架只能作为 adapter 或 app-layer integration。 |
 | [0005](0005-vector-store-adapter-boundary.md) | 向量库 Adapter 边界 | accepted | `vectordb.Store` 是 RAG 上层唯一依赖，pgvector、Milvus、memory fake 都只能作为 adapter 实现同一契约。 |
 | [0006](0006-observability-adapter-boundary.md) | 可观测平台 Adapter 边界 | accepted | `obs.Tracer` 是 AI 内核唯一依赖，LangFuse、OTEL、本地日志都只能作为 adapter 映射同一 Trace 契约。 |
+| [0007](0007-dual-plane-observability-evaluation-v1.md) | 双平面观测与评估体系 v1 | accepted | OpenTelemetry 负责基础设施链路与上下文传播，Langfuse 负责 AI 语义观测与后续评估，二者通过 `obs.Trace` 和关联层串联。 |
 
 ## 维护规则
 
@@ -29,3 +30,4 @@
 ## 索引审查记录
 
 - 2026-06-30：T090 收口审查确认当前新增 ADR `0001`-`0006` 均已出现在索引中；状态覆盖 `deferred` 与 `accepted`，暂无 `proposed` 或 `superseded` 条目。
+- 2026-07-03：新增 ADR `0007`，记录 Observability v1 双平面观测与评估体系决策。
