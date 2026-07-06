@@ -83,11 +83,11 @@
 
 ### Tests
 
-- [ ] T034 [P] [US1] 在 `internal/eval/smoke/observability_chain_test.go` 编写完整请求链路 smoke 测试；质量门控：先写失败测试，覆盖 success、upstream_failure、retrieval_miss、tool_error、loop_detected、budget_exceeded、degraded 七类 outcome。
-- [ ] T035 [P] [US1] 在 `pkg/ai/obs/chain_recorder_test.go` 编写 RequestObservationChain 组装测试；质量门控：先写失败测试，验证阶段顺序、parent 关系、request_id 回查和 outcome 解释。
-- [ ] T036 [P] [US1] 在 `pkg/ai/obs/otel_mapper_test.go` 编写 `obs.Trace` 到 span 快照映射测试；质量门控：先写失败测试，覆盖 generation/retriever/tool/agent/evaluator 类型和敏感字段缺失。
-- [ ] T037 [P] [US1] 在 `pkg/ai/obs/dual_plane_link_test.go` 编写双平面 link 规则测试；质量门控：先写失败测试，覆盖 HTTP parent span、AI child/link span、eval link 和缺失身份失败。
-- [ ] T038 [P] [US2] 在 `internal/eval/smoke/eval_trace_link_test.go` 编写 eval-to-trace smoke 测试；质量门控：先写失败测试，覆盖 90% 回链率和失败样例定位。
+- [X] T034 [P] [US1] 在 `internal/eval/smoke/observability_chain_test.go` 编写完整请求链路 smoke 测试；质量门控：先写失败测试，覆盖 success、upstream_failure、retrieval_miss、tool_error、loop_detected、budget_exceeded、degraded 七类 outcome。
+- [X] T035 [P] [US1] 在 `pkg/ai/obs/chain_recorder_test.go` 编写 RequestObservationChain 组装测试；质量门控：先写失败测试，验证阶段顺序、parent 关系、request_id 回查和 outcome 解释。
+- [X] T036 [P] [US1] 在 `pkg/ai/obs/otel_mapper_test.go` 编写 `obs.Trace` 到 span 快照映射测试；质量门控：先写失败测试，覆盖 generation/retriever/tool/agent/evaluator 类型和敏感字段缺失。
+- [X] T037 [P] [US1] 在 `pkg/ai/obs/dual_plane_link_test.go` 编写双平面 link 规则测试；质量门控：先写失败测试，覆盖 HTTP parent span、AI child/link span、eval link 和缺失身份失败。
+- [X] T038 [P] [US2] 在 `internal/eval/smoke/eval_trace_link_test.go` 编写 eval-to-trace smoke 测试；质量门控：先写失败测试，覆盖 90% 回链率和失败样例定位。
 
 ### Implementation
 
