@@ -64,37 +64,55 @@ go test ./pkg/ai/obs -run 'Test.*Contract|Test.*Privacy' -count=1
 - 普通 payload 不包含原始 query、完整 prompt、tool args 或密钥。
 - 多条 trace 顺序稳定。
 
-### 3. 请求关联验证
+### 3. 双平面请求关联验证
 
-目标：证明一次请求可以关联服务入口、AI 阶段、检索/工具/Agent 阶段和最终 outcome。
+目标：证明一次请求可以关联服务入口、AI 阶段、检索/工具/Agent 阶段、eval evidence 和最终 outcome。
 
-预期命令形态（Phase 4 双平面关联层落地后启用）：
+当前测试命令：
 
 ```bash
 go test ./internal/eval/smoke -run TestObservabilityChainSmoke -count=1
 ```
 
+当前命令入口：
+
+```bash
+go run ./cmd/eval-smoke -smoke observability-chain -scenario success
+go run ./cmd/eval-smoke -smoke observability-chain -scenario retrieval_miss
+```
+
 期望结果：
 
-- 给定 `request_id` 可以找到所有相关阶段。
+- 给定 `request_id` 可以找到基础设施入口、AI 语义阶段、eval evidence 和最终 outcome。
 - 成功、失败、终止和降级状态都能被解释。
 - 至少覆盖成功、上游失败、检索 miss、工具错误、循环终止、预算耗尽和降级 7 类 outcome。
+
+双平面查询关系：
+
+- `request_id` 是一次用户请求的总入口，用于查询完整 `RequestObservationChain`。
+- `service_trace_id` 是基础设施平面的 trace 身份，用于定位 HTTP/service、DB、cache 或外部调用等传统服务 span。
+- `span_id` 是基础设施平面的当前或父 span 身份；AI 语义记录通过 `parent_span_id` 指回它。
+- `ai_trace_id` 是 AI 语义平面的 trace 身份，用于查询 generation、retriever、tool、agent 和 evaluator 等 AI 阶段。
+- `eval_run_id + sample_id` 是评估证据入口，用于回链到 `request_id` 与 `ai_trace_id`，再反查服务入口和 AI 阶段。
+
+默认 `observability-chain` 命令会输出一份本地 JSON 结果，包含 `RequestID`、`ServiceTraceID`、`RootSpanID`、`RootAITraceID`、`EvalRunID`、`ServiceStages`、`AIObservations` 和 `EvalEvidence`。该命令不访问真实 OTel collector、Langfuse 或模型服务。
 
 ### 4. Eval-to-trace 回链验证
 
 目标：证明评估报告能回链到产生输出的请求和 AI 阶段。
 
-预期命令形态（Phase 4/5 评估证据回链落地后启用）：
+当前命令：
 
 ```bash
-go test ./internal/eval/smoke -run TestEvalEvidenceLinksToTrace -count=1
+go test ./internal/eval/smoke -run TestEvalTraceLinkSmoke -count=1
 ```
 
 期望结果：
 
 - 评估样例包含 dataset、sample、metric、score。
-- 至少 90% 样例能回链到 `request_id` 与 `ai_trace_id`。
-- 失败样例可以定位对应 trace 和失败摘要。
+- 至少 90% 样例能回链到 `request_id`、`ai_trace_id`、`service_trace_id` 与 `span_id`。
+- 低于 90% 时失败，并列出缺失 `request_id`、`ai_trace_id`、`service_trace_id` 或 `span_id` 的样例。
+- 指标低于阈值的失败样例可以定位对应 `request_id`、`ai_trace_id`、metric 和失败摘要。
 
 ### 5. 上报失败降级验证
 

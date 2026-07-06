@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -186,10 +187,13 @@ func renderPrompt(ctx context.Context, template prompt.Template, sample aieval.S
 }
 
 func recordTrace(ctx context.Context, cfg Config, sample aieval.Sample, rendered prompt.Rendered, model string, usage llm.Usage, startedAt time.Time, status string) {
+	identity := correlationIdentityForP0Sample(sample)
 	trace := obs.NewTrace(
-		"p0-smoke-"+sample.ID,
+		identity.AITraceID,
 		featureName,
 		startedAt,
+		obs.WithCorrelationIdentity(identity),
+		obs.WithObservationType(obs.ObservationTypeGeneration),
 		obs.WithQuery(shortHash(sample.Query), "", len([]rune(sample.Query))),
 		obs.WithModel(model),
 		obs.WithPrompt(rendered.Version, rendered.Hash),
@@ -199,6 +203,15 @@ func recordTrace(ctx context.Context, cfg Config, sample aieval.Sample, rendered
 		obs.WithOutcome(status),
 	)
 	cfg.Tracer.Record(ctx, trace)
+}
+
+func correlationIdentityForP0Sample(sample aieval.Sample) obs.CorrelationIdentity {
+	idPart := sanitizeTraceIDPart(sample.ID)
+	return obs.NewCorrelationIdentity(
+		"req-p0-smoke-"+idPart,
+		obs.WithServiceSpan("svc-trace-p0-smoke-"+idPart, "span-p0-smoke-"+idPart),
+		obs.WithAITraceID("ai-trace-p0-smoke-"+idPart),
+	)
 }
 
 func smokeMetrics() []aieval.Metric {
@@ -219,6 +232,21 @@ func ptrFloat64(value float64) *float64 {
 func shortHash(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:8])
+}
+
+var traceIDPartUnsafePattern = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+
+func sanitizeTraceIDPart(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "sample"
+	}
+	sanitized := traceIDPartUnsafePattern.ReplaceAllString(trimmed, "-")
+	sanitized = strings.Trim(sanitized, "-_")
+	if sanitized == "" {
+		return "sample"
+	}
+	return sanitized
 }
 
 func resolveLocalPath(path string) string {

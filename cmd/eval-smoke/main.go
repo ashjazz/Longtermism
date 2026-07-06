@@ -14,6 +14,9 @@ import (
 const (
 	defaultDatasetPath    = smoke.DefaultDatasetPath
 	defaultDatasetVersion = smoke.DefaultDatasetVersion
+
+	smokeModeP0                 = "p0"
+	smokeModeObservabilityChain = "observability-chain"
 )
 
 func main() {
@@ -41,24 +44,58 @@ func runE(ctx context.Context, args []string, stdout io.Writer) error {
 
 	datasetPath := flags.String("dataset", defaultDatasetPath, "local golden dataset json path")
 	datasetVersion := flags.String("dataset-version", defaultDatasetVersion, "stable dataset version written to the eval report")
+	smokeMode := flags.String("smoke", smokeModeP0, "smoke mode: p0 or observability-chain")
+	observabilityScenario := flags.String("scenario", string(smoke.ObservabilityChainScenarioSuccess), "observability-chain scenario")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("parse flags: %w", err)
 	}
 
+	switch *smokeMode {
+	case smokeModeP0:
+		return runP0Smoke(ctx, stdout, *datasetPath, *datasetVersion)
+	case smokeModeObservabilityChain:
+		return runObservabilityChainSmoke(ctx, stdout, smoke.ObservabilityChainScenario(*observabilityScenario))
+	default:
+		return fmt.Errorf("unsupported smoke mode %q", *smokeMode)
+	}
+}
+
+func runP0Smoke(ctx context.Context, stdout io.Writer, datasetPath, datasetVersion string) error {
 	// 命令入口保持很薄：真正的 prompt -> fake LLM -> trace -> eval 闭环放在
 	// internal/eval/smoke 中，便于单测直接断言每条样例产生的 trace 证据。
 	result, err := smoke.RunP0(ctx, smoke.Config{
-		DatasetPath:    *datasetPath,
-		DatasetVersion: *datasetVersion,
+		DatasetPath:    datasetPath,
+		DatasetVersion: datasetVersion,
 	})
 	if err != nil {
 		return err
 	}
 
+	return writeJSON(stdout, result.Report, "write eval smoke report")
+}
+
+func runObservabilityChainSmoke(ctx context.Context, stdout io.Writer, scenario smoke.ObservabilityChainScenario) error {
+	result, err := smoke.RunObservabilityChainSmoke(ctx, smoke.ObservabilityChainSmokeConfig{
+		Scenario:       scenario,
+		RequestID:      "req-observability-chain-smoke",
+		ServiceTraceID: "svc-trace-observability-chain-smoke",
+		SpanID:         "span-observability-chain-smoke",
+		AITraceID:      "ai-trace-observability-chain-smoke",
+		EvalRunID:      "eval-run-observability-chain-smoke",
+		SampleID:       "sample-observability-chain-smoke",
+	})
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(stdout, result, "write observability chain smoke report")
+}
+
+func writeJSON(stdout io.Writer, value any, action string) error {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(result.Report); err != nil {
-		return fmt.Errorf("write eval smoke report: %w", err)
+	if err := encoder.Encode(value); err != nil {
+		return fmt.Errorf("%s: %w", action, err)
 	}
 	return nil
 }

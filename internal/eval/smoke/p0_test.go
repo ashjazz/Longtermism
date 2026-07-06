@@ -65,6 +65,18 @@ func TestRunP0BuildsPromptLLMTraceEvalPath(t *testing.T) {
 			if trace.TraceID == "" {
 				t.Fatalf("trace id is empty")
 			}
+			if trace.RequestID == "" {
+				t.Fatalf("request id is empty")
+			}
+			if trace.ServiceTraceID == "" {
+				t.Fatalf("service trace id is empty")
+			}
+			if trace.SpanID == "" {
+				t.Fatalf("span id is empty")
+			}
+			if trace.ObservationType != obs.ObservationTypeGeneration {
+				t.Fatalf("observation type = %q, want generation", trace.ObservationType)
+			}
 			if trace.Feature != "p0_eval_smoke" {
 				t.Fatalf("feature = %q, want p0_eval_smoke", trace.Feature)
 			}
@@ -91,6 +103,20 @@ func TestRunP0BuildsPromptLLMTraceEvalPath(t *testing.T) {
 			}
 			if trace.OutcomeStatus != "success" {
 				t.Fatalf("outcome status = %q, want success", trace.OutcomeStatus)
+			}
+
+			wantSuffix := sanitizeTraceIDPart(sample.ID)
+			if !strings.HasSuffix(trace.RequestID, wantSuffix) {
+				t.Fatalf("request id = %q, want suffix %q", trace.RequestID, wantSuffix)
+			}
+			if !strings.HasSuffix(trace.ServiceTraceID, wantSuffix) {
+				t.Fatalf("service trace id = %q, want suffix %q", trace.ServiceTraceID, wantSuffix)
+			}
+			if !strings.HasSuffix(trace.SpanID, wantSuffix) {
+				t.Fatalf("span id = %q, want suffix %q", trace.SpanID, wantSuffix)
+			}
+			if !strings.HasSuffix(trace.TraceID, wantSuffix) {
+				t.Fatalf("ai trace id = %q, want suffix %q", trace.TraceID, wantSuffix)
 			}
 		})
 	}
