@@ -90,6 +90,19 @@ func TestBuildDualPlaneLinksRejectsMissingIdentity(t *testing.T) {
 			wantErr: "ai_trace_id",
 		},
 		{
+			name: "missing ai observation id",
+			input: DualPlaneLinkInput{
+				Identity: NewCorrelationIdentity(
+					"req-link-001",
+					WithServiceSpan("svc-trace-link-001", "span-http-root-001"),
+					WithAITraceID("ai-trace-link-001"),
+					WithEvalRunID("eval-run-link-001"),
+				),
+				EvalSampleID: "sample-link-001",
+			},
+			wantErr: "ai_observation_id",
+		},
+		{
 			name: "missing eval identity",
 			input: DualPlaneLinkInput{
 				Identity: NewCorrelationIdentity(
@@ -101,6 +114,19 @@ func TestBuildDualPlaneLinksRejectsMissingIdentity(t *testing.T) {
 				EvalSampleID:    "",
 			},
 			wantErr: "eval",
+		},
+		{
+			name: "missing eval sample id",
+			input: DualPlaneLinkInput{
+				Identity: NewCorrelationIdentity(
+					"req-link-001",
+					WithServiceSpan("svc-trace-link-001", "span-http-root-001"),
+					WithAITraceID("ai-trace-link-001"),
+					WithEvalRunID("eval-run-link-001"),
+				),
+				AIObservationID: "obs-generation-link-001",
+			},
+			wantErr: "eval_sample_id",
 		},
 	}
 

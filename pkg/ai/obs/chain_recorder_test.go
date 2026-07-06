@@ -128,6 +128,34 @@ func TestRequestObservationChainRecorderRejectsUnexplainedOutcome(t *testing.T) 
 	}
 }
 
+func TestRequestObservationChainRecorderRejectsUnknownOutcome(t *testing.T) {
+	recorder := NewRequestObservationChainRecorder()
+	identity := NewCorrelationIdentity(
+		"req-chain-unknown-outcome",
+		WithServiceSpan("svc-trace-chain-unknown-outcome", "span-chain-unknown-outcome"),
+		WithAITraceID("ai-trace-chain-unknown-outcome"),
+	)
+
+	_, err := recorder.Record(context.Background(), RequestObservationChainInput{
+		Identity:           identity,
+		Feature:            "rag_qa",
+		OutcomeStatus:      "successed",
+		OutcomeExplanation: "typo should not be accepted as stable outcome",
+		ServiceStages: []RequestObservationServiceStage{
+			{
+				Name:           "http.server.request",
+				RequestID:      identity.RequestID,
+				ServiceTraceID: identity.ServiceTraceID,
+				SpanID:         identity.SpanID,
+				Status:         "success",
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("Record() error = nil, want unknown outcome error")
+	}
+}
+
 func assertRequestObservationChainIdentity(t *testing.T, chain RequestObservationChain, identity CorrelationIdentity) {
 	t.Helper()
 

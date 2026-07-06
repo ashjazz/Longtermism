@@ -91,11 +91,11 @@
 
 ### Implementation
 
-- [ ] T039 [US1] 在 `pkg/ai/obs/chain_recorder.go` 实现 RequestObservationChain 记录器；质量门控：必须通过 T035，不得记录原始 query、prompt 或 tool args。
-- [ ] T040 [US1] 在 `pkg/ai/obs/otel_mapper.go` 实现 AI trace 到 span 快照的纯映射；质量门控：必须通过 T036，核心逻辑不得依赖真实 exporter。
-- [ ] T041 [US1] 在 `pkg/ai/obs/otel_tracer.go` 实现 OTel-style tracer adapter 壳层；质量门控：必须复用 T016 contract，不得把 OTel 类型暴露到 `obs.Tracer` 接口。
-- [ ] T042 [US1] 在 `pkg/ai/obs/dual_plane_link.go` 实现双平面 parent/link 规则；质量门控：必须通过 T037，缺失关键身份时必须返回可诊断错误。
-- [ ] T043 [US1] 在 `internal/eval/smoke/observability_chain.go` 实现离线完整请求链路 smoke；质量门控：必须通过 T034，默认不依赖真实平台。
+- [X] T039 [US1] 在 `pkg/ai/obs/chain_recorder.go` 实现 RequestObservationChain 记录器；质量门控：必须通过 T035，不得记录原始 query、prompt 或 tool args。
+- [X] T040 [US1] 在 `pkg/ai/obs/otel_mapper.go` 实现 AI trace 到 span 快照的纯映射；质量门控：必须通过 T036，核心逻辑不得依赖真实 exporter。
+- [X] T041 [US1] 在 `pkg/ai/obs/otel_tracer.go` 实现 OTel-style tracer adapter 壳层；质量门控：必须复用 T016 contract，不得把 OTel 类型暴露到 `obs.Tracer` 接口。
+- [X] T042 [US1] 在 `pkg/ai/obs/dual_plane_link.go` 实现双平面 parent/link 规则；质量门控：必须通过 T037，缺失关键身份时必须返回可诊断错误。
+- [X] T043 [US1] 在 `internal/eval/smoke/observability_chain.go` 实现离线完整请求链路 smoke；质量门控：必须通过 T034，默认不依赖真实平台。
 - [ ] T044 [US2] 在 `internal/eval/smoke/p0.go` 为 P0 smoke 注入 request_id、service_trace_id、span_id 与 ai_trace_id；质量门控：默认 smoke 仍不依赖真实模型服务。
 - [ ] T045 [US2] 在 `internal/eval/smoke/eval_trace_link.go` 实现 eval-to-trace smoke 组合；质量门控：必须通过 T038，低于 90% 回链率时失败并列出缺失样例。
 - [ ] T046 [US1] 在 `cmd/eval-smoke/main.go` 增加 observability chain smoke 命令入口；质量门控：命令默认离线运行，失败时返回非零退出码并打印报告路径或失败原因。

@@ -143,6 +143,7 @@ func RunTracerContract(t *testing.T, newTracer TracerContractFactory) {
 			"trace-contract-first",
 			"p0_smoke",
 			time.Date(2026, time.June, 29, 16, 30, 0, 0, time.UTC),
+			WithObservationType(ObservationTypeGeneration),
 			WithOutcome("success"),
 		))
 		tracer.Record(context.Background(), NewFailureTrace(
@@ -150,6 +151,7 @@ func RunTracerContract(t *testing.T, newTracer TracerContractFactory) {
 			"agent_run",
 			time.Date(2026, time.June, 29, 16, 31, 0, 0, time.UTC),
 			FailureLoopDetected,
+			WithObservationType(ObservationTypeAgent),
 		))
 
 		records := sink.Records(t)
