@@ -24,9 +24,31 @@ make obs-smoke
 
 - Phase 1 阶段输出清晰 TODO。
 - 不要求真实观测平台 endpoint、API key 或付费服务。
-- 后续 T019-T031 会把该入口替换为完整离线请求链路 smoke。
+- Phase 3 已落地基础设施平面离线测试；`make obs-smoke` 仍是聚合入口占位，后续任务会把它替换为完整离线请求链路 smoke。
 
-### 1. Contract 验证
+### 1. 基础设施平面离线验证
+
+目标：证明应用层观测配置、service resource、provider lifecycle、HTTP/service span、handler-to-core 传播和 exporter 失败保护都能在本地验证，且默认不访问真实观测平台。
+
+当前命令：
+
+```bash
+go test ./internal/cmd -count=1
+go test ./internal/eval/smoke -run 'TestInfrastructureSpanSmoke|TestContextPropagationSmoke|TestInfrastructureExportFailureSmoke' -count=1
+```
+
+期望结果：
+
+- 默认配置解析为 `noop`，不会访问真实平台。
+- `local` sink 只启用本地离线记录。
+- 真实平台缺少 endpoint 或凭据时解析为运行态关闭，并保留诊断原因。
+- service resource 包含 `service.name` 与 `deployment.environment`，并支持可选 `service.version`、`service.instance.id`。
+- TracerProvider lifecycle 初始化与 shutdown 都是幂等的，exporter 失败记录为 `telemetry_export_failed`，并保留低敏错误消息。
+- HTTP/service span 离线快照包含 method、path、status、duration、request_id、service_trace_id、span_id 和 outcome。
+- handler-to-core 传播只携带低敏关联身份，敏感 baggage 会被拒绝。
+- exporter 失败不会覆盖业务结果；业务自身失败仍作为业务错误返回。
+
+### 2. Contract 验证
 
 目标：证明所有 tracer/adapter 都保留稳定字段、记录顺序、防御性拷贝和隐私边界。
 
@@ -42,11 +64,11 @@ go test ./pkg/ai/obs -run 'Test.*Contract|Test.*Privacy' -count=1
 - 普通 payload 不包含原始 query、完整 prompt、tool args 或密钥。
 - 多条 trace 顺序稳定。
 
-### 2. 请求关联验证
+### 3. 请求关联验证
 
 目标：证明一次请求可以关联服务入口、AI 阶段、检索/工具/Agent 阶段和最终 outcome。
 
-预期命令形态：
+预期命令形态（Phase 4 双平面关联层落地后启用）：
 
 ```bash
 go test ./internal/eval/smoke -run TestObservabilityChainSmoke -count=1
@@ -58,11 +80,11 @@ go test ./internal/eval/smoke -run TestObservabilityChainSmoke -count=1
 - 成功、失败、终止和降级状态都能被解释。
 - 至少覆盖成功、上游失败、检索 miss、工具错误、循环终止、预算耗尽和降级 7 类 outcome。
 
-### 3. Eval-to-trace 回链验证
+### 4. Eval-to-trace 回链验证
 
 目标：证明评估报告能回链到产生输出的请求和 AI 阶段。
 
-预期命令形态：
+预期命令形态（Phase 4/5 评估证据回链落地后启用）：
 
 ```bash
 go test ./internal/eval/smoke -run TestEvalEvidenceLinksToTrace -count=1
@@ -74,11 +96,17 @@ go test ./internal/eval/smoke -run TestEvalEvidenceLinksToTrace -count=1
 - 至少 90% 样例能回链到 `request_id` 与 `ai_trace_id`。
 - 失败样例可以定位对应 trace 和失败摘要。
 
-### 4. 上报失败降级验证
+### 5. 上报失败降级验证
 
 目标：证明观测后端不可用不会影响用户主流程。
 
-预期命令形态：
+当前基础设施平面命令：
+
+```bash
+go test ./internal/eval/smoke -run TestInfrastructureExportFailureSmoke -count=1
+```
+
+AI 语义平面预期命令形态：
 
 ```bash
 go test ./pkg/ai/obs -run TestTelemetryExportFailureDoesNotFailRequest -count=1
@@ -89,7 +117,7 @@ go test ./pkg/ai/obs -run TestTelemetryExportFailureDoesNotFailRequest -count=1
 - adapter 上报失败时主流程仍返回原业务结果或明确业务失败。
 - 观测失败本身被记录为可诊断状态。
 
-### 5. 学习资产验证
+### 6. 学习资产验证
 
 目标：证明主要工程切片都有学习目标和复盘链路。
 

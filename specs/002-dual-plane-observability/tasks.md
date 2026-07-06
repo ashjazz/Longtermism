@@ -58,22 +58,22 @@
 
 ### Tests
 
-- [ ] T021 [P] [US1] 在 `internal/cmd/observability_config_test.go` 编写应用观测配置测试；质量门控：先写失败测试，覆盖默认关闭、启用本地 sink、真实平台未配置时不访问外部服务。
-- [ ] T022 [P] [US1] 在 `internal/cmd/observability_resource_test.go` 编写 OTel resource 语义测试；质量门控：先写失败测试，覆盖 service.name、deployment.environment 和版本/实例可选字段。
-- [ ] T023 [P] [US1] 在 `internal/cmd/observability_lifecycle_test.go` 编写 TracerProvider 生命周期测试；质量门控：先写失败测试，覆盖初始化幂等、shutdown 幂等和 exporter 失败保护。
-- [ ] T024 [P] [US1] 在 `internal/eval/smoke/infrastructure_span_test.go` 编写 HTTP/service span 离线 smoke 测试；质量门控：先写失败测试，覆盖 method、path、status、duration、request_id、service_trace_id、span_id。
-- [ ] T025 [P] [US1] 在 `internal/eval/smoke/context_propagation_test.go` 编写 handler-to-core 上下文传播测试；质量门控：先写失败测试，验证 request_id、service_trace_id、span_id 能从应用层传入 `pkg/ai` 调用边界。
-- [ ] T026 [P] [US1] 在 `internal/eval/smoke/infrastructure_export_failure_test.go` 编写基础平面上报失败 smoke 测试；质量门控：先写失败测试，验证基础设施 exporter 失败不影响业务结果。
+- [X] T021 [P] [US1] 在 `internal/cmd/observability_config_test.go` 编写应用观测配置测试；质量门控：先写失败测试，覆盖默认关闭、启用本地 sink、真实平台未配置时不访问外部服务。
+- [X] T022 [P] [US1] 在 `internal/cmd/observability_resource_test.go` 编写 OTel resource 语义测试；质量门控：先写失败测试，覆盖 service.name、deployment.environment 和版本/实例可选字段。
+- [X] T023 [P] [US1] 在 `internal/cmd/observability_lifecycle_test.go` 编写 TracerProvider 生命周期测试；质量门控：先写失败测试，覆盖初始化幂等、shutdown 幂等和 exporter 失败保护。
+- [X] T024 [P] [US1] 在 `internal/eval/smoke/infrastructure_span_test.go` 编写 HTTP/service span 离线 smoke 测试；质量门控：先写失败测试，覆盖 method、path、status、duration、request_id、service_trace_id、span_id。
+- [X] T025 [P] [US1] 在 `internal/eval/smoke/context_propagation_test.go` 编写 handler-to-core 上下文传播测试；质量门控：先写失败测试，验证 request_id、service_trace_id、span_id 能从应用层传入 `pkg/ai` 调用边界。
+- [X] T026 [P] [US1] 在 `internal/eval/smoke/infrastructure_export_failure_test.go` 编写基础平面上报失败 smoke 测试；质量门控：先写失败测试，验证基础设施 exporter 失败不影响业务结果。
 
 ### Implementation
 
-- [ ] T027 [US1] 在 `internal/cmd/observability.go` 实现 GoFrame/OTel 观测初始化与本地/no-op sink 装配；质量门控：必须通过 T021，不得要求真实平台配置。
-- [ ] T028 [US1] 在 `internal/cmd/observability_resource.go` 实现 service resource 构造；质量门控：必须通过 T022，serviceName 与 environment 必须来自配置且有安全默认值。
-- [ ] T029 [US1] 在 `internal/cmd/observability_lifecycle.go` 实现初始化与 shutdown 生命周期封装；质量门控：必须通过 T023，重复 shutdown 不得 panic。
-- [ ] T030 [US1] 在 `internal/eval/smoke/infrastructure_span.go` 实现基础设施 span 离线 smoke；质量门控：必须通过 T024，默认不依赖真实平台。
-- [ ] T031 [US1] 在 `internal/eval/smoke/context_propagation.go` 实现上下文传播验证 helper；质量门控：必须通过 T025，只传播低敏关联字段。
-- [ ] T032 [US1] 在 `internal/eval/smoke/infrastructure_export_failure.go` 实现基础平面上报失败验证；质量门控：必须通过 T026，失败状态必须可诊断。
-- [ ] T033 [US1] 在 `specs/002-dual-plane-observability/quickstart.md` 更新基础设施平面离线验证步骤；质量门控：必须说明默认验证与真实平台 opt-in 的区别。
+- [X] T027 [US1] 在 `internal/cmd/observability.go` 实现 GoFrame/OTel 观测初始化与本地/no-op sink 装配；质量门控：必须通过 T021，不得要求真实平台配置。
+- [X] T028 [US1] 在 `internal/cmd/observability_resource.go` 实现 service resource 构造；质量门控：必须通过 T022，serviceName 与 environment 必须来自配置且有安全默认值。
+- [X] T029 [US1] 在 `internal/cmd/observability_lifecycle.go` 实现初始化与 shutdown 生命周期封装；质量门控：必须通过 T023，重复 shutdown 不得 panic。
+- [X] T030 [US1] 在 `internal/eval/smoke/infrastructure_span.go` 实现基础设施 span 离线 smoke；质量门控：必须通过 T024，默认不依赖真实平台。
+- [X] T031 [US1] 在 `internal/eval/smoke/context_propagation.go` 实现上下文传播验证 helper；质量门控：必须通过 T025，只传播低敏关联字段。
+- [X] T032 [US1] 在 `internal/eval/smoke/infrastructure_export_failure.go` 实现基础平面上报失败验证；质量门控：必须通过 T026，失败状态必须可诊断。
+- [X] T033 [US1] 在 `specs/002-dual-plane-observability/quickstart.md` 更新基础设施平面离线验证步骤；质量门控：必须说明默认验证与真实平台 opt-in 的区别。
 
 ## Phase 4：US1/US2 - 双平面关联层（优先级：P1）
 
