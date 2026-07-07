@@ -15,8 +15,7 @@ func TestRunnerAddsEvaluationEvidenceWithTraceIdentity(t *testing.T) {
 		obs.WithAITraceID("ai-trace-runner-trace-link-001"),
 	)
 	runner := NewRunner(
-		"agent-golden-v1",
-		WithDatasetName("agent-golden"),
+		DatasetIdentity{Name: "agent-golden", Version: "agent-golden-v1"},
 		WithEvalRunID("eval-run-runner-trace-link-001"),
 		WithMetricThreshold("answer_relevance", 0.8),
 	)
@@ -42,11 +41,11 @@ func TestRunnerAddsEvaluationEvidenceWithTraceIdentity(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if report.DatasetName != "agent-golden" {
-		t.Fatalf("DatasetName = %q, want agent-golden", report.DatasetName)
+	if report.Dataset.Name != "agent-golden" {
+		t.Fatalf("Dataset.Name = %q, want agent-golden", report.Dataset.Name)
 	}
-	if report.DatasetVersion != "agent-golden-v1" {
-		t.Fatalf("DatasetVersion = %q, want agent-golden-v1", report.DatasetVersion)
+	if report.Dataset.Version != "agent-golden-v1" {
+		t.Fatalf("Dataset.Version = %q, want agent-golden-v1", report.Dataset.Version)
 	}
 	if report.SampleCount != 1 {
 		t.Fatalf("SampleCount = %d, want 1", report.SampleCount)
@@ -60,8 +59,8 @@ func TestRunnerAddsEvaluationEvidenceWithTraceIdentity(t *testing.T) {
 	if evidence.EvalRunID != "eval-run-runner-trace-link-001" {
 		t.Fatalf("EvalRunID = %q, want eval-run-runner-trace-link-001", evidence.EvalRunID)
 	}
-	if evidence.DatasetName != "agent-golden" || evidence.DatasetVersion != "agent-golden-v1" {
-		t.Fatalf("dataset identity = (%q, %q), want agent-golden/agent-golden-v1", evidence.DatasetName, evidence.DatasetVersion)
+	if evidence.Dataset.Name != "agent-golden" || evidence.Dataset.Version != "agent-golden-v1" {
+		t.Fatalf("dataset identity = (%q, %q), want agent-golden/agent-golden-v1", evidence.Dataset.Name, evidence.Dataset.Version)
 	}
 	if evidence.SampleID != "sample-runner-trace-link-001" {
 		t.Fatalf("SampleID = %q, want sample-runner-trace-link-001", evidence.SampleID)
@@ -88,8 +87,7 @@ func TestRunnerAddsEvaluationEvidenceWithTraceIdentity(t *testing.T) {
 
 func TestRunnerReportsMissingTraceLinkForSingleSample(t *testing.T) {
 	runner := NewRunner(
-		"agent-golden-v1",
-		WithDatasetName("agent-golden"),
+		DatasetIdentity{Name: "agent-golden", Version: "agent-golden-v1"},
 		WithEvalRunID("eval-run-missing-trace-link-001"),
 		WithMetricThreshold("answer_relevance", 0.8),
 	)
@@ -127,8 +125,7 @@ func TestRunnerAddsFailedRegressionEvidenceForBelowThresholdMetric(t *testing.T)
 		obs.WithAITraceID("ai-trace-runner-regression-001"),
 	)
 	runner := NewRunner(
-		"agent-golden-v1",
-		WithDatasetName("agent-golden"),
+		DatasetIdentity{Name: "agent-golden", Version: "agent-golden-v1"},
 		WithEvalRunID("eval-run-runner-regression-001"),
 		WithMetricThreshold("answer_relevance", 0.8),
 	)

@@ -98,6 +98,19 @@ type logEntry struct {
 	RetrievalSummary SafeSummary `json:"retrieval_summary,omitempty"`
 	ToolSummary      SafeSummary `json:"tool_summary,omitempty"`
 
+	AgentStepIndex    int    `json:"agent_step_index,omitempty"`
+	ToolCallID        string `json:"tool_call_id,omitempty"`
+	ToolName          string `json:"tool_name,omitempty"`
+	TerminationReason string `json:"termination_reason,omitempty"`
+	LoopDetected      bool   `json:"loop_detected,omitempty"`
+	BudgetExceeded    bool   `json:"budget_exceeded,omitempty"`
+
+	ProviderName   string `json:"provider_name,omitempty"`
+	RequestedModel string `json:"requested_model,omitempty"`
+	CircuitState   string `json:"circuit_state,omitempty"`
+	Degraded       bool   `json:"degraded,omitempty"`
+	RateLimited    bool   `json:"rate_limited,omitempty"`
+
 	CostUSD       float64  `json:"cost_usd,omitempty"`
 	OutcomeStatus string   `json:"outcome_status"`
 	UserRating    *int     `json:"user_rating,omitempty"`
@@ -144,6 +157,19 @@ func newLogEntry(trace Trace) logEntry {
 		PromptSummary:    cloneSafeSummary(trace.PromptSummary),
 		RetrievalSummary: cloneSafeSummary(trace.RetrievalSummary),
 		ToolSummary:      cloneSafeSummary(trace.ToolSummary),
+
+		AgentStepIndex:    trace.AgentStepIndex,
+		ToolCallID:        trace.ToolCallID,
+		ToolName:          trace.ToolName,
+		TerminationReason: trace.TerminationReason,
+		LoopDetected:      trace.LoopDetected,
+		BudgetExceeded:    trace.BudgetExceeded,
+
+		ProviderName:   trace.ProviderName,
+		RequestedModel: trace.RequestedModel,
+		CircuitState:   trace.CircuitState,
+		Degraded:       trace.Degraded,
+		RateLimited:    trace.RateLimited,
 
 		CostUSD:       trace.CostUSD,
 		OutcomeStatus: trace.OutcomeStatus,

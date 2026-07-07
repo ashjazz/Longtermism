@@ -118,13 +118,13 @@
 
 ### Implementation
 
-- [ ] T054 [US1] 在 `pkg/ai/rag/retriever.go` 补充检索阶段观测摘要接入点；质量门控：必须通过 T048，新增逻辑不得改变检索结果语义。
-- [ ] T055 [US1] 在 `pkg/ai/agent/executor.go` 补充 Agent step 与 tool 调用观测摘要接入点；质量门控：必须通过 T049，不得解析旧式文本 action。
-- [ ] T056 [US1] 在 `pkg/ai/resilience/provider_wrapper.go` 补充 degraded/failure outcome 观测接入点；质量门控：必须通过 T050，4xx 仍不得触发上游熔断。
-- [ ] T057 [US2] 在 `pkg/ai/eval/evidence.go` 实现 EvaluationEvidence 类型与验证；质量门控：必须通过 T051，单样例错误不得静默吞掉。
-- [ ] T058 [US2] 在 `pkg/ai/eval/runner.go` 扩展 Report 以携带 trace identity 与 evidence；质量门控：必须通过 T052，并保持现有 eval runner 测试兼容。
-- [ ] T059 [US2] 在 `cmd/eval-smoke/main.go` 输出 eval evidence 摘要；质量门控：输出不得包含原始 prompt 或用户输入，只显示 sample、metric、score 和 trace identity。
-- [ ] T060 [US2] 在 `specs/002-dual-plane-observability/quickstart.md` 更新 eval evidence 验证命令；质量门控：命令必须与实现入口一致。
+- [X] T054 [US1] 在 `pkg/ai/rag/retriever.go` 补充检索阶段观测摘要接入点；质量门控：必须通过 T048，新增逻辑不得改变检索结果语义。
+- [X] T055 [US1] 在 `pkg/ai/agent/executor.go` 补充 Agent step 与 tool 调用观测摘要接入点；质量门控：必须通过 T049，不得解析旧式文本 action。
+- [X] T056 [US1] 在 `pkg/ai/resilience/provider_wrapper.go` 补充 degraded/failure outcome 观测接入点；质量门控：必须通过 T050，4xx 仍不得触发上游熔断。
+- [X] T057 [US2] 在 `pkg/ai/eval/evidence.go` 实现 EvaluationEvidence 类型与验证；质量门控：必须通过 T051，单样例错误不得静默吞掉。
+- [X] T058 [US2] 在 `pkg/ai/eval/runner.go` 扩展 Report 以携带 trace identity 与 evidence；质量门控：必须通过 T052，并保持现有 eval runner 测试兼容。
+- [X] T059 [US2] 在 `cmd/eval-smoke/main.go` 输出 eval evidence 摘要；质量门控：输出不得包含原始 prompt 或用户输入，只显示 sample、metric、score 和 trace identity。
+- [X] T060 [US2] 在 `specs/002-dual-plane-observability/quickstart.md` 更新 eval evidence 验证命令；质量门控：命令必须与实现入口一致。
 
 ## Phase 6：US3 - 保护敏感内容边界（优先级：P1）
 

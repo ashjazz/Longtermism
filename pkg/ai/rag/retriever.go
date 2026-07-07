@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
 	"github.com/jazzash/ashjazz-aiagent/pkg/ai/vectordb"
 )
 
@@ -25,6 +27,9 @@ type BasicRetrieverConfig struct {
 	Embedder  Embedder
 	Store     vectordb.Store
 	Threshold float64
+	Tracer    obs.Tracer
+	Feature   string
+	Now       func() time.Time
 }
 
 // BasicRetriever 是最小 RAG 检索器。
@@ -35,13 +40,24 @@ type BasicRetriever struct {
 	embedder  Embedder
 	store     vectordb.Store
 	threshold float64
+	tracer    obs.Tracer
+	feature   string
+	now       func() time.Time
 }
 
 func NewBasicRetriever(config BasicRetrieverConfig) *BasicRetriever {
+	now := config.Now
+	if now == nil {
+		now = time.Now
+	}
+
 	return &BasicRetriever{
 		embedder:  config.Embedder,
 		store:     config.Store,
 		threshold: config.Threshold,
+		tracer:    config.Tracer,
+		feature:   config.Feature,
+		now:       now,
 	}
 }
 
@@ -57,6 +73,7 @@ func (r *BasicRetriever) Retrieve(ctx context.Context, query string, topK int, f
 		return nil, err
 	}
 
+	startedAt := r.now()
 	queryHash := hashQuery(query)
 	embeddings, err := r.embedder.Embed(ctx, []string{query})
 	if err != nil {
@@ -75,7 +92,10 @@ func (r *BasicRetriever) Retrieve(ctx context.Context, query string, topK int, f
 	if err != nil {
 		return nil, fmt.Errorf("search vector store query_hash=%s: %w", queryHash, err)
 	}
-	return chunksFromHits(hits), nil
+
+	chunks := chunksFromHits(hits)
+	r.recordObservation(ctx, queryHash, len(query), chunks, startedAt, r.now())
+	return chunks, nil
 }
 
 func (r *BasicRetriever) validate(query string, topK int) error {
@@ -141,4 +161,72 @@ func stringMetadata(metadata map[string]any, key string) string {
 func hashQuery(query string) string {
 	sum := sha256.Sum256([]byte(query))
 	return hex.EncodeToString(sum[:queryHashBytes])
+}
+
+func (r *BasicRetriever) recordObservation(ctx context.Context, queryHash string, queryLen int, chunks []Chunk, startedAt, endedAt time.Time) {
+	if r == nil || r.tracer == nil {
+		return
+	}
+	if strings.TrimSpace(r.feature) == "" {
+		return
+	}
+
+	identity, ok := obs.CorrelationIdentityFromContext(ctx)
+	if !ok || strings.TrimSpace(identity.AITraceID) == "" {
+		return
+	}
+
+	topScores := topScoresFromChunks(chunks)
+	outcomeStatus := "success"
+	failureStatus := ""
+	retrievalStatus := "success"
+	if len(chunks) == 0 {
+		outcomeStatus = "failure"
+		failureStatus = string(obs.FailureRetrievalMiss)
+		retrievalStatus = "miss"
+	}
+
+	trace := obs.NewTrace(
+		identity.AITraceID,
+		r.feature,
+		endedAt,
+		obs.WithCorrelationIdentity(identity),
+		obs.WithObservationType(obs.ObservationTypeRetriever),
+		obs.WithQuery(queryHash, "", queryLen),
+		obs.WithRetrieval(len(chunks), "", topScores, endedAt.Sub(startedAt).Milliseconds()),
+		obs.WithSafeSummaries(
+			obs.NewSafeSummary(obs.WithSummaryHash(queryHash), obs.WithSummaryLength(queryLen)),
+			obs.SafeSummary{},
+			retrievalSummaryFromChunks(chunks, retrievalStatus, failureStatus),
+			obs.SafeSummary{},
+		),
+		obs.WithOutcome(outcomeStatus),
+	)
+	trace.FailureStatus = failureStatus
+
+	_ = obs.RecordWithExportFailureProtection(ctx, r.tracer, trace)
+}
+
+func topScoresFromChunks(chunks []Chunk) []float64 {
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	scores := make([]float64, len(chunks))
+	for index, chunk := range chunks {
+		scores[index] = chunk.Score
+	}
+	return scores
+}
+
+func retrievalSummaryFromChunks(chunks []Chunk, status, errorClass string) obs.SafeSummary {
+	options := []obs.SafeSummaryOption{
+		obs.WithSummaryCount(len(chunks)),
+		obs.WithSummaryStatus(status),
+		obs.WithSummaryErrorClass(errorClass),
+	}
+	if len(chunks) > 0 {
+		options = append(options, obs.WithSummaryScore(chunks[0].Score))
+	}
+	return obs.NewSafeSummary(options...)
 }

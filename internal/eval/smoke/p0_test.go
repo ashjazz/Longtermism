@@ -33,10 +33,10 @@ func TestRunP0BuildsPromptLLMTraceEvalPath(t *testing.T) {
 	}
 
 	result, err := RunP0(context.Background(), Config{
-		Dataset:        evaltestutil.NewStaticDataset(samples),
-		DatasetVersion: "p0-smoke-test",
-		PromptRoot:     writePromptRoot(t, `Q={{ .Question }}; C={{ .Context }}`),
-		Tracer:         recorder,
+		Dataset:         evaltestutil.NewStaticDataset(samples),
+		DatasetIdentity: aieval.DatasetIdentity{Name: "p0-smoke", Version: "p0-smoke-test"},
+		PromptRoot:      writePromptRoot(t, `Q={{ .Question }}; C={{ .Context }}`),
+		Tracer:          recorder,
 		Now: func() time.Time {
 			return time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
 		},
@@ -45,8 +45,11 @@ func TestRunP0BuildsPromptLLMTraceEvalPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunP0() error = %v", err)
 	}
-	if result.Report.DatasetVersion != "p0-smoke-test" {
-		t.Fatalf("dataset version = %q, want p0-smoke-test", result.Report.DatasetVersion)
+	if result.Report.Dataset.Name != "p0-smoke" {
+		t.Fatalf("dataset name = %q, want p0-smoke", result.Report.Dataset.Name)
+	}
+	if result.Report.Dataset.Version != "p0-smoke-test" {
+		t.Fatalf("dataset version = %q, want p0-smoke-test", result.Report.Dataset.Version)
 	}
 	if result.Report.SampleCount != len(samples) {
 		t.Fatalf("sample count = %d, want %d", result.Report.SampleCount, len(samples))

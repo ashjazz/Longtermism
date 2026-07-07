@@ -101,10 +101,20 @@ go run ./cmd/eval-smoke -smoke observability-chain -scenario retrieval_miss
 
 目标：证明评估报告能回链到产生输出的请求和 AI 阶段。
 
-当前命令：
+当前测试命令：
 
 ```bash
 go test ./internal/eval/smoke -run TestEvalTraceLinkSmoke -count=1
+```
+
+当前命令入口：
+
+```bash
+go run ./cmd/eval-smoke \
+  -dataset internal/eval/golden/p0_smoke.json \
+  -dataset-name p0-smoke \
+  -dataset-version p0-smoke-local \
+  -eval-run-id eval-run-p0-smoke-local
 ```
 
 期望结果：
@@ -113,6 +123,43 @@ go test ./internal/eval/smoke -run TestEvalTraceLinkSmoke -count=1
 - 至少 90% 样例能回链到 `request_id`、`ai_trace_id`、`service_trace_id` 与 `span_id`。
 - 低于 90% 时失败，并列出缺失 `request_id`、`ai_trace_id`、`service_trace_id` 或 `span_id` 的样例。
 - 指标低于阈值的失败样例可以定位对应 `request_id`、`ai_trace_id`、metric 和失败摘要。
+- `cmd/eval-smoke` 默认输出低敏 JSON 信封，顶层包含 `report` 与 `evalEvidence`。
+- `report.dataset` 必须包含 `name` 和 `version`，避免不同数据集仅靠版本号混淆。
+- `evalEvidence[]` 只允许显示 `sample`、`metric`、`score` 和 `traceIdentity`。
+- `traceIdentity` 必须包含 `request_id`、`service_trace_id`、`span_id`、`ai_trace_id` 和 `eval_run_id`。
+- 输出不得包含原始用户 query、完整 prompt、answer 原文、context 原文或外部响应原文。
+
+示例输出形态：
+
+```json
+{
+  "report": {
+    "dataset": {
+      "name": "p0-smoke",
+      "version": "p0-smoke-local"
+    },
+    "sampleCount": 3,
+    "scores": {
+      "context_hit": 1,
+      "exact_match": 1
+    }
+  },
+  "evalEvidence": [
+    {
+      "sample": "p0-smoke-happy-path",
+      "metric": "exact_match",
+      "score": 1,
+      "traceIdentity": {
+        "request_id": "req-p0-smoke-p0-smoke-happy-path",
+        "service_trace_id": "svc-trace-p0-smoke-p0-smoke-happy-path",
+        "span_id": "span-p0-smoke-p0-smoke-happy-path",
+        "ai_trace_id": "ai-trace-p0-smoke-p0-smoke-happy-path",
+        "eval_run_id": "eval-run-p0-smoke-local"
+      }
+    }
+  ]
+}
+```
 
 ### 5. 上报失败降级验证
 

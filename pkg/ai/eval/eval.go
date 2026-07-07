@@ -13,7 +13,11 @@
 // 本框架约定（见 AGENTS.md 完成定义）：每交付一个 AI 能力，必须同时交付评估它的 golden case。
 package eval
 
-import "context"
+import (
+	"context"
+
+	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+)
 
 // Sample golden dataset 中的一条样本（§6.5）。
 type Sample struct {
@@ -40,17 +44,19 @@ type Metric interface {
 
 // Prediction 被评估系统的输出。
 type Prediction struct {
-	Answer     string   `json:"answer"`
-	Context    []string `json:"context,omitempty"` // 检索到的上下文
-	TokensUsed int      `json:"tokensUsed,omitempty"`
+	Answer        string                  `json:"answer"`
+	Context       []string                `json:"context,omitempty"` // 检索到的上下文
+	TokensUsed    int                     `json:"tokensUsed,omitempty"`
+	TraceIdentity obs.CorrelationIdentity `json:"traceIdentity,omitempty"`
 }
 
 // Report 一次评估运行的汇总。指标下降超阈值触发 CI 拦截（§6.6）。
 type Report struct {
-	DatasetVersion string             `json:"datasetVersion"`
-	SampleCount    int                `json:"sampleCount"`
-	Scores         map[string]float64 `json:"scores"`              // metricName -> 平均分
-	Regressed      []string           `json:"regressed,omitempty"` // 相比 baseline 退步的指标
+	Dataset     DatasetIdentity      `json:"dataset"`
+	SampleCount int                  `json:"sampleCount"`
+	Scores      map[string]float64   `json:"scores"`              // metricName -> 平均分
+	Regressed   []string             `json:"regressed,omitempty"` // 相比 baseline 退步的指标
+	Evidence    []EvaluationEvidence `json:"evidence,omitempty"`
 }
 
 // Runner 评估运行器，串联 dataset → system → metrics → report。

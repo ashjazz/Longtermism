@@ -16,24 +16,23 @@ func TestNewEvaluationEvidenceBuildsLinkedEvidence(t *testing.T) {
 	)
 
 	evidence, err := NewEvaluationEvidence(EvaluationEvidenceInput{
-		Identity:       identity,
-		DatasetName:    "agent-golden",
-		DatasetVersion: "v1.2.0",
-		SampleID:       "sample-tool-loop-001",
-		MetricName:     "answer_relevance",
-		Score:          0.91,
-		Threshold:      float64Pointer(0.8),
+		Identity:   identity,
+		Dataset:    DatasetIdentity{Name: "agent-golden", Version: "v1.2.0"},
+		SampleID:   "sample-tool-loop-001",
+		MetricName: "answer_relevance",
+		Score:      0.91,
+		Threshold:  float64Pointer(0.8),
 	})
 	if err != nil {
 		t.Fatalf("NewEvaluationEvidence() error = %v", err)
 	}
 
 	assertEvaluationEvidenceIdentity(t, evidence, identity)
-	if evidence.DatasetName != "agent-golden" {
-		t.Fatalf("DatasetName = %q, want agent-golden", evidence.DatasetName)
+	if evidence.Dataset.Name != "agent-golden" {
+		t.Fatalf("Dataset.Name = %q, want agent-golden", evidence.Dataset.Name)
 	}
-	if evidence.DatasetVersion != "v1.2.0" {
-		t.Fatalf("DatasetVersion = %q, want v1.2.0", evidence.DatasetVersion)
+	if evidence.Dataset.Version != "v1.2.0" {
+		t.Fatalf("Dataset.Version = %q, want v1.2.0", evidence.Dataset.Version)
 	}
 	if evidence.SampleID != "sample-tool-loop-001" {
 		t.Fatalf("SampleID = %q, want sample-tool-loop-001", evidence.SampleID)
@@ -101,13 +100,12 @@ func TestNewEvaluationEvidenceClassifiesThresholdRegressionStatus(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			evidence, err := NewEvaluationEvidence(EvaluationEvidenceInput{
-				Identity:       validEvidenceIdentity(),
-				DatasetName:    "agent-golden",
-				DatasetVersion: "v1.2.0",
-				SampleID:       "sample-threshold-001",
-				MetricName:     "answer_relevance",
-				Score:          tt.score,
-				Threshold:      tt.threshold,
+				Identity:   validEvidenceIdentity(),
+				Dataset:    DatasetIdentity{Name: "agent-golden", Version: "v1.2.0"},
+				SampleID:   "sample-threshold-001",
+				MetricName: "answer_relevance",
+				Score:      tt.score,
+				Threshold:  tt.threshold,
 			})
 			if tt.wantErrSubstr != "" {
 				if err == nil {
@@ -150,17 +148,17 @@ func TestValidateEvaluationEvidenceRejectsMissingRequiredFields(t *testing.T) {
 			wantErrSubstr: "eval_run_id",
 		},
 		{
-			name: "missing dataset name",
+			name: "missing dataset identity name",
 			mutate: func(input EvaluationEvidenceInput) EvaluationEvidenceInput {
-				input.DatasetName = ""
+				input.Dataset.Name = ""
 				return input
 			},
 			wantErrSubstr: "dataset_name",
 		},
 		{
-			name: "missing dataset version",
+			name: "missing dataset identity version",
 			mutate: func(input EvaluationEvidenceInput) EvaluationEvidenceInput {
-				input.DatasetVersion = ""
+				input.Dataset.Version = ""
 				return input
 			},
 			wantErrSubstr: "dataset_version",
@@ -282,13 +280,12 @@ func assertEvaluationEvidenceIdentity(t *testing.T, evidence EvaluationEvidence,
 
 func validEvaluationEvidenceInput() EvaluationEvidenceInput {
 	return EvaluationEvidenceInput{
-		Identity:       validEvidenceIdentity(),
-		DatasetName:    "agent-golden",
-		DatasetVersion: "v1.2.0",
-		SampleID:       "sample-evidence-001",
-		MetricName:     "answer_relevance",
-		Score:          0.9,
-		Threshold:      float64Pointer(0.8),
+		Identity:   validEvidenceIdentity(),
+		Dataset:    DatasetIdentity{Name: "agent-golden", Version: "v1.2.0"},
+		SampleID:   "sample-evidence-001",
+		MetricName: "answer_relevance",
+		Score:      0.9,
+		Threshold:  float64Pointer(0.8),
 	}
 }
 

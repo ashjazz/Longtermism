@@ -27,6 +27,15 @@
           "contains_all",
           "context_hit"
         ],
+        "expected_eval_trace_link": {
+          "request_id": "req-agent-smoke-success-tool-loop",
+          "ai_trace_id": "ai-trace-agent-smoke-success-tool-loop",
+          "service_trace_id": "svc-trace-agent-smoke-success-tool-loop",
+          "span_id": "span-agent-smoke-success-tool-loop",
+          "metric_name": "trajectory_match",
+          "score": 1,
+          "threshold": 0.8
+        },
         "notes": "验证 Agent 能完成一次结构化 tool call，并基于工具结果返回最终答案。"
       }
     },
@@ -57,6 +66,15 @@
           "contains_all",
           "context_hit"
         ],
+        "expected_eval_trace_link": {
+          "request_id": "req-agent-smoke-tool-error-visible",
+          "ai_trace_id": "ai-trace-agent-smoke-tool-error-visible",
+          "service_trace_id": "svc-trace-agent-smoke-tool-error-visible",
+          "span_id": "span-agent-smoke-tool-error-visible",
+          "metric_name": "trajectory_match",
+          "score": 1,
+          "threshold": 0.8
+        },
         "notes": "验证工具错误不会被静默吞掉，后续 evaluator 可以检查错误是否进入 Agent trajectory。"
       }
     },
@@ -95,6 +113,15 @@
           "contains_all",
           "context_hit"
         ],
+        "expected_eval_trace_link": {
+          "request_id": "req-agent-smoke-self-correction-after-tool-error",
+          "ai_trace_id": "ai-trace-agent-smoke-self-correction-after-tool-error",
+          "service_trace_id": "svc-trace-agent-smoke-self-correction-after-tool-error",
+          "span_id": "span-agent-smoke-self-correction-after-tool-error",
+          "metric_name": "trajectory_match",
+          "score": 1,
+          "threshold": 0.8
+        },
         "notes": "验证 Agent 能把工具错误作为可行动反馈，而不是反复调用同一失败参数。"
       }
     },
@@ -139,6 +166,15 @@
           "terminated_by",
           "trajectory_length"
         ],
+        "expected_eval_trace_link": {
+          "request_id": "req-agent-smoke-max-steps-limit",
+          "ai_trace_id": "ai-trace-agent-smoke-max-steps-limit",
+          "service_trace_id": "svc-trace-agent-smoke-max-steps-limit",
+          "span_id": "span-agent-smoke-max-steps-limit",
+          "metric_name": "terminated_by",
+          "score": 1,
+          "threshold": 0.8
+        },
         "notes": "验证 runaway Agent 被安全边界拦住，后续 report 可以明确看到终止原因。"
       }
     }

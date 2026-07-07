@@ -46,10 +46,9 @@ func TestAgentSmokeGoldenEvalTraceLinksAreDiagnosable(t *testing.T) {
 
 	traceLinkSamples := makeAgentGoldenTraceLinkSamples(t, samples)
 	result, err := RunEvalTraceLinkSmoke(context.Background(), EvalTraceLinkSmokeConfig{
-		DatasetName:    "agent-smoke",
-		DatasetVersion: "agent-smoke-v1",
-		EvalRunID:      "eval-run-agent-smoke-golden-001",
-		Samples:        traceLinkSamples,
+		Dataset:   aieval.DatasetIdentity{Name: "agent-smoke", Version: "agent-smoke-v1"},
+		EvalRunID: "eval-run-agent-smoke-golden-001",
+		Samples:   traceLinkSamples,
 	})
 	if err != nil {
 		t.Fatalf("RunEvalTraceLinkSmoke() error = %v", err)

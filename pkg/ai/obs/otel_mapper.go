@@ -79,6 +79,17 @@ func attributesForTrace(trace Trace) map[string]string {
 	putStringAttribute(attributes, "ai.retrieval.query_rewrite_hash", trace.QueryRewrittenHash)
 	putFloatSliceAttribute(attributes, "ai.retrieval.top_scores", trace.TopScores)
 	putInt64Attribute(attributes, "ai.latency.retrieval_ms", trace.RetrievalLatencyMs)
+	putIntAttribute(attributes, "ai.agent.step_index", trace.AgentStepIndex)
+	putStringAttribute(attributes, "ai.agent.tool_call_id", trace.ToolCallID)
+	putStringAttribute(attributes, "ai.agent.tool_name", trace.ToolName)
+	putStringAttribute(attributes, "ai.agent.termination_reason", trace.TerminationReason)
+	putBoolAttribute(attributes, "ai.agent.loop_detected", trace.LoopDetected)
+	putBoolAttribute(attributes, "ai.agent.budget_exceeded", trace.BudgetExceeded)
+	putStringAttribute(attributes, "ai.provider.name", trace.ProviderName)
+	putStringAttribute(attributes, "ai.provider.requested_model", trace.RequestedModel)
+	putStringAttribute(attributes, "ai.provider.circuit_state", trace.CircuitState)
+	putBoolAttribute(attributes, "ai.provider.degraded", trace.Degraded)
+	putBoolAttribute(attributes, "ai.provider.rate_limited", trace.RateLimited)
 	putFloatAttribute(attributes, "ai.cost_usd", trace.CostUSD)
 	putIntPointerAttribute(attributes, "ai.feedback.user_rating", trace.UserRating)
 	putFloatPointerAttribute(attributes, "ai.feedback.auto_eval_score", trace.AutoEvalScore)
@@ -119,6 +130,13 @@ func putFloatAttribute(attributes map[string]string, key string, value float64) 
 		return
 	}
 	attributes[key] = strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func putBoolAttribute(attributes map[string]string, key string, value bool) {
+	if !value {
+		return
+	}
+	attributes[key] = strconv.FormatBool(value)
 }
 
 func putFloatSliceAttribute(attributes map[string]string, key string, values []float64) {

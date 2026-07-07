@@ -16,6 +16,12 @@ const (
 	// FailureRateLimit 表示全局、用户、租户或 provider 维度被限流。
 	FailureRateLimit FailureStatus = "rate_limit"
 
+	// FailureUpstream 表示 provider、网关或外部模型服务不可用。
+	FailureUpstream FailureStatus = "upstream_failure"
+
+	// FailureCallerError 表示调用方请求错误，例如 400/401/403 这类不应熔断上游的错误。
+	FailureCallerError FailureStatus = "caller_error"
+
 	// FailureRetrievalMiss 表示 RAG 检索路径没有拿到可用上下文。
 	FailureRetrievalMiss FailureStatus = "retrieval_miss"
 

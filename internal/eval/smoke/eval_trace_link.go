@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	aieval "github.com/jazzash/ashjazz-aiagent/pkg/ai/eval"
 )
 
 const (
@@ -14,10 +16,9 @@ const (
 
 // EvalTraceLinkSmokeConfig 描述一次 eval evidence 回链率验证。
 type EvalTraceLinkSmokeConfig struct {
-	DatasetName    string
-	DatasetVersion string
-	EvalRunID      string
-	Samples        []EvalTraceLinkSmokeSample
+	Dataset   aieval.DatasetIdentity
+	EvalRunID string
+	Samples   []EvalTraceLinkSmokeSample
 }
 
 // EvalTraceLinkSmokeSample 是 smoke 中一条低敏评估证据。
@@ -37,14 +38,13 @@ type EvalTraceLinkSmokeSample struct {
 
 // EvalTraceLinkSmokeResult 是 eval evidence 回链率报告。
 type EvalTraceLinkSmokeResult struct {
-	DatasetName    string
-	DatasetVersion string
-	EvalRunID      string
-	SampleCount    int
-	LinkedCount    int
-	LinkRate       float64
-	MissingLinks   []EvalTraceLinkMissingSample
-	FailedSamples  []EvalTraceLinkFailedSample
+	Dataset       aieval.DatasetIdentity
+	EvalRunID     string
+	SampleCount   int
+	LinkedCount   int
+	LinkRate      float64
+	MissingLinks  []EvalTraceLinkMissingSample
+	FailedSamples []EvalTraceLinkFailedSample
 }
 
 // EvalTraceLinkMissingSample 描述无法回链的样例和首个缺失身份字段。
@@ -89,12 +89,14 @@ func RunEvalTraceLinkSmoke(ctx context.Context, config EvalTraceLinkSmokeConfig)
 func buildEvalTraceLinkSmokeResult(config EvalTraceLinkSmokeConfig) EvalTraceLinkSmokeResult {
 	samples := append([]EvalTraceLinkSmokeSample(nil), config.Samples...)
 	result := EvalTraceLinkSmokeResult{
-		DatasetName:    strings.TrimSpace(config.DatasetName),
-		DatasetVersion: strings.TrimSpace(config.DatasetVersion),
-		EvalRunID:      strings.TrimSpace(config.EvalRunID),
-		SampleCount:    len(samples),
-		MissingLinks:   make([]EvalTraceLinkMissingSample, 0),
-		FailedSamples:  make([]EvalTraceLinkFailedSample, 0),
+		Dataset: aieval.DatasetIdentity{
+			Name:    strings.TrimSpace(config.Dataset.Name),
+			Version: strings.TrimSpace(config.Dataset.Version),
+		},
+		EvalRunID:     strings.TrimSpace(config.EvalRunID),
+		SampleCount:   len(samples),
+		MissingLinks:  make([]EvalTraceLinkMissingSample, 0),
+		FailedSamples: make([]EvalTraceLinkFailedSample, 0),
 	}
 
 	for _, sample := range samples {

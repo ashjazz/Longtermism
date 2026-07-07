@@ -124,6 +124,13 @@ type ChatResponse struct {
 // ErrUpstream 表示上游 provider 不可用。resilience/ 据此决定重试/熔断/降级。
 var ErrUpstream = errors.New("llm: upstream provider unavailable")
 
+// ErrRateLimit 表示 provider 或上游网关返回限流。
+//
+// 它通常也是一种上游不可用原因，因此 adapter 可以同时包装 ErrRateLimit 与
+// ErrUpstream：resilience 层用 ErrUpstream 决定是否计入断路器，用 ErrRateLimit
+// 保留更精确的可观测分类和后续限流策略信号。
+var ErrRateLimit = errors.New("llm: provider rate limited")
+
 // Provider 是所有 LLM provider 必须实现的契约。
 // 实现应做到：
 //   - 受 ctx 超时控制（默认 60s，见 rules/ai/integration.md）；

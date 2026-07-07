@@ -57,6 +57,21 @@ type Trace struct {
 	RetrievalSummary SafeSummary `json:"retrievalSummary,omitempty"`
 	ToolSummary      SafeSummary `json:"toolSummary,omitempty"`
 
+	// Agent 阶段
+	AgentStepIndex    int    `json:"agentStepIndex,omitempty"`
+	ToolCallID        string `json:"toolCallId,omitempty"`
+	ToolName          string `json:"toolName,omitempty"`
+	TerminationReason string `json:"terminationReason,omitempty"`
+	LoopDetected      bool   `json:"loopDetected,omitempty"`
+	BudgetExceeded    bool   `json:"budgetExceeded,omitempty"`
+
+	// Provider / resilience 阶段
+	ProviderName   string `json:"providerName,omitempty"`
+	RequestedModel string `json:"requestedModel,omitempty"`
+	CircuitState   string `json:"circuitState,omitempty"`
+	Degraded       bool   `json:"degraded,omitempty"`
+	RateLimited    bool   `json:"rateLimited,omitempty"`
+
 	// 成本
 	CostUSD       float64 `json:"costUsd,omitempty"`
 	OutcomeStatus string  `json:"outcomeStatus,omitempty"`

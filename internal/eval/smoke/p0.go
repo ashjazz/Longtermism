@@ -24,11 +24,13 @@ import (
 
 const (
 	DefaultDatasetPath    = "internal/eval/golden/p0_smoke.json"
+	DefaultDatasetName    = "p0-smoke"
 	DefaultDatasetVersion = "p0-smoke-local"
 	DefaultPromptRoot     = "resource/prompt"
 	DefaultPromptName     = "p0_smoke"
 	DefaultPromptVersion  = "v1"
 	DefaultModel          = "p0-smoke-fake"
+	DefaultEvalRunID      = "eval-run-p0-smoke-local"
 
 	featureName   = "p0_eval_smoke"
 	successStatus = "success"
@@ -40,17 +42,18 @@ const (
 // 默认值会构造本地 JSON dataset、文件系统 prompt registry、fake LLM 和内存 trace recorder。
 // 这保证 `make eval-smoke` 不需要真实 API key，同时测试仍可注入自定义 Dataset/Tracer。
 type Config struct {
-	Dataset        aieval.Dataset
-	DatasetPath    string
-	DatasetVersion string
-	PromptRegistry prompt.Registry
-	PromptRoot     string
-	PromptName     string
-	PromptVersion  string
-	Provider       llm.Provider
-	Model          string
-	Tracer         obs.Tracer
-	Now            func() time.Time
+	Dataset         aieval.Dataset
+	DatasetPath     string
+	DatasetIdentity aieval.DatasetIdentity
+	PromptRegistry  prompt.Registry
+	PromptRoot      string
+	PromptName      string
+	PromptVersion   string
+	Provider        llm.Provider
+	Model           string
+	EvalRunID       string
+	Tracer          obs.Tracer
+	Now             func() time.Time
 }
 
 // Result 是一次 P0 smoke 运行的证据包。
@@ -94,7 +97,11 @@ func RunP0(ctx context.Context, config Config) (Result, error) {
 	traceRecorder := newTraceRecorder()
 	cfg.Tracer = newTeeTracer(cfg.Tracer, traceRecorder)
 
-	runner := aieval.NewRunner(cfg.DatasetVersion)
+	runnerOptions := make([]aieval.RunnerOption, 0, 1)
+	if strings.TrimSpace(cfg.EvalRunID) != "" {
+		runnerOptions = append(runnerOptions, aieval.WithEvalRunID(cfg.EvalRunID))
+	}
+	runner := aieval.NewRunner(cfg.DatasetIdentity, runnerOptions...)
 	report, err := runner.Run(ctx, newStaticDataset(samples), func(ctx context.Context, sample aieval.Sample) (aieval.Prediction, error) {
 		return predictSample(ctx, cfg, template, sample)
 	}, smokeMetrics())
@@ -117,8 +124,12 @@ func applyDefaults(config Config) Config {
 		}
 		cfg.Dataset = aieval.NewJSONDataset(resolveLocalPath(path))
 	}
-	if strings.TrimSpace(cfg.DatasetVersion) == "" {
-		cfg.DatasetVersion = DefaultDatasetVersion
+	cfg.DatasetIdentity = normalizeP0DatasetIdentity(cfg.DatasetIdentity)
+	if strings.TrimSpace(cfg.DatasetIdentity.Name) == "" {
+		cfg.DatasetIdentity.Name = DefaultDatasetName
+	}
+	if strings.TrimSpace(cfg.DatasetIdentity.Version) == "" {
+		cfg.DatasetIdentity.Version = DefaultDatasetVersion
 	}
 	if cfg.PromptRegistry == nil {
 		root := cfg.PromptRoot
@@ -144,8 +155,16 @@ func applyDefaults(config Config) Config {
 	return cfg
 }
 
+func normalizeP0DatasetIdentity(identity aieval.DatasetIdentity) aieval.DatasetIdentity {
+	return aieval.DatasetIdentity{
+		Name:    strings.TrimSpace(identity.Name),
+		Version: strings.TrimSpace(identity.Version),
+	}
+}
+
 func predictSample(ctx context.Context, cfg Config, template prompt.Template, sample aieval.Sample) (aieval.Prediction, error) {
 	startedAt := cfg.Now()
+	identity := correlationIdentityForP0Sample(sample)
 	rendered, err := renderPrompt(ctx, template, sample)
 	if err != nil {
 		return aieval.Prediction{}, err
@@ -163,15 +182,16 @@ func predictSample(ctx context.Context, cfg Config, template prompt.Template, sa
 	}
 	response, err := cfg.Provider.Chat(ctx, request)
 	if err != nil {
-		recordTrace(ctx, cfg, sample, rendered, request.Model, llm.Usage{}, startedAt, failedStatus)
+		recordTrace(ctx, cfg, identity, sample, rendered, request.Model, llm.Usage{}, startedAt, failedStatus)
 		return aieval.Prediction{}, fmt.Errorf("call p0 smoke fake llm for sample %q: %w", sample.ID, err)
 	}
 
-	recordTrace(ctx, cfg, sample, rendered, response.Model, response.Usage, startedAt, successStatus)
+	recordTrace(ctx, cfg, identity, sample, rendered, response.Model, response.Usage, startedAt, successStatus)
 	return aieval.Prediction{
-		Answer:     response.Content,
-		Context:    append([]string(nil), sample.RelevantCtx...),
-		TokensUsed: response.Usage.TotalTokens,
+		Answer:        response.Content,
+		Context:       append([]string(nil), sample.RelevantCtx...),
+		TokensUsed:    response.Usage.TotalTokens,
+		TraceIdentity: identity,
 	}, nil
 }
 
@@ -186,8 +206,7 @@ func renderPrompt(ctx context.Context, template prompt.Template, sample aieval.S
 	return rendered, nil
 }
 
-func recordTrace(ctx context.Context, cfg Config, sample aieval.Sample, rendered prompt.Rendered, model string, usage llm.Usage, startedAt time.Time, status string) {
-	identity := correlationIdentityForP0Sample(sample)
+func recordTrace(ctx context.Context, cfg Config, identity obs.CorrelationIdentity, sample aieval.Sample, rendered prompt.Rendered, model string, usage llm.Usage, startedAt time.Time, status string) {
 	trace := obs.NewTrace(
 		identity.AITraceID,
 		featureName,

@@ -3,6 +3,8 @@ package eval
 import (
 	"context"
 	"fmt"
+
+	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
 )
 
 // LocalRunner 是 P0 的确定性离线评估 runner。
@@ -11,11 +13,43 @@ import (
 // 不连接外部评估平台。这样 P0 的 eval smoke 可以默认离线运行，后续平台同步也能
 // 作为外层 adapter 接入，而不会污染核心评估契约。
 type LocalRunner struct {
-	datasetVersion string
+	dataset    DatasetIdentity
+	evalRunID  string
+	thresholds map[string]float64
 }
 
-func NewRunner(datasetVersion string) *LocalRunner {
-	return &LocalRunner{datasetVersion: datasetVersion}
+// RunnerOption 描述 LocalRunner 的可选评估配置。
+type RunnerOption func(*LocalRunner)
+
+func NewRunner(dataset DatasetIdentity, options ...RunnerOption) *LocalRunner {
+	runner := &LocalRunner{
+		dataset:    normalizeDatasetIdentity(dataset),
+		thresholds: make(map[string]float64),
+	}
+	for _, option := range options {
+		if option == nil {
+			continue
+		}
+		option(runner)
+	}
+	return runner
+}
+
+// WithEvalRunID 开启 evidence 生成，并绑定本次评估运行身份。
+func WithEvalRunID(evalRunID string) RunnerOption {
+	return func(runner *LocalRunner) {
+		runner.evalRunID = evalRunID
+	}
+}
+
+// WithMetricThreshold 设置单个指标的回归阈值。
+func WithMetricThreshold(metricName string, threshold float64) RunnerOption {
+	return func(runner *LocalRunner) {
+		if runner.thresholds == nil {
+			runner.thresholds = make(map[string]float64)
+		}
+		runner.thresholds[metricName] = threshold
+	}
 }
 
 // Run 执行一次评估并返回汇总报告。
@@ -36,6 +70,9 @@ func (r *LocalRunner) Run(ctx context.Context, dataset Dataset, predict PredictF
 	if len(metrics) == 0 {
 		return Report{}, fmt.Errorf("eval runner metrics are required")
 	}
+	if err := validateDatasetIdentity(r.dataset); err != nil {
+		return Report{}, fmt.Errorf("eval runner dataset identity: %w", err)
+	}
 
 	samples, err := dataset.Load(ctx)
 	if err != nil {
@@ -46,6 +83,7 @@ func (r *LocalRunner) Run(ctx context.Context, dataset Dataset, predict PredictF
 	}
 
 	sums := make(map[string]float64, len(metrics))
+	evidence := make([]EvaluationEvidence, 0, len(samples)*len(metrics))
 	for _, sample := range samples {
 		if err := ctx.Err(); err != nil {
 			return Report{}, err
@@ -69,15 +107,56 @@ func (r *LocalRunner) Run(ctx context.Context, dataset Dataset, predict PredictF
 			if err != nil {
 				return Report{}, fmt.Errorf("score metric %q for sample %q: %w", metricName, sample.ID, err)
 			}
-			sums[metricName] += clampScore(score)
+			clampedScore := clampScore(score)
+			sums[metricName] += clampedScore
+			if r.evidenceEnabled() {
+				item, err := r.newEvidence(sample, metricName, clampedScore, prediction.TraceIdentity)
+				if err != nil {
+					return Report{}, fmt.Errorf("build evidence for sample %q metric %q: %w", sample.ID, metricName, err)
+				}
+				evidence = append(evidence, item)
+			}
 		}
 	}
 
 	return Report{
-		DatasetVersion: r.datasetVersion,
-		SampleCount:    len(samples),
-		Scores:         averageScores(sums, len(samples)),
+		Dataset:     r.dataset,
+		SampleCount: len(samples),
+		Scores:      averageScores(sums, len(samples)),
+		Evidence:    evidence,
 	}, nil
+}
+
+func (r *LocalRunner) evidenceEnabled() bool {
+	return r != nil && r.evalRunID != ""
+}
+
+func (r *LocalRunner) newEvidence(sample Sample, metricName string, score float64, identity obs.CorrelationIdentity) (EvaluationEvidence, error) {
+	linkedIdentity := obs.ApplyCorrelationOptions(identity, obs.WithEvalRunID(r.evalRunID))
+	threshold := r.metricThreshold(metricName)
+	evidence, err := NewEvaluationEvidence(EvaluationEvidenceInput{
+		Identity:   linkedIdentity,
+		Dataset:    r.dataset,
+		SampleID:   sample.ID,
+		MetricName: metricName,
+		Score:      score,
+		Threshold:  threshold,
+	})
+	if err != nil {
+		return EvaluationEvidence{}, fmt.Errorf("trace link request_id/ai_trace_id/service_trace_id/span_id is required: %w", err)
+	}
+	return evidence, nil
+}
+
+func (r *LocalRunner) metricThreshold(metricName string) *float64 {
+	if r == nil || r.thresholds == nil {
+		return nil
+	}
+	threshold, ok := r.thresholds[metricName]
+	if !ok {
+		return nil
+	}
+	return cloneEvidenceFloat64Pointer(&threshold)
 }
 
 func averageScores(sums map[string]float64, sampleCount int) map[string]float64 {

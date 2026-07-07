@@ -11,7 +11,7 @@ import (
 func TestRunnerBuildsReportWithMetricAverages(t *testing.T) {
 	t.Parallel()
 
-	runner := NewRunner("p0-smoke-v1")
+	runner := NewRunner(DatasetIdentity{Name: "p0-smoke", Version: "p0-smoke-v1"})
 	dataset := runnerTestDataset{samples: []Sample{
 		{ID: "sample-001", Query: "什么是 P0？"},
 		{ID: "sample-002", Query: "如何验证 eval？"},
@@ -41,8 +41,11 @@ func TestRunnerBuildsReportWithMetricAverages(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if report.DatasetVersion != "p0-smoke-v1" {
-		t.Fatalf("DatasetVersion = %q, want p0-smoke-v1", report.DatasetVersion)
+	if report.Dataset.Name != "p0-smoke" {
+		t.Fatalf("Dataset.Name = %q, want p0-smoke", report.Dataset.Name)
+	}
+	if report.Dataset.Version != "p0-smoke-v1" {
+		t.Fatalf("Dataset.Version = %q, want p0-smoke-v1", report.Dataset.Version)
 	}
 	if report.SampleCount != 2 {
 		t.Fatalf("SampleCount = %d, want 2", report.SampleCount)
@@ -54,7 +57,7 @@ func TestRunnerBuildsReportWithMetricAverages(t *testing.T) {
 func TestRunnerReturnsPredictionErrorWithSampleContext(t *testing.T) {
 	t.Parallel()
 
-	runner := NewRunner("p0-smoke-v1")
+	runner := NewRunner(DatasetIdentity{Name: "p0-smoke", Version: "p0-smoke-v1"})
 	dataset := runnerTestDataset{samples: []Sample{
 		{ID: "sample-ok", Query: "first"},
 		{ID: "sample-failed", Query: "second"},
@@ -83,7 +86,7 @@ func TestRunnerReturnsPredictionErrorWithSampleContext(t *testing.T) {
 func TestRunnerReturnsMetricErrorWithSampleAndMetricContext(t *testing.T) {
 	t.Parallel()
 
-	runner := NewRunner("p0-smoke-v1")
+	runner := NewRunner(DatasetIdentity{Name: "p0-smoke", Version: "p0-smoke-v1"})
 	dataset := runnerTestDataset{samples: []Sample{{ID: "sample-metric-error", Query: "metric error"}}}
 	predict := func(_ context.Context, _ Sample) (Prediction, error) {
 		return Prediction{Answer: "ok"}, nil

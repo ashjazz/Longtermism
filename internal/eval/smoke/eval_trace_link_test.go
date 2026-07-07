@@ -5,26 +5,27 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	aieval "github.com/jazzash/ashjazz-aiagent/pkg/ai/eval"
 )
 
 func TestEvalTraceLinkSmokeMeetsNinetyPercentLinkRate(t *testing.T) {
 	samples := makeEvalTraceLinkSamples(10)
 
 	result, err := RunEvalTraceLinkSmoke(context.Background(), EvalTraceLinkSmokeConfig{
-		DatasetName:    "agent-smoke",
-		DatasetVersion: "agent-smoke-v1",
-		EvalRunID:      "eval-run-link-rate-001",
-		Samples:        samples,
+		Dataset:   aieval.DatasetIdentity{Name: "agent-smoke", Version: "agent-smoke-v1"},
+		EvalRunID: "eval-run-link-rate-001",
+		Samples:   samples,
 	})
 	if err != nil {
 		t.Fatalf("RunEvalTraceLinkSmoke() error = %v", err)
 	}
 
-	if result.DatasetName != "agent-smoke" {
-		t.Fatalf("DatasetName = %q, want agent-smoke", result.DatasetName)
+	if result.Dataset.Name != "agent-smoke" {
+		t.Fatalf("Dataset.Name = %q, want agent-smoke", result.Dataset.Name)
 	}
-	if result.DatasetVersion != "agent-smoke-v1" {
-		t.Fatalf("DatasetVersion = %q, want agent-smoke-v1", result.DatasetVersion)
+	if result.Dataset.Version != "agent-smoke-v1" {
+		t.Fatalf("Dataset.Version = %q, want agent-smoke-v1", result.Dataset.Version)
 	}
 	if result.EvalRunID != "eval-run-link-rate-001" {
 		t.Fatalf("EvalRunID = %q, want eval-run-link-rate-001", result.EvalRunID)
@@ -51,10 +52,9 @@ func TestEvalTraceLinkSmokeFailsBelowNinetyPercentAndListsSamples(t *testing.T) 
 	samples[9].ServiceTraceID = ""
 
 	result, err := RunEvalTraceLinkSmoke(context.Background(), EvalTraceLinkSmokeConfig{
-		DatasetName:    "agent-smoke",
-		DatasetVersion: "agent-smoke-v1",
-		EvalRunID:      "eval-run-link-rate-002",
-		Samples:        samples,
+		Dataset:   aieval.DatasetIdentity{Name: "agent-smoke", Version: "agent-smoke-v1"},
+		EvalRunID: "eval-run-link-rate-002",
+		Samples:   samples,
 	})
 	if err == nil {
 		t.Fatal("RunEvalTraceLinkSmoke() error = nil, want link-rate failure")
@@ -80,10 +80,9 @@ func TestEvalTraceLinkSmokeLocatesFailedEvidenceSample(t *testing.T) {
 	samples[1].Threshold = 0.8
 
 	result, err := RunEvalTraceLinkSmoke(context.Background(), EvalTraceLinkSmokeConfig{
-		DatasetName:    "agent-smoke",
-		DatasetVersion: "agent-smoke-v1",
-		EvalRunID:      "eval-run-link-rate-003",
-		Samples:        samples,
+		Dataset:   aieval.DatasetIdentity{Name: "agent-smoke", Version: "agent-smoke-v1"},
+		EvalRunID: "eval-run-link-rate-003",
+		Samples:   samples,
 	})
 	if err != nil {
 		t.Fatalf("RunEvalTraceLinkSmoke() error = %v", err)
