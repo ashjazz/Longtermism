@@ -35,6 +35,40 @@ func TestAgentSmokeGoldenDatasetLoads(t *testing.T) {
 	assertAgentGoldenSample(t, byID, "agent-smoke-max-steps-limit", "max_steps", 3)
 }
 
+func TestAgentSmokeGoldenEvalTraceLinksAreDiagnosable(t *testing.T) {
+	t.Parallel()
+
+	dataset := aieval.NewJSONDataset(filepath.Join("..", "golden", "agent_smoke.json"))
+	samples, err := dataset.Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	traceLinkSamples := makeAgentGoldenTraceLinkSamples(t, samples)
+	result, err := RunEvalTraceLinkSmoke(context.Background(), EvalTraceLinkSmokeConfig{
+		DatasetName:    "agent-smoke",
+		DatasetVersion: "agent-smoke-v1",
+		EvalRunID:      "eval-run-agent-smoke-golden-001",
+		Samples:        traceLinkSamples,
+	})
+	if err != nil {
+		t.Fatalf("RunEvalTraceLinkSmoke() error = %v", err)
+	}
+
+	if result.SampleCount != 4 {
+		t.Fatalf("SampleCount = %d, want 4 agent golden samples", result.SampleCount)
+	}
+	if result.LinkedCount != result.SampleCount {
+		t.Fatalf("LinkedCount = %d, want all %d samples linked; missing = %#v", result.LinkedCount, result.SampleCount, result.MissingLinks)
+	}
+	assertAgentGoldenTraceLinkCoverage(t, traceLinkSamples, map[string]bool{
+		"successful_tool_call_loop": false,
+		"tool_error":                false,
+		"self_correction":           false,
+		"max_steps":                 false,
+	})
+}
+
 func assertAgentGoldenSample(t *testing.T, samples map[string]aieval.Sample, id string, wantTerminatedBy string, wantSteps float64) {
 	t.Helper()
 
@@ -78,4 +112,71 @@ func assertAgentGoldenSample(t *testing.T, samples map[string]aieval.Sample, id 
 			t.Fatalf("sample %q tool call %d result_is_error = %#v, want bool", id, index, call["result_is_error"])
 		}
 	}
+}
+
+func makeAgentGoldenTraceLinkSamples(t *testing.T, samples []aieval.Sample) []EvalTraceLinkSmokeSample {
+	t.Helper()
+
+	traceLinkSamples := make([]EvalTraceLinkSmokeSample, 0, len(samples))
+	for _, sample := range samples {
+		raw, ok := sample.Meta["expected_eval_trace_link"].(map[string]any)
+		if !ok {
+			t.Fatalf("sample %q expected_eval_trace_link = %#v, want object", sample.ID, sample.Meta["expected_eval_trace_link"])
+		}
+
+		traceLinkSamples = append(traceLinkSamples, EvalTraceLinkSmokeSample{
+			SampleID:       sample.ID,
+			RequestID:      stringMetaField(t, sample.ID, raw, "request_id"),
+			AITraceID:      stringMetaField(t, sample.ID, raw, "ai_trace_id"),
+			ServiceTraceID: stringMetaField(t, sample.ID, raw, "service_trace_id"),
+			SpanID:         stringMetaField(t, sample.ID, raw, "span_id"),
+			MetricName:     stringMetaField(t, sample.ID, raw, "metric_name"),
+			Score:          floatMetaField(t, sample.ID, raw, "score"),
+			Threshold:      floatMetaField(t, sample.ID, raw, "threshold"),
+		})
+	}
+	return traceLinkSamples
+}
+
+func assertAgentGoldenTraceLinkCoverage(t *testing.T, samples []EvalTraceLinkSmokeSample, coverage map[string]bool) {
+	t.Helper()
+
+	for _, sample := range samples {
+		switch sample.SampleID {
+		case "agent-smoke-success-tool-loop":
+			coverage["successful_tool_call_loop"] = true
+		case "agent-smoke-tool-error-visible":
+			coverage["tool_error"] = true
+		case "agent-smoke-self-correction-after-tool-error":
+			coverage["self_correction"] = true
+		case "agent-smoke-max-steps-limit":
+			coverage["max_steps"] = true
+		}
+	}
+
+	for name, seen := range coverage {
+		if !seen {
+			t.Fatalf("agent golden eval trace link coverage %q = false, want true", name)
+		}
+	}
+}
+
+func stringMetaField(t *testing.T, sampleID string, values map[string]any, key string) string {
+	t.Helper()
+
+	value, ok := values[key].(string)
+	if !ok || value == "" {
+		t.Fatalf("sample %q expected_eval_trace_link.%s = %#v, want non-empty string", sampleID, key, values[key])
+	}
+	return value
+}
+
+func floatMetaField(t *testing.T, sampleID string, values map[string]any, key string) float64 {
+	t.Helper()
+
+	value, ok := values[key].(float64)
+	if !ok {
+		t.Fatalf("sample %q expected_eval_trace_link.%s = %#v, want number", sampleID, key, values[key])
+	}
+	return value
 }

@@ -109,12 +109,12 @@
 
 ### Tests
 
-- [ ] T048 [P] [US1] 在 `pkg/ai/rag/retriever_observation_test.go` 编写检索观测接入测试；质量门控：先写失败测试，覆盖 retrieval count、miss status、score summary、latency 和 ai_trace_id。
-- [ ] T049 [P] [US1] 在 `pkg/ai/agent/executor_observation_test.go` 编写 Agent step 观测接入测试；质量门控：先写失败测试，覆盖 step index、tool call id、termination reason、loop/budget 状态。
-- [ ] T050 [P] [US1] 在 `pkg/ai/resilience/provider_wrapper_observation_test.go` 编写 provider wrapper outcome 观测测试；质量门控：先写失败测试，覆盖 upstream_failure、degraded、rate_limited 和 4xx 不熔断。
-- [ ] T051 [P] [US2] 在 `pkg/ai/eval/evidence_test.go` 编写 EvaluationEvidence 测试；质量门控：先写失败测试，覆盖必填字段、阈值、regression_status 和 missing trace link。
-- [ ] T052 [P] [US2] 在 `pkg/ai/eval/runner_trace_link_test.go` 编写 runner 回链测试；质量门控：先写失败测试，验证单样例 prediction、metric 和 trace identity 正确进入 report。
-- [ ] T053 [P] [US2] 在 `internal/eval/smoke/agent_golden_test.go` 增加 Agent eval trace link 断言；质量门控：先写失败测试，保持成功、工具错误、自我纠错或步数限制样例可诊断。
+- [X] T048 [P] [US1] 在 `pkg/ai/rag/retriever_observation_test.go` 编写检索观测接入测试；质量门控：先写失败测试，覆盖 retrieval count、miss status、score summary、latency 和 ai_trace_id。
+- [X] T049 [P] [US1] 在 `pkg/ai/agent/executor_observation_test.go` 编写 Agent step 观测接入测试；质量门控：先写失败测试，覆盖 step index、tool call id、termination reason、loop/budget 状态。
+- [X] T050 [P] [US1] 在 `pkg/ai/resilience/provider_wrapper_observation_test.go` 编写 provider wrapper outcome 观测测试；质量门控：先写失败测试，覆盖 upstream_failure、degraded、rate_limited 和 4xx 不熔断。
+- [X] T051 [P] [US2] 在 `pkg/ai/eval/evidence_test.go` 编写 EvaluationEvidence 测试；质量门控：先写失败测试，覆盖必填字段、阈值、regression_status 和 missing trace link。
+- [X] T052 [P] [US2] 在 `pkg/ai/eval/runner_trace_link_test.go` 编写 runner 回链测试；质量门控：先写失败测试，验证单样例 prediction、metric 和 trace identity 正确进入 report。
+- [X] T053 [P] [US2] 在 `internal/eval/smoke/agent_golden_test.go` 增加 Agent eval trace link 断言；质量门控：先写失败测试，保持成功、工具错误、自我纠错或步数限制样例可诊断。
 
 ### Implementation
 
