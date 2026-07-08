@@ -36,6 +36,11 @@ type InfrastructureExportFailureSmokeResult struct {
 }
 
 // RunInfrastructureExportFailureSmoke 验证基础设施 exporter 失败不会覆盖业务结果。
+//
+// 这个 smoke 的边界刻意收窄在“观测上报失败不能改写主业务语义”：业务成功时，
+// exporter 错误只进入诊断字段；业务失败时，业务错误仍作为主错误返回。真实 HTTP
+// middleware 中的 span 收尾应使用 defer/finally 语义，即使业务失败也尽量导出失败
+// span；那属于完整请求生命周期观测，不是本 smoke 要覆盖的重点。
 func RunInfrastructureExportFailureSmoke(ctx context.Context, config InfrastructureExportFailureSmokeConfig) (InfrastructureExportFailureSmokeResult, error) {
 	if ctx == nil {
 		ctx = context.Background()

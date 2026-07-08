@@ -199,26 +199,65 @@ find docs -path '*observability*' -o -path '*journal*'
 
 ## 真实平台 opt-in smoke
 
-目标：在显式配置后验证真实观测平台可以接收最小生产观测切片。
+目标：在显式配置后验证真实观测平台可以接收最小生产观测切片。真实平台 smoke 是手动 opt-in 验证，不属于默认离线门禁，也不应被 `go test ./...`、`make test` 或默认 `make obs-smoke` 强制依赖。
 
-前置配置：
+### 安全边界
 
-- 平台 endpoint。
-- 公钥/密钥或授权信息，以环境变量或本地配置注入。
-- 明确启用 smoke 的开关。
+- 不要把 endpoint、API key、public key、secret key、token 或其它凭据写入源码、测试 fixture、文档示例、提交记录或聊天记录。
+- `manifest/config/config.yaml` 只保留空占位和注释，真实值必须通过环境变量或密钥管理器注入。
+- 真实平台 smoke 没有默认 endpoint，也没有降级默认 URL；缺少 endpoint 或凭据时必须 skip 或返回可读诊断。
+- smoke payload 只允许携带低敏链路快照、`CredentialPresent` 和关联身份，不允许回显 secret 原值。
 
-预期命令形态：
+### 默认跳过验证
+
+当前默认测试命令：
 
 ```bash
-go test ./internal/eval/smoke -run TestObservabilityPlatformSmoke -count=1
+go test ./internal/eval/smoke -run 'TestResolvePlatformSmokeConfig|TestPlatformSmokeSkipsByDefaultWithoutExternalSend' -count=1
+```
+
+期望结果：
+
+- 默认 `PlatformSmokeConfigInput{}` 解析为 skipped。
+- sender 不会被调用。
+- skip reason 能说明 smoke 未启用或缺少配置。
+
+### 手动 opt-in 配置
+
+手动验证真实平台前，在当前 shell 或本地密钥管理器中设置配置。以下是变量形态示例，不要把真实值写入仓库或聊天记录：
+
+```bash
+export GF_OBSERVABILITY_SMOKE_ENABLED=true
+export GF_OBSERVABILITY_SMOKE_PROVIDER=otlp
+export GF_OBSERVABILITY_SMOKE_ENDPOINT="https://collector.example.com"
+export GF_OBSERVABILITY_SMOKE_APIKEY="<set-in-your-shell-or-secret-manager>"
+```
+
+如果平台使用 public/secret key 组合，则使用：
+
+```bash
+export GF_OBSERVABILITY_SMOKE_PUBLICKEY="<set-in-your-shell-or-secret-manager>"
+export GF_OBSERVABILITY_SMOKE_SECRETKEY="<set-in-your-shell-or-secret-manager>"
+```
+
+当前本地契约命令：
+
+```bash
+go test ./internal/eval/smoke -run 'TestResolvePlatformSmokeConfig|TestPlatformSmoke' -count=1
 ```
 
 期望结果：
 
 - 配置缺失时测试跳过或输出清晰错误。
-- 配置齐备时发送至少 1 条完整示例链路。
-- 示例链路包含基础链路、AI generation、retriever 或 tool、eval 摘要。
-- smoke 不属于默认门禁。
+- 配置齐备时，`RunPlatformSmoke` 构造一条低敏最小链路并通过 `PlatformSmokeSender` 发送。
+- 示例链路包含基础设施 stage、AI generation、retriever 或 tool、eval evidence 摘要。
+- payload 包含 `request_id`、`service_trace_id`、`span_id`、`ai_trace_id` 和 `eval_run_id`，便于真实平台上回查双平面关联。
+- payload 不包含 API key、secret key、token、原始 query、完整 prompt、tool args 或外部响应原文。
+- smoke 不属于默认门禁；真实平台 adapter 失败不得影响默认离线验证。
+
+### 当前实现边界
+
+T082-T085 约束的是 `internal/eval/smoke` 的 platform smoke runner：配置解析、默认 skip、最小 payload 和 sender 边界。它不等价于应用层 `internal/cmd/observability.go` 的完整配置桥接验证。后续真实 adapter 或命令入口落地时，还需要增加从 GoFrame 配置/env 到 `PlatformSmokeConfigInput` 的桥接契约，确保应用默认配置也不会生成启用状态或默认外部 endpoint。
 
 ## 完成判据
 

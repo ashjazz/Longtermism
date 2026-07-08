@@ -157,16 +157,26 @@
 
 ### Documentation Tasks
 
-- [ ] T072 [P] [US4] 在 `docs/observability/01-observability-foundations.md` 编写系统可观测性基础学习资产；质量门控：必须覆盖 logs/metrics/traces、SLO、故障诊断价值和本项目基础设施平面工程落点。
-- [ ] T073 [P] [US4] 在 `docs/observability/02-distributed-tracing.md` 编写分布式追踪学习资产；质量门控：必须覆盖 trace/span/context/baggage、传播边界、常见误用和本项目双平面关联身份设计。
-- [ ] T074 [P] [US4] 在 `docs/observability/03-ai-agent-observability.md` 编写 AI Agent 可观测性学习资产；质量门控：必须覆盖 generation、retriever、tool、agent step、token/cost、loop 和 budget 诊断。
-- [ ] T075 [P] [US4] 在 `docs/observability/04-evaluation-evidence.md` 编写评估证据关联学习资产；质量门控：必须覆盖 dataset/sample/metric/score、回链、回归判断和本项目 eval smoke。
-- [ ] T076 [P] [US4] 在 `docs/observability/05-privacy-boundaries.md` 编写隐私边界学习资产；质量门控：必须覆盖敏感原文、hash/summary、baggage 风险、审计链路边界。
-- [ ] T077 [P] [US4] 在 `docs/observability/06-platform-integration-tradeoffs.md` 编写平台接入取舍学习资产；质量门控：必须覆盖默认离线验证、真实平台 opt-in smoke、adapter 边界和 SDK 污染风险。
-- [ ] T078 [P] [US4] 在 `docs/observability/07-dual-plane-correlation.md` 编写双平面关联学习资产；质量门控：必须覆盖基础 span、AI observation、eval evidence 的 parent/link/baggage 规则。
-- [ ] T079 [US4] 在 `docs/observability/README.md` 更新学习路径顺序；质量门控：必须能从概念阅读顺序跳转到对应工程切片和测试证据。
-- [ ] T080 [US4] 在 `docs/journal/0006-observability-v1-learning-map.md` 记录 Observability v1 学习地图；质量门控：必须包含基础设施平面、AI 语义平面、双平面关联、隐私边界、评估证据和平台接入六个核心主题。
-- [ ] T081 [US4] 在 `specs/002-dual-plane-observability/tasks.md` 为学习资产任务补充实现进度维护说明；质量门控：不得改变任务状态，必须说明学习资产如何随实现同步更新。
+- [X] T072 [P] [US4] 在 `docs/observability/01-observability-foundations.md` 编写系统可观测性基础学习资产；质量门控：必须覆盖 logs/metrics/traces、SLO、故障诊断价值和本项目基础设施平面工程落点。
+- [X] T073 [P] [US4] 在 `docs/observability/02-distributed-tracing.md` 编写分布式追踪学习资产；质量门控：必须覆盖 trace/span/context/baggage、传播边界、常见误用和本项目双平面关联身份设计。
+- [X] T074 [P] [US4] 在 `docs/observability/03-ai-agent-observability.md` 编写 AI Agent 可观测性学习资产；质量门控：必须覆盖 generation、retriever、tool、agent step、token/cost、loop 和 budget 诊断。
+- [X] T075 [P] [US4] 在 `docs/observability/04-evaluation-evidence.md` 编写评估证据关联学习资产；质量门控：必须覆盖 dataset/sample/metric/score、回链、回归判断和本项目 eval smoke。
+- [X] T076 [P] [US4] 在 `docs/observability/05-privacy-boundaries.md` 编写隐私边界学习资产；质量门控：必须覆盖敏感原文、hash/summary、baggage 风险、审计链路边界。
+- [X] T077 [P] [US4] 在 `docs/observability/06-platform-integration-tradeoffs.md` 编写平台接入取舍学习资产；质量门控：必须覆盖默认离线验证、真实平台 opt-in smoke、adapter 边界和 SDK 污染风险。
+- [X] T078 [P] [US4] 在 `docs/observability/07-dual-plane-correlation.md` 编写双平面关联学习资产；质量门控：必须覆盖基础 span、AI observation、eval evidence 的 parent/link/baggage 规则。
+- [X] T079 [US4] 在 `docs/observability/README.md` 更新学习路径顺序；质量门控：必须能从概念阅读顺序跳转到对应工程切片和测试证据。
+- [X] T080 [US4] 在 `docs/journal/0008-observability-v1-learning-map.md` 记录 Observability v1 学习地图；质量门控：必须包含基础设施平面、AI 语义平面、双平面关联、隐私边界、评估证据和平台接入六个核心主题。
+- [X] T081 [US4] 在 `specs/002-dual-plane-observability/tasks.md` 为学习资产任务补充实现进度维护说明；质量门控：不得改变任务状态，必须说明学习资产如何随实现同步更新。
+
+### 学习资产进度维护说明
+
+Phase 7 的学习资产不是一次性文档交付，而是 Observability v1 后续实现的同步索引。后续 Phase 8 与 Final Polish 继续推进时，必须按以下规则维护：
+
+- 新增或修改基础设施 span、AI observation、双平面 link、eval evidence、隐私出口或平台 adapter 时，同步检查 `docs/observability/README.md` 的工程证据索引是否仍能跳转到最新测试命令。
+- 新增真实平台 smoke、Langfuse/OTel adapter 或配置开关后，同步更新对应学习资产的“工程实验”“降级路径”和“最佳实践”段落，避免文档只描述早期 local/no-op 形态。
+- 发现设计误区、测试契约失真、隐私边界遗漏或平台接入失败时，优先补充 `docs/journal/` 复盘；如果形成长期架构决策，再补充或修订 `docs/adr/`。
+- 标记学习资产任务完成前，必须能指出对应代码切片、测试命令或 ADR/journal 证据；如果只有概念描述而没有工程证据，不应视为完成。
+- 维护学习资产时不得批量改动无关任务状态；任务 checkbox 只在对应文件、验证和证据都完成后由实施者单独更新。
 
 ## Phase 8：Platform Smoke & Configuration
 
@@ -174,12 +184,12 @@
 
 **独立验收**：缺少配置时 smoke 明确跳过或报出可读错误；配置齐备时发送一条包含基础链路、AI generation、retriever 或 tool、eval 摘要的示例链路。
 
-- [ ] T082 [P] 在 `internal/eval/smoke/platform_config_test.go` 编写真实平台 smoke 配置测试；质量门控：先写失败测试，覆盖缺少 endpoint、缺少凭据、未启用开关三种情况。
-- [ ] T083 在 `internal/eval/smoke/platform_config.go` 实现真实平台 smoke 配置读取；质量门控：必须通过 T082，不得打印 secret 值。
-- [ ] T084 [P] 在 `internal/eval/smoke/platform_smoke_test.go` 编写真平台 opt-in smoke 测试骨架；质量门控：先写失败测试或 skip 逻辑，默认环境必须跳过不失败。
-- [ ] T085 在 `internal/eval/smoke/platform_smoke.go` 实现真实平台最小链路发送逻辑；质量门控：必须通过 T084，真实上报失败不得影响默认测试。
-- [ ] T086 在 `manifest/config/config.yaml` 补充真实平台 smoke 配置示例注释；质量门控：不得包含真实密钥，必须标明默认关闭。
-- [ ] T087 在 `specs/002-dual-plane-observability/quickstart.md` 更新真实平台 opt-in smoke 操作步骤；质量门控：必须提醒不要把密钥写入源码或聊天记录。
+- [X] T082 [P] 在 `internal/eval/smoke/platform_config_test.go` 编写真实平台 smoke 配置测试；质量门控：先写失败测试，覆盖缺少 endpoint、缺少凭据、未启用开关三种情况。
+- [X] T083 在 `internal/eval/smoke/platform_config.go` 实现真实平台 smoke 配置读取；质量门控：必须通过 T082，不得打印 secret 值。
+- [X] T084 [P] 在 `internal/eval/smoke/platform_smoke_test.go` 编写真平台 opt-in smoke 测试骨架；质量门控：先写失败测试或 skip 逻辑，默认环境必须跳过不失败。
+- [X] T085 在 `internal/eval/smoke/platform_smoke.go` 实现真实平台最小链路发送逻辑；质量门控：必须通过 T084，真实上报失败不得影响默认测试。
+- [X] T086 在 `manifest/config/config.yaml` 补充真实平台 smoke 配置示例注释；质量门控：不得包含真实密钥，必须标明默认关闭。
+- [X] T087 在 `specs/002-dual-plane-observability/quickstart.md` 更新真实平台 opt-in smoke 操作步骤；质量门控：必须提醒不要把密钥写入源码或聊天记录。
 
 ## Final Phase：Polish & Cross-Cutting Concerns
 
@@ -191,7 +201,7 @@
 - [ ] T089 [P] 在 `docs/ROADMAP.md` 增加 Observability v1 当前路线说明；质量门控：不得改写旧 P0/P1 历史，只补充当前 spec-kit 导航。
 - [ ] T090 在 `Makefile` 确认 `test`、`test-race`、`vet`、`eval-smoke`、`obs-smoke` 命令可运行；质量门控：任一默认命令失败必须阻止完成，真实平台 smoke 不得默认执行。
 - [ ] T091 在 `specs/002-dual-plane-observability/checklists/requirements.md` 追加任务拆分审查结果；质量门控：必须检查任务独立性、TDD、基础设施平面、双平面关联、默认离线验证和学习资产覆盖。
-- [ ] T092 在 `docs/journal/0007-observability-v1-task-planning.md` 记录任务拆解复盘；质量门控：必须说明为什么按基础设施平面、AI 语义平面、双平面关联、评估回链、隐私边界、学习资产拆分。
+- [ ] T092 在 `docs/journal/0009-observability-v1-task-planning.md` 记录任务拆解复盘；质量门控：必须说明为什么按基础设施平面、AI 语义平面、双平面关联、评估回链、隐私边界、学习资产拆分。
 - [ ] T093 在 `specs/002-dual-plane-observability/contracts/observability-v1-contract.md` 补充基础设施平面与双平面关联验收摘要；质量门控：不得引入平台专属 schema，必须保持契约可离线验证。
 - [ ] T094 运行 `go test ./...` 并在 `specs/002-dual-plane-observability/quickstart.md` 记录最终默认验证结果；质量门控：必须使用真实命令输出或明确标记示意，失败不得标记完成。
 
