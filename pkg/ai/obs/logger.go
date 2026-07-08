@@ -118,7 +118,7 @@ type logEntry struct {
 }
 
 func newLogEntry(trace Trace) logEntry {
-	return logEntry{
+	entry := logEntry{
 		TraceID:   trace.TraceID,
 		TenantID:  trace.TenantID,
 		UserID:    trace.UserID,
@@ -176,6 +176,44 @@ func newLogEntry(trace Trace) logEntry {
 		UserRating:    cloneIntPointer(trace.UserRating),
 		AutoEvalScore: cloneFloat64Pointer(trace.AutoEvalScore),
 	}
+	return sanitizeLogEntry(entry)
+}
+
+func sanitizeLogEntry(entry logEntry) logEntry {
+	entry.TraceID = safeLogString("trace_id", entry.TraceID)
+	entry.TenantID = safeLogString("tenant_id", entry.TenantID)
+	entry.UserID = safeLogString("user_id", entry.UserID)
+	entry.SessionID = safeLogString("session_id", entry.SessionID)
+	entry.Feature = safeLogString("feature", entry.Feature)
+	entry.Timestamp = safeLogString("timestamp", entry.Timestamp)
+	entry.RequestID = safeLogString("request_id", entry.RequestID)
+	entry.ServiceTraceID = safeLogString("service_trace_id", entry.ServiceTraceID)
+	entry.SpanID = safeLogString("span_id", entry.SpanID)
+	entry.FailureStatus = safeLogString("failure_status", entry.FailureStatus)
+	entry.QueryHash = safeLogString("query_hash", entry.QueryHash)
+	entry.QueryLang = safeLogString("query_lang", entry.QueryLang)
+	entry.Model = safeLogString("model", entry.Model)
+	entry.PromptTemplateVersion = safeLogString("prompt_template_version", entry.PromptTemplateVersion)
+	entry.PromptHash = safeLogString("prompt_hash", entry.PromptHash)
+	entry.QueryRewrittenHash = safeLogString("query_rewritten_hash", entry.QueryRewrittenHash)
+	entry.ToolCallID = safeLogString("tool_call_id", entry.ToolCallID)
+	entry.ToolName = safeLogString("tool_name", entry.ToolName)
+	entry.TerminationReason = safeLogString("termination_reason", entry.TerminationReason)
+	entry.ProviderName = safeLogString("provider_name", entry.ProviderName)
+	entry.RequestedModel = safeLogString("requested_model", entry.RequestedModel)
+	entry.CircuitState = safeLogString("circuit_state", entry.CircuitState)
+	entry.OutcomeStatus = safeLogString("outcome_status", entry.OutcomeStatus)
+	return entry
+}
+
+func safeLogString(key, value string) string {
+	if value == "" {
+		return ""
+	}
+	if len(ScanForbiddenPayloadFields(map[string]string{key: value})) > 0 {
+		return ""
+	}
+	return value
 }
 
 func formatTraceTimestamp(timestamp time.Time) string {

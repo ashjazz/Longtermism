@@ -74,36 +74,8 @@ func ValidateBaggageField(key, value string) error {
 	if _, allowed := allowedBaggageKeys[normalizedKey]; !allowed {
 		return fmt.Errorf("baggage field %q is not in allowlist", key)
 	}
-	if containsSensitiveBaggageValue(value) {
+	if ContainsSensitivePayloadValue(value) {
 		return fmt.Errorf("baggage field %q contains sensitive value", key)
 	}
 	return nil
-}
-
-func containsSensitiveBaggageValue(value string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	if normalized == "" {
-		return false
-	}
-
-	sensitiveFragments := []string{
-		"bearer ",
-		"password=",
-		"sk-",
-	}
-	for _, fragment := range sensitiveFragments {
-		if strings.Contains(normalized, fragment) {
-			return true
-		}
-	}
-
-	return looksLikeJWT(value)
-}
-
-func looksLikeJWT(value string) bool {
-	parts := strings.Split(value, ".")
-	if len(parts) != 3 {
-		return false
-	}
-	return strings.HasPrefix(parts[0], "eyJ")
 }

@@ -141,13 +141,13 @@
 
 ### Implementation
 
-- [ ] T065 [US3] 在 `pkg/ai/obs/redaction.go` 实现 forbidden key/value 扫描 helper；质量门控：必须通过 T062，扫描结果不得修改输入对象。
-- [ ] T066 [US3] 在 `pkg/ai/obs/logger.go` 接入安全字段白名单；质量门控：必须通过 T061，现有 logger contract 字段保持稳定。
-- [ ] T067 [US3] 在 `pkg/ai/obs/otel_mapper.go` 接入安全字段白名单；质量门控：必须通过 T061，OTel mapper 不得输出敏感原文。
-- [ ] T068 [US3] 在 `pkg/ai/obs/baggage_policy.go` 补充 baggage 隐私拒绝逻辑；质量门控：必须通过 T063，不得改变 T010 定义的允许字段语义。
-- [ ] T069 [US3] 在 `internal/eval/smoke/observability_privacy.go` 实现隐私 smoke 组合；质量门控：必须通过 T064，泄露命中数必须为 0。
-- [ ] T070 [US3] 在 `docs/adr/0007-dual-plane-observability-evaluation-v1.md` 补充隐私实现回顾段落；质量门控：只记录边界与取舍，不记录任何敏感样例原文。
-- [ ] T071 [US3] 在 `docs/journal/0005-observability-privacy-boundary.md` 记录隐私边界学习日志；质量门控：必须包含理论误区、工程根因、修复方式、后续预防。
+- [X] T065 [US3] 在 `pkg/ai/obs/redaction.go` 实现 forbidden key/value 扫描 helper；质量门控：必须通过 T062，扫描结果不得修改输入对象。
+- [X] T066 [US3] 在 `pkg/ai/obs/logger.go` 接入安全字段白名单；质量门控：必须通过 T061，现有 logger contract 字段保持稳定。
+- [X] T067 [US3] 在 `pkg/ai/obs/otel_mapper.go` 接入安全字段白名单；质量门控：必须通过 T061，OTel mapper 不得输出敏感原文。
+- [X] T068 [US3] 在 `pkg/ai/obs/baggage_policy.go` 补充 baggage 隐私拒绝逻辑；质量门控：必须通过 T063，不得改变 T010 定义的允许字段语义。
+- [X] T069 [US3] 在 `internal/eval/smoke/observability_privacy.go` 实现隐私 smoke 组合；质量门控：必须通过 T064，泄露命中数必须为 0。
+- [X] T070 [US3] 在 `docs/adr/0007-dual-plane-observability-evaluation-v1.md` 补充隐私实现回顾段落；质量门控：只记录边界与取舍，不记录任何敏感样例原文。
+- [X] T071 [US3] 在 `docs/journal/0007-observability-privacy-boundary.md` 记录隐私边界学习日志；质量门控：必须包含理论误区、工程根因、修复方式、后续预防。
 
 ## Phase 7：US4 - 系统学习观测与评估体系（优先级：P2）
 

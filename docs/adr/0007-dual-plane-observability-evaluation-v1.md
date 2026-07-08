@@ -73,6 +73,20 @@ v1 暂不做以下事情：
 - **Eval 字段**：dataset name/version、sample id、metric name、score、threshold 和 regression status 应能与产生该输出的 trace 关联。
 - **敏感字段**：原始 query、完整 prompt、tool args、用户隐私、密钥、认证 token、外部 API 响应原文默认禁止进入普通 OTel/Langfuse trace。
 
+## Privacy Implementation Review（隐私实现回顾）
+
+Phase 6 落地后，v1 隐私边界从“字段原则”推进为“可测试出口约束”。普通观测链路的敏感内容防护不依赖单个 adapter 自觉，而是由统一扫描 helper、logger 出口、OTel mapper 出口、baggage policy 和端到端 smoke 共同约束。这样做的目标不是构建完整 DLP 系统，而是在框架早期先守住普通 trace/log/span 不携带原文和密钥的底线。
+
+本阶段确认以下取舍：
+
+- **统一规则优先于分散判断**：敏感 key/value 的扫描逻辑集中在 `pkg/ai/obs`，logger、OTel mapper 和 baggage 复用同一组 value 检测规则，避免不同出口各自维护一套容易漂移的判断。
+- **baggage 保持更窄边界**：baggage 不只是观测输出，还是跨进程传播面，因此继续采用 allowlist key 策略；即使 value 通过低敏检测，key 不在白名单内也不允许传播。
+- **普通观测只保留摘要**：query、prompt、tool 参数和外部响应只能以 hash、长度、分类、数量、状态或错误分类等摘要进入普通观测面；如果未来需要原文用于审计、人工标注或 replay，应新增加密审计链路 ADR，而不是放宽当前普通 trace 边界。
+- **泄露检测结果也要低敏**：privacy smoke 可以报告泄露发生在哪个 surface 和字段类别，但不能在失败结果中回显被扫描到的原始内容。否则“检测泄露”的工具本身会变成新的泄露出口。
+- **隐私测试覆盖所有主要出口**：v1 smoke 覆盖 logger、span sink、OTel mapper、baggage 和端到端输出，确保双平面关联字段仍可回查，同时普通输出不会携带原始敏感 payload。
+
+这次实现也暴露出一个长期边界：当前规则是框架级防线，适合阻止已知高风险字段和常见密钥/隐私形态进入普通观测；它不能替代业务侧数据分类、审计加密、权限控制和生产级 DLP。后续如果引入 Langfuse 真实平台、OTel collector 或外部日志平台，adapter 必须继续把这套隐私契约作为进入平台前的门禁。
+
 ## Alternatives Considered（备选方案）
 
 ### 方案 1：只接 OpenTelemetry，不接 Langfuse

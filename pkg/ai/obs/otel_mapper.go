@@ -100,6 +100,12 @@ func putStringAttribute(attributes map[string]string, key, value string) {
 	if value == "" {
 		return
 	}
+	// OTel span 的字符串属性是最容易误带 query/prompt/tool args/API key 的出口。
+	// 数值和布尔属性只承载计数、延迟、分数和状态位；若未来新增字符串属性，必须
+	// 继续走这里的扫描，而不是直接写入 attributes。
+	if len(ScanForbiddenPayloadFields(map[string]string{key: value})) > 0 {
+		return
+	}
 	attributes[key] = value
 }
 
