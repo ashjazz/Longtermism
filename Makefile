@@ -13,5 +13,6 @@ eval-smoke:
 	go run ./cmd/eval-smoke
 
 obs-smoke:
-	@echo "TODO: Observability v1 offline smoke will be wired by tasks T019-T031."
-	@echo "This placeholder does not require real observability platform credentials."
+	go test ./internal/cmd -count=1
+	go test ./internal/eval/smoke -count=1
+	go test ./pkg/ai/obs ./pkg/ai/obs/testutil -count=1

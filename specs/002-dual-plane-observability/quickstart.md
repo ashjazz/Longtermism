@@ -22,9 +22,10 @@ make obs-smoke
 
 当前期望：
 
-- Phase 1 阶段输出清晰 TODO。
+- 聚合运行 `internal/cmd`、`internal/eval/smoke`、`pkg/ai/obs` 和 `pkg/ai/obs/testutil` 的默认离线观测测试。
 - 不要求真实观测平台 endpoint、API key 或付费服务。
-- Phase 3 已落地基础设施平面离线测试；`make obs-smoke` 仍是聚合入口占位，后续任务会把它替换为完整离线请求链路 smoke。
+- 覆盖基础设施平面、AI 语义观测、双平面关联、eval 回链、隐私边界和真实平台默认 skip 的本地验证。
+- 真实平台 opt-in smoke 不属于该默认入口，必须按后文“真实平台 opt-in smoke”手动执行。
 
 ### 1. 基础设施平面离线验证
 
@@ -258,6 +259,46 @@ go test ./internal/eval/smoke -run 'TestResolvePlatformSmokeConfig|TestPlatformS
 ### 当前实现边界
 
 T082-T085 约束的是 `internal/eval/smoke` 的 platform smoke runner：配置解析、默认 skip、最小 payload 和 sender 边界。它不等价于应用层 `internal/cmd/observability.go` 的完整配置桥接验证。后续真实 adapter 或命令入口落地时，还需要增加从 GoFrame 配置/env 到 `PlatformSmokeConfigInput` 的桥接契约，确保应用默认配置也不会生成启用状态或默认外部 endpoint。
+
+## 最终默认验证结果
+
+执行时间：2026-07-08
+
+默认验证命令：
+
+```bash
+go test ./...
+```
+
+真实命令输出：
+
+```text
+?   	github.com/jazzash/ashjazz-aiagent	[no test files]
+?   	github.com/jazzash/ashjazz-aiagent/api/v1/health	[no test files]
+ok  	github.com/jazzash/ashjazz-aiagent/cmd/eval-smoke	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/internal/cmd	(cached)
+?   	github.com/jazzash/ashjazz-aiagent/internal/consts	[no test files]
+ok  	github.com/jazzash/ashjazz-aiagent/internal/controller/health	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/internal/eval/smoke	(cached)
+?   	github.com/jazzash/ashjazz-aiagent/pkg/ai	[no test files]
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/agent	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/cache	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/eval	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/eval/testutil	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/internal/apperror	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/llm	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/openai	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/testutil	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/obs	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/obs/testutil	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/prompt	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/rag	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/ratelimit	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/resilience	(cached)
+ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/vectordb	(cached)
+```
+
+结论：默认离线测试通过；该命令不要求真实外部观测平台、真实 API key、collector endpoint 或付费服务。
 
 ## 完成判据
 

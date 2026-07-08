@@ -197,13 +197,13 @@ Phase 7 的学习资产不是一次性文档交付，而是 Observability v1 后
 
 **独立验收**：默认测试命令通过；`tasks.md`、quickstart、AGENTS、docs/observability 索引一致；关键风险都有 ADR 或 journal 入口。
 
-- [ ] T088 [P] 在 `AGENTS.md` 更新 SPECKIT 区任务源为 `specs/002-dual-plane-observability/tasks.md`；质量门控：保留 `<!-- SPECKIT START -->` 与 `<!-- SPECKIT END -->` 标记。
-- [ ] T089 [P] 在 `docs/ROADMAP.md` 增加 Observability v1 当前路线说明；质量门控：不得改写旧 P0/P1 历史，只补充当前 spec-kit 导航。
-- [ ] T090 在 `Makefile` 确认 `test`、`test-race`、`vet`、`eval-smoke`、`obs-smoke` 命令可运行；质量门控：任一默认命令失败必须阻止完成，真实平台 smoke 不得默认执行。
-- [ ] T091 在 `specs/002-dual-plane-observability/checklists/requirements.md` 追加任务拆分审查结果；质量门控：必须检查任务独立性、TDD、基础设施平面、双平面关联、默认离线验证和学习资产覆盖。
-- [ ] T092 在 `docs/journal/0009-observability-v1-task-planning.md` 记录任务拆解复盘；质量门控：必须说明为什么按基础设施平面、AI 语义平面、双平面关联、评估回链、隐私边界、学习资产拆分。
-- [ ] T093 在 `specs/002-dual-plane-observability/contracts/observability-v1-contract.md` 补充基础设施平面与双平面关联验收摘要；质量门控：不得引入平台专属 schema，必须保持契约可离线验证。
-- [ ] T094 运行 `go test ./...` 并在 `specs/002-dual-plane-observability/quickstart.md` 记录最终默认验证结果；质量门控：必须使用真实命令输出或明确标记示意，失败不得标记完成。
+- [X] T088 [P] 在 `AGENTS.md` 更新 SPECKIT 区任务源为 `specs/002-dual-plane-observability/tasks.md`；质量门控：保留 `<!-- SPECKIT START -->` 与 `<!-- SPECKIT END -->` 标记。
+- [X] T089 [P] 在 `docs/ROADMAP.md` 增加 Observability v1 当前路线说明；质量门控：不得改写旧 P0/P1 历史，只补充当前 spec-kit 导航。
+- [X] T090 在 `Makefile` 确认 `test`、`test-race`、`vet`、`eval-smoke`、`obs-smoke` 命令可运行；质量门控：任一默认命令失败必须阻止完成，真实平台 smoke 不得默认执行。
+- [X] T091 在 `specs/002-dual-plane-observability/checklists/requirements.md` 追加任务拆分审查结果；质量门控：必须检查任务独立性、TDD、基础设施平面、双平面关联、默认离线验证和学习资产覆盖。
+- [X] T092 在 `docs/journal/0009-observability-v1-task-planning.md` 记录任务拆解复盘；质量门控：必须说明为什么按基础设施平面、AI 语义平面、双平面关联、评估回链、隐私边界、学习资产拆分。
+- [X] T093 在 `specs/002-dual-plane-observability/contracts/observability-v1-contract.md` 补充基础设施平面与双平面关联验收摘要；质量门控：不得引入平台专属 schema，必须保持契约可离线验证。
+- [X] T094 运行 `go test ./...` 并在 `specs/002-dual-plane-observability/quickstart.md` 记录最终默认验证结果；质量门控：必须使用真实命令输出或明确标记示意，失败不得标记完成。
 
 ## 依赖关系
 

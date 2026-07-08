@@ -7,17 +7,57 @@
 
 ---
 
+## Longtermism 北极星
+
+本项目已正式命名为 **Longtermism**。
+
+Longtermism 是一个**观测与评估驱动的生产级 Go AI Agent Harness**。它相信模型能力会持续变强，模型、工具和 Agent 范式会持续变化，
+但可观测事实、可评估证据和可回归改进，才是生产级 AI Agent 长期不变的底层基础。
+
+因此，本路线图后续不再只把目标表述为“实现一个 Agent 框架”，而是围绕以下长期主线推进：
+
+- **观测事实**：让模型调用、提示词版本、工具调用、RAG 检索、上下文压缩、loop 决策、失败与降级都能被解释和回查。
+- **评估证据**：让模型、prompt、工具、RAG、上下文和 loop 策略的变化都能进入 dataset、experiment、score、evidence 和 regression gate。
+- **工程闭环**：从线上 trace 发现问题，从问题沉淀 eval case，再用回归门禁证明修复或优化是否真实有效。
+- **平台可替换**：Langfuse、Phoenix、LangSmith、Braintrust、OpenTelemetry Collector 等平台是出口，不是领域事实源。
+- **跨领域迁移**：编程、金融、医疗等业务差异应主要通过 dataset、policy、tool registry、eval rubric 和 risk taxonomy 表达，而不是重写框架核心。
+
+`Longtermism` 不代表慢，而代表从第一性原理出发，优先投资那些在模型、工具协议和 Agent 指导思想不断变化时仍长期有效的工程基础。
+
+---
+
 ## 当前 spec-kit 入口
 
-当前版本规划已标准化到 spec-kit 文档中。新会话或新执行者应优先从以下静态文件恢复上下文：
+当前活跃版本是 **002 双平面观测与评估体系 v1**。新会话或新执行者应优先从以下静态文件恢复上下文：
 
-- 规格文档：`specs/001-agent-framework-spec/spec.md`
-- 技术计划：`specs/001-agent-framework-spec/plan.md`
-- 任务拆解：`specs/001-agent-framework-spec/tasks.md`
-- 调研决策：`specs/001-agent-framework-spec/research.md`
-- 数据模型：`specs/001-agent-framework-spec/data-model.md`
-- 验证指南：`specs/001-agent-framework-spec/quickstart.md`
-- 契约目录：`specs/001-agent-framework-spec/contracts/`
+- 规格文档：`specs/002-dual-plane-observability/spec.md`
+- 技术计划：`specs/002-dual-plane-observability/plan.md`
+- 任务拆解：`specs/002-dual-plane-observability/tasks.md`
+- 调研决策：`specs/002-dual-plane-observability/research.md`
+- 数据模型：`specs/002-dual-plane-observability/data-model.md`
+- 验证指南：`specs/002-dual-plane-observability/quickstart.md`
+- 契约目录：`specs/002-dual-plane-observability/contracts/`
+- 学习资产：`docs/observability/`
+- 决策记录：`docs/adr/0007-dual-plane-observability-evaluation-v1.md`
+
+`specs/001-agent-framework-spec/` 是已完成的框架地基路线，保留为历史与 P0/P1 语义来源。除非明确启动 001 复盘任务，不应把它作为当前任务状态源。
+
+### Observability v1 当前路线
+
+002 版本不是对 P0/P1 历史的重写，而是在既有 `llm`、`prompt`、`obs`、`eval`、`rag`、`agent`、`resilience` 地基之上，
+补齐 Longtermism 的核心差异化能力：**双平面观测与评估闭环**。
+
+当前版本的建设边界如下：
+
+- **基础设施观测平面**：记录 HTTP/service/exporter 生命周期、span 快照、失败分类、配置默认 no-op 与真实平台 opt-in 边界。
+- **AI 语义观测平面**：记录 LLM generation、retriever、tool、agent、eval evidence 等智能事实，并保持字段低敏、可解释、可回放。
+- **双平面关联层**：通过 request_id、service_trace_id、span_id、ai_trace_id、session_id、eval_run_id 等 correlation identity 串起一次请求的完整事实链。
+- **评估回链**：让 dataset run、sample、metric、score 与请求链路、AI trace 建立回查关系，使线上失败可以沉淀为离线回归 case。
+- **隐私与安全边界**：默认禁止 raw query、完整 prompt、tool args、外部响应、密钥进入普通 trace、baggage、logger 或 smoke result。
+- **平台 smoke 与配置**：默认离线验证不外连；Langfuse/OTel 等真实平台只作为显式 opt-in 出口，且不得决定核心事实模型。
+- **学习资产**：同步沉淀 OTel、AI 语义观测、Langfuse、评估体系、双平面关联、隐私边界等主题，服务当前阶段的“边做边学”。
+
+002 的完成标准不是“能上报到某个平台”，而是：默认离线环境下也能证明一次请求发生了什么、为什么失败或降级、关联了哪些 AI 语义事实、是否形成可回归的评估证据。
 
 ---
 
