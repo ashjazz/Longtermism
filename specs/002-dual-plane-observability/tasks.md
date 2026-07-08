@@ -134,10 +134,10 @@
 
 ### Tests
 
-- [ ] T061 [P] [US3] 在 `pkg/ai/obs/privacy_contract_test.go` 编写跨 adapter 隐私契约测试；质量门控：先写失败测试，扫描 logger、span sink、OTel mapper raw payload。
-- [ ] T062 [P] [US3] 在 `pkg/ai/obs/redaction_test.go` 编写敏感字段拒绝测试；质量门控：先写失败测试，覆盖 raw_query、prompt_content、tool_args、api_key、jwt、password、external_response。
-- [ ] T063 [P] [US3] 在 `pkg/ai/obs/baggage_privacy_test.go` 编写 baggage 隐私回归测试；质量门控：先写失败测试，覆盖 query、prompt、tool args、token、PII 禁止进入 baggage。
-- [ ] T064 [P] [US3] 在 `internal/eval/smoke/observability_privacy_test.go` 编写端到端隐私 smoke 测试；质量门控：先写失败测试，构造敏感 query、prompt、tool 参数与外部响应原文。
+- [X] T061 [P] [US3] 在 `pkg/ai/obs/privacy_contract_test.go` 编写跨 adapter 隐私契约测试；质量门控：先写失败测试，扫描 logger、span sink、OTel mapper raw payload。
+- [X] T062 [P] [US3] 在 `pkg/ai/obs/redaction_test.go` 编写敏感字段拒绝测试；质量门控：先写失败测试，覆盖 raw_query、prompt_content、tool_args、api_key、jwt、password、external_response。
+- [X] T063 [P] [US3] 在 `pkg/ai/obs/baggage_privacy_test.go` 编写 baggage 隐私回归测试；质量门控：先写失败测试，覆盖 query、prompt、tool args、token、PII 禁止进入 baggage。
+- [X] T064 [P] [US3] 在 `internal/eval/smoke/observability_privacy_test.go` 编写端到端隐私 smoke 测试；质量门控：先写失败测试，构造敏感 query、prompt、tool 参数与外部响应原文。
 
 ### Implementation
 
