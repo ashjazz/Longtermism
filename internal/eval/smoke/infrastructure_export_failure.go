@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 // InfrastructureBusinessAction 是 smoke 中被保护的主业务路径。

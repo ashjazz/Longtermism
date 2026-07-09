@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	v1 "github.com/jazzash/ashjazz-aiagent/api/v1/health"
-	"github.com/jazzash/ashjazz-aiagent/internal/consts"
+	v1 "github.com/ashjazz/Longtermism/api/v1/health"
+	"github.com/ashjazz/Longtermism/internal/consts"
 )
 
 func TestControllerV1Ping(t *testing.T) {

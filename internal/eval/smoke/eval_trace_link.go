@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	aieval "github.com/jazzash/ashjazz-aiagent/pkg/ai/eval"
+	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
 )
 
 const (

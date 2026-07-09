@@ -7,7 +7,7 @@ package testutil
 import (
 	"context"
 
-	aieval "github.com/jazzash/ashjazz-aiagent/pkg/ai/eval"
+	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
 )
 
 // StaticDataset 把一组样本固定在内存里，并实现 eval.Dataset。

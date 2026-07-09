@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	obstestutil "github.com/jazzash/ashjazz-aiagent/pkg/ai/obs/testutil"
+	obstestutil "github.com/ashjazz/Longtermism/pkg/ai/obs/testutil"
 )
 
 const (

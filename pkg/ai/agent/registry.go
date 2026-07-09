@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 )
 
 // Registry 管理 Agent 可调用工具的本地注册表。

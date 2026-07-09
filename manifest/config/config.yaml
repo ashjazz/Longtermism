@@ -15,7 +15,7 @@ logger:
 
 # 关系型数据库（遵循全局 rules/database/**：PostgreSQL + UUID + 软删除 + ORM 优先）。
 # 本地和生产都通过环境变量覆盖，例如：
-#   GF_DATABASE_DEFAULT_LINK="postgres://user:password@127.0.0.1:5432/ashjazz?sslmode=disable"
+#   GF_DATABASE_DEFAULT_LINK="postgres://user:password@127.0.0.1:5432/longtermism?sslmode=disable"
 database:
   default:
     type: "pgsql"
@@ -52,7 +52,7 @@ ai:
 # 真实平台 smoke 必须显式 opt-in，并通过环境变量或密钥管理器注入 endpoint 与凭据。
 observability:
   enabled: false
-  serviceName: "ashjazz-aiagent"
+  serviceName: "longtermism"
   environment: "local"
   smoke:
     # 真实平台 smoke 默认关闭，不进入 `go test ./...` 或默认 eval/obs smoke 门禁。

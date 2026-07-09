@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 // CoreBoundaryProbe 模拟从应用层进入 pkg/ai core 的调用边界。

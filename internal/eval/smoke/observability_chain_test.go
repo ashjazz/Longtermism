@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 func TestObservabilityChainSmokeCoversRequestOutcomes(t *testing.T) {

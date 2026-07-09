@@ -9,7 +9,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 )
 
 const defaultFakeProviderName = "fake"

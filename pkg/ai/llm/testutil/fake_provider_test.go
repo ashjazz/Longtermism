@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 )
 
 func TestFakeProviderReturnsDeepCopies(t *testing.T) {

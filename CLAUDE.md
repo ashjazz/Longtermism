@@ -31,7 +31,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 技术栈
 
 - **语言**：Go 1.24+。选 Go 是为了借高并发 goroutine、低延迟服务、SSE 流式能力体现 §2.3「Go 加分项」与 §14.2 分布式/低延迟经验。
-- **Module path**：`github.com/jazzash/ashjazz-aiagent`
+- **Module path**：`github.com/ashjazz/Longtermism`
 - **Web 框架**：**GoFrame v2**（`github.com/gogf/gf/v2`，当前 v2.10.x）。CLI 工具 `gf`（代码生成 `gf gen ctrl/dao/service`）。约定见 https://goframe.org 。项目刻意把 **AI 内核放在 `pkg/ai/`，与 GoFrame 解耦**；`internal/` 与 `api/` 才是 GoFrame 应用层，仅做装配与 HTTP 暴露。这样内核可独立测试、未来可抽成独立库，也呼应 §7「自建 Agent Harness，框架作为适配层」的克制。
 - **数据库**：遵循全局 `rules/database/**`——PostgreSQL + UUID 主键、无 DB 层外键、软删除、ORM 优先（GoFrame `gdb` + `gf gen dao`）。
 - **缓存/会话**：Redis（限流计数、语义缓存、会话状态）。

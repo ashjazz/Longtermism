@@ -1,4 +1,4 @@
-module github.com/jazzash/ashjazz-aiagent
+module github.com/ashjazz/Longtermism
 
 go 1.25.0
 

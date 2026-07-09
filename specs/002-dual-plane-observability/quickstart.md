@@ -262,7 +262,7 @@ T082-T085 约束的是 `internal/eval/smoke` 的 platform smoke runner：配置�
 
 ## 最终默认验证结果
 
-执行时间：2026-07-08
+执行时间：2026-07-09
 
 默认验证命令：
 
@@ -273,29 +273,29 @@ go test ./...
 真实命令输出：
 
 ```text
-?   	github.com/jazzash/ashjazz-aiagent	[no test files]
-?   	github.com/jazzash/ashjazz-aiagent/api/v1/health	[no test files]
-ok  	github.com/jazzash/ashjazz-aiagent/cmd/eval-smoke	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/internal/cmd	(cached)
-?   	github.com/jazzash/ashjazz-aiagent/internal/consts	[no test files]
-ok  	github.com/jazzash/ashjazz-aiagent/internal/controller/health	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/internal/eval/smoke	(cached)
-?   	github.com/jazzash/ashjazz-aiagent/pkg/ai	[no test files]
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/agent	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/cache	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/eval	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/eval/testutil	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/internal/apperror	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/llm	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/openai	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/testutil	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/obs	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/obs/testutil	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/prompt	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/rag	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/ratelimit	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/resilience	(cached)
-ok  	github.com/jazzash/ashjazz-aiagent/pkg/ai/vectordb	(cached)
+?   	github.com/ashjazz/Longtermism	[no test files]
+?   	github.com/ashjazz/Longtermism/api/v1/health	[no test files]
+ok  	github.com/ashjazz/Longtermism/cmd/eval-smoke	1.245s
+ok  	github.com/ashjazz/Longtermism/internal/cmd	1.789s
+?   	github.com/ashjazz/Longtermism/internal/consts	[no test files]
+ok  	github.com/ashjazz/Longtermism/internal/controller/health	2.657s
+ok  	github.com/ashjazz/Longtermism/internal/eval/smoke	3.516s
+?   	github.com/ashjazz/Longtermism/pkg/ai	[no test files]
+ok  	github.com/ashjazz/Longtermism/pkg/ai/agent	3.196s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/cache	5.888s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/eval	6.291s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/eval/testutil	3.911s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/internal/apperror	4.313s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/llm	3.094s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/llm/openai	7.998s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/llm/testutil	7.322s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/obs	5.416s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/obs/testutil	4.725s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/prompt	8.365s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/rag	7.993s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/ratelimit	7.594s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/resilience	7.565s
+ok  	github.com/ashjazz/Longtermism/pkg/ai/vectordb	8.114s
 ```
 
 结论：默认离线测试通过；该命令不要求真实外部观测平台、真实 API key、collector endpoint 或付费服务。

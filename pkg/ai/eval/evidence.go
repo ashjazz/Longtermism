@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 // RegressionStatus 表示单条 eval evidence 对回归门禁的判定结果。

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/openai"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/testutil"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm/openai"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm/testutil"
 )
 
 // ProviderContractCase 描述一组可复用的 provider 契约样例。
