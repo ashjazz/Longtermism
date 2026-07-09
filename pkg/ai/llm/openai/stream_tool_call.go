@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 )
 
 // openAIStreamToolCallDelta 对应 OpenAI-compatible 流中的 delta.tool_calls[]。

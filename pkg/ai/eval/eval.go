@@ -16,7 +16,7 @@ package eval
 import (
 	"context"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 // Sample golden dataset 中的一条样本（§6.5）。

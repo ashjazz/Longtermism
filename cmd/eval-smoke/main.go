@@ -8,8 +8,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/jazzash/ashjazz-aiagent/internal/eval/smoke"
-	aieval "github.com/jazzash/ashjazz-aiagent/pkg/ai/eval"
+	"github.com/ashjazz/Longtermism/internal/eval/smoke"
+	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
 )
 
 const (

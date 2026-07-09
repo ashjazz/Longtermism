@@ -3,7 +3,7 @@ package consts
 
 // 框架级元信息。用于健康检查、可观测性标签。
 const (
-	AppName    = "ashjazz-aiagent"
+	AppName    = "longtermism"
 	AppVersion = "0.1.0"
 )
 

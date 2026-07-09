@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 // ProviderWrapper 用断路器保护 llm.Provider。

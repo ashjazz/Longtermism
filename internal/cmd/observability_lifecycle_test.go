@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 func TestObservabilityTracerProviderLifecycle(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 // LocalRunner 是 P0 的确定性离线评估 runner。

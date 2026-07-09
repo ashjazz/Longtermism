@@ -3,8 +3,8 @@ package health
 import (
 	"context"
 
-	"github.com/jazzash/ashjazz-aiagent/api/v1/health"
-	"github.com/jazzash/ashjazz-aiagent/internal/consts"
+	"github.com/ashjazz/Longtermism/api/v1/health"
+	"github.com/ashjazz/Longtermism/internal/consts"
 )
 
 // Ping 处理 GET /api/v1/health/ping。

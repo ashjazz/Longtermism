@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 )
 
 func TestProviderWrapperPassesThroughProviderSemantics(t *testing.T) {

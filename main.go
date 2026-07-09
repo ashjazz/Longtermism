@@ -5,7 +5,7 @@
 package main
 
 import (
-	"github.com/jazzash/ashjazz-aiagent/internal/cmd"
+	"github.com/ashjazz/Longtermism/internal/cmd"
 
 	"github.com/gogf/gf/v2/os/gctx"
 )

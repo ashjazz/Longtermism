@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 func TestRecorderRecordsTraceAndAllowsFieldAssertions(t *testing.T) {

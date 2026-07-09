@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 func TestPlatformSmokeSkipsByDefaultWithoutExternalSend(t *testing.T) {

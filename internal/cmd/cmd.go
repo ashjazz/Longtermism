@@ -7,7 +7,7 @@ package cmd
 import (
 	"context"
 
-	"github.com/jazzash/ashjazz-aiagent/internal/controller/health"
+	"github.com/ashjazz/Longtermism/internal/controller/health"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -18,8 +18,8 @@ var (
 	// Main 是默认主命令。未来可扩展为多命令（gcmd.CommandWithOpts），
 	// 例如 worker 子命令消费消息队列做异步 Agent 任务。
 	Main = gcmd.Command{
-		Name:  "ashjazz-aiagent",
-		Usage: "ashjazz-aiagent",
+		Name:  "longtermism",
+		Usage: "longtermism",
 		Brief: "生产级 AI Agent 框架（GoFrame v2）",
 		Func: func(ctx context.Context, parser *gcmd.Parser) (err error) {
 			s := g.Server()

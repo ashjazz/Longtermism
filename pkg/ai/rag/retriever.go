@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/vectordb"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/vectordb"
 )
 
 const (

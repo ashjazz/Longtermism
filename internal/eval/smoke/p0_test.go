@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	aieval "github.com/jazzash/ashjazz-aiagent/pkg/ai/eval"
-	evaltestutil "github.com/jazzash/ashjazz-aiagent/pkg/ai/eval/testutil"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
-	obstestutil "github.com/jazzash/ashjazz-aiagent/pkg/ai/obs/testutil"
+	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
+	evaltestutil "github.com/ashjazz/Longtermism/pkg/ai/eval/testutil"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
+	obstestutil "github.com/ashjazz/Longtermism/pkg/ai/obs/testutil"
 )
 
 func TestRunP0BuildsPromptLLMTraceEvalPath(t *testing.T) {

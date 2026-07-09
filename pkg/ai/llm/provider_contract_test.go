@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/openai"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm/testutil"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm/openai"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm/testutil"
 )
 
 // replacementProviderFactory 为同一组契约场景创建可替换 provider。

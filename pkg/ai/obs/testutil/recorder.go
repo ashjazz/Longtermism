@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 // Recorder 记录测试期间产生的 trace。

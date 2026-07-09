@@ -14,7 +14,7 @@ package agent
 import (
 	"context"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 )
 
 // Tool 是 Agent 可调用的工具。schema 设计遵循 §4.7：明确 IO 类型、description 写清何时使用、

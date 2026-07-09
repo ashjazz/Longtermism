@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/vectordb"
+	"github.com/ashjazz/Longtermism/pkg/ai/vectordb"
 )
 
 func TestBasicRetrieverReturnsChunksAndPassesFilter(t *testing.T) {

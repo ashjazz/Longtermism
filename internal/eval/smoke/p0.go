@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	aieval "github.com/jazzash/ashjazz-aiagent/pkg/ai/eval"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/prompt"
+	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/prompt"
 )
 
 const (

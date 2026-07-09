@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	aieval "github.com/jazzash/ashjazz-aiagent/pkg/ai/eval"
+	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
 )
 
 func TestAgentSmokeGoldenDatasetLoads(t *testing.T) {

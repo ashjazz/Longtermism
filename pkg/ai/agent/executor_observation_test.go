@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/llm"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs/testutil"
+	"github.com/ashjazz/Longtermism/pkg/ai/llm"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs/testutil"
 )
 
 func TestExecutorRecordsAgentStepObservationForToolCall(t *testing.T) {

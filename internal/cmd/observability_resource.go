@@ -3,7 +3,7 @@ package cmd
 import "strings"
 
 const (
-	defaultObservabilityServiceName = "ashjazz-aiagent"
+	defaultObservabilityServiceName = "longtermism"
 	defaultObservabilityEnvironment = "local"
 
 	resourceKeyServiceName           = "service.name"

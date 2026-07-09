@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs/testutil"
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/vectordb"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs/testutil"
+	"github.com/ashjazz/Longtermism/pkg/ai/vectordb"
 )
 
 func TestBasicRetrieverRecordsRetrievalObservation(t *testing.T) {

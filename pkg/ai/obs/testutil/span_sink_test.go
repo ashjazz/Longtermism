@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jazzash/ashjazz-aiagent/pkg/ai/obs"
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 func TestMemorySpanSinkRecordsSnapshotsInOrder(t *testing.T) {

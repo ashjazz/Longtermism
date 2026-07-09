@@ -12,11 +12,11 @@ func TestBuildObservabilityResource(t *testing.T) {
 		{
 			name: "service identity includes required OTel resource attributes",
 			input: ObservabilityResourceInput{
-				ServiceName: "ashjazz-aiagent",
+				ServiceName: "longtermism",
 				Environment: "local",
 			},
 			wantAttrs: map[string]string{
-				"service.name":           "ashjazz-aiagent",
+				"service.name":           "longtermism",
 				"deployment.environment": "local",
 			},
 			absentKeys: []string{"service.version", "service.instance.id"},
@@ -24,13 +24,13 @@ func TestBuildObservabilityResource(t *testing.T) {
 		{
 			name: "version and instance id are optional resource attributes",
 			input: ObservabilityResourceInput{
-				ServiceName: "ashjazz-aiagent",
+				ServiceName: "longtermism",
 				Environment: "staging",
 				Version:     "v0.2.0",
 				InstanceID:  "instance-01",
 			},
 			wantAttrs: map[string]string{
-				"service.name":           "ashjazz-aiagent",
+				"service.name":           "longtermism",
 				"deployment.environment": "staging",
 				"service.version":        "v0.2.0",
 				"service.instance.id":    "instance-01",
@@ -40,7 +40,7 @@ func TestBuildObservabilityResource(t *testing.T) {
 			name:  "missing service identity falls back to safe local defaults",
 			input: ObservabilityResourceInput{},
 			wantAttrs: map[string]string{
-				"service.name":           "ashjazz-aiagent",
+				"service.name":           "longtermism",
 				"deployment.environment": "local",
 			},
 			absentKeys: []string{"service.version", "service.instance.id"},

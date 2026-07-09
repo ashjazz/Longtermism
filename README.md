@@ -6,7 +6,7 @@ Longtermism 是一个**观测与评估驱动的生产级 Go AI Agent Harness**�
 
 因此，本项目的核心价值不是替模型伪造智能，而是为模型、提示词、工具、RAG、上下文、loop 策略和业务结果建立可观测、可评估、可回归、可迁移的工程闭环。
 
-> 说明：项目已经在定位上命名为 **Longtermism**。当前 Go module path 仍是 `github.com/jazzash/ashjazz-aiagent`，尚未执行仓库路径和 module path 的整体重命名。
+> 说明：项目已经在定位、远程仓库和 Go module path 上对齐到 **Longtermism**。当前本地工作区目录名仍可能保留历史名称，这不影响模块身份。
 
 ## 项目状态
 

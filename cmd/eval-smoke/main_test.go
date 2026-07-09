@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jazzash/ashjazz-aiagent/internal/eval/smoke"
+	"github.com/ashjazz/Longtermism/internal/eval/smoke"
 )
 
 func TestRunUsesDefaultFakePredictWithoutAPIKey(t *testing.T) {
