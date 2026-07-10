@@ -28,24 +28,22 @@ Longtermism 是一个**观测与评估驱动的生产级 Go AI Agent Harness**�
 
 ## 当前 spec-kit 入口
 
-当前活跃版本是 **002 双平面观测与评估体系 v1**。新会话或新执行者应优先从以下静态文件恢复上下文：
+当前活跃版本是 **003 真实可观测后端与最小 HTTP 闭环**。新会话或新执行者应优先从以下静态文件恢复上下文：
 
-- 规格文档：`specs/002-dual-plane-observability/spec.md`
-- 技术计划：`specs/002-dual-plane-observability/plan.md`
-- 任务拆解：`specs/002-dual-plane-observability/tasks.md`
-- 调研决策：`specs/002-dual-plane-observability/research.md`
-- 数据模型：`specs/002-dual-plane-observability/data-model.md`
-- 验证指南：`specs/002-dual-plane-observability/quickstart.md`
-- 契约目录：`specs/002-dual-plane-observability/contracts/`
+- 规格文档：`specs/003-real-observability-backends/spec.md`
+- 技术计划（待 `/speckit-plan` 生成）：`specs/003-real-observability-backends/plan.md`
+- 任务拆解（待 `/speckit-tasks` 生成）：`specs/003-real-observability-backends/tasks.md`
+- 调研决策：`docs/observability/08-real-backend-decision-workbench.md`
+- 验收清单：`specs/003-real-observability-backends/checklists/`
 - 学习资产：`docs/observability/`
-- 决策记录：`docs/adr/0007-dual-plane-observability-evaluation-v1.md`
+- 决策记录：`docs/adr/0008-real-observability-backends-and-minimal-http-loop.md`
 
 `specs/001-agent-framework-spec/` 是已完成的框架地基路线，保留为历史与 P0/P1 语义来源。除非明确启动 001 复盘任务，不应把它作为当前任务状态源。
 
-### Observability v1 当前路线
+### 真实后端当前路线
 
-002 版本不是对 P0/P1 历史的重写，而是在既有 `llm`、`prompt`、`obs`、`eval`、`rag`、`agent`、`resilience` 地基之上，
-补齐 Longtermism 的核心差异化能力：**双平面观测与评估闭环**。
+003 版本不是对 002 双平面观测与评估基础的重写，而是在既有 `llm`、`prompt`、`obs`、`eval`、`rag`、`agent`、`resilience` 地基之上，
+把已验证的离线契约推进为 **真实可观测后端与最小 HTTP 观测闭环**。
 
 当前版本的建设边界如下：
 
@@ -54,10 +52,11 @@ Longtermism 是一个**观测与评估驱动的生产级 Go AI Agent Harness**�
 - **双平面关联层**：通过 request_id、service_trace_id、span_id、ai_trace_id、session_id、eval_run_id 等 correlation identity 串起一次请求的完整事实链。
 - **评估回链**：让 dataset run、sample、metric、score 与请求链路、AI trace 建立回查关系，使线上失败可以沉淀为离线回归 case。
 - **隐私与安全边界**：默认禁止 raw query、完整 prompt、tool args、外部响应、密钥进入普通 trace、baggage、logger 或 smoke result。
-- **平台 smoke 与配置**：默认离线验证不外连；Langfuse/OTel 等真实平台只作为显式 opt-in 出口，且不得决定核心事实模型。
-- **学习资产**：同步沉淀 OTel、AI 语义观测、Langfuse、评估体系、双平面关联、隐私边界等主题，服务当前阶段的“边做边学”。
+- **真实后端与 Collector**：以主线基础服务观测方案和 AI 语义后端的组合，验证双平面分流、投递、查询、恢复与告警。
+- **最小 HTTP 闭环**：提供真实模型聊天与纯基础设施验证入口，逐步承接后续 RAG、tool、MCP、上下文和 sub-agent 能力。
+- **分层验证**：保留默认离线门禁，增加本地轻量平台接入验证，再以真实端到端和故障恢复验证完成阶段验收。
 
-002 的完成标准不是“能上报到某个平台”，而是：默认离线环境下也能证明一次请求发生了什么、为什么失败或降级、关联了哪些 AI 语义事实、是否形成可回归的评估证据。
+003 的完成标准不仅是“能上报到某个平台”，还包括：真实请求可在两个平面中关联、纯基础设施请求不会误入 AI 平面、投递故障不改写业务结果、恢复与安全边界可被重复验证。
 
 ---
 

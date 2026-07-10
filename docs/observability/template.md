@@ -1,7 +1,7 @@
 # 学习资产标题
 
 **关联任务**：T000
-**关联规格**：`specs/002-dual-plane-observability/spec.md`
+**关联规格**：`specs/<feature-directory>/spec.md`
 **状态**：planned / drafted / validated / referenced
 
 ## 理论概念

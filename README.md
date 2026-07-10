@@ -21,11 +21,11 @@ Longtermism 是一个**观测与评估驱动的生产级 Go AI Agent Harness**�
 
 当前活跃 spec-kit 路线：
 
-- 规格：`specs/002-dual-plane-observability/spec.md`
-- 计划：`specs/002-dual-plane-observability/plan.md`
-- 任务：`specs/002-dual-plane-observability/tasks.md`
-- Quickstart：`specs/002-dual-plane-observability/quickstart.md`
-- ADR：`docs/adr/0007-dual-plane-observability-evaluation-v1.md`
+- 规格：`specs/003-real-observability-backends/spec.md`
+- 计划（待生成）：`specs/003-real-observability-backends/plan.md`
+- 任务（待生成）：`specs/003-real-observability-backends/tasks.md`
+- Quickstart（待生成）：`specs/003-real-observability-backends/quickstart.md`
+- ADR：`docs/adr/0008-real-observability-backends-and-minimal-http-loop.md`
 
 ## 为什么做这个项目
 
@@ -179,7 +179,7 @@ go test ./internal/cmd -count=1
 - `docs/observability/`：观测与评估学习资产。
 - `internal/eval/README.md`：本地 eval 与 smoke 边界。
 - `specs/001-agent-framework-spec/`：已完成的框架地基路线。
-- `specs/002-dual-plane-observability/`：当前双平面观测与评估路线。
+- `specs/003-real-observability-backends/`：当前真实可观测后端与最小 HTTP 闭环路线。
 
 ## 完成定义
 

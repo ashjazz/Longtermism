@@ -1,6 +1,6 @@
 # Observability v1 学习资产索引
 
-本目录服务于 `specs/002-dual-plane-observability`。它不是普通文档附录，而是 Observability v1 的学习轨道：每个主题都要把理论概念、工程实验、最佳实践和复盘问题连接到实际实现任务。
+本目录包含两类文档：01-07 是在 `specs/002-dual-plane-observability` 的 T072-T078 中建立的学习资产；08 是当前 `specs/003-real-observability-backends` 的真实后端决策工作台。它不是普通文档附录，而是 Observability 的学习轨道：每个主题都要把理论概念、工程实验、最佳实践和复盘问题连接到实际实现任务。
 
 ## 学习路径
 
@@ -39,6 +39,11 @@
    - 工程落点：`RequestObservationChain`、`BuildDualPlaneLinks`、baggage allowlist 和完整链路 smoke。
    - 测试证据：`pkg/ai/obs/chain_recorder_test.go`、`pkg/ai/obs/dual_plane_link_test.go`、`internal/eval/smoke/observability_chain_test.go`。
 
+8. [真实可观测后端接入决策工作台](08-real-backend-decision-workbench.md)
+   - 目标：梳理并收敛真实可观测组件、后端服务、Collector 拓扑和最小 HTTP API 闭环的决策。
+   - 工程落点：GoFrame/OTel SDK 分工、Grafana 主线/SigNoz 备选、Langfuse AI 平面、`POST /api/v1/chat` 最小闭环与 `obs-platform-smoke` 本地接入契约。
+   - 状态：核心决策已沉淀为 [ADR-0008](../adr/0008-real-observability-backends-and-minimal-http-loop.md)；工作台继续记录实施细化。
+
 ## 工程证据索引
 
 | 主题 | 工程切片 | 推荐验证命令 |
@@ -58,9 +63,9 @@
 - 若实现中出现真实失败或修复，优先写入 `docs/journal/`，并从本目录链接过去。
 - 不记录 API key、token、用户隐私、完整 prompt、原始 query 或完整 tool 参数。
 
-## 当前关联规格
+## 规格关联
 
-- 规格：`specs/002-dual-plane-observability/spec.md`
-- 计划：`specs/002-dual-plane-observability/plan.md`
-- 任务：`specs/002-dual-plane-observability/tasks.md`
-- ADR：`docs/adr/0007-dual-plane-observability-evaluation-v1.md`
+- 学习资产来源规格：`specs/002-dual-plane-observability/`
+- 当前真实后端规格：`specs/003-real-observability-backends/spec.md`
+- 当前决策工作台：`docs/observability/08-real-backend-decision-workbench.md`
+- 当前 ADR：`docs/adr/0008-real-observability-backends-and-minimal-http-loop.md`

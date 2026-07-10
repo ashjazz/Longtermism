@@ -204,6 +204,7 @@ Phase 7 的学习资产不是一次性文档交付，而是 Observability v1 后
 - [X] T092 在 `docs/journal/0009-observability-v1-task-planning.md` 记录任务拆解复盘；质量门控：必须说明为什么按基础设施平面、AI 语义平面、双平面关联、评估回链、隐私边界、学习资产拆分。
 - [X] T093 在 `specs/002-dual-plane-observability/contracts/observability-v1-contract.md` 补充基础设施平面与双平面关联验收摘要；质量门控：不得引入平台专属 schema，必须保持契约可离线验证。
 - [X] T094 运行 `go test ./...` 并在 `specs/002-dual-plane-observability/quickstart.md` 记录最终默认验证结果；质量门控：必须使用真实命令输出或明确标记示意，失败不得标记完成。
+- [X] T095 在 `Makefile` 增加 `obs-platform-smoke` 本地轻量集成命令，并同步 quickstart、工作台与 ADR-0008；质量门控：命令只运行受控 sender 契约测试，不连接真实平台，也不得被表述为真实后端 E2E。
 
 ## 依赖关系
 

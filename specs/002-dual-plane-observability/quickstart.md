@@ -241,20 +241,23 @@ export GF_OBSERVABILITY_SMOKE_PUBLICKEY="<set-in-your-shell-or-secret-manager>"
 export GF_OBSERVABILITY_SMOKE_SECRETKEY="<set-in-your-shell-or-secret-manager>"
 ```
 
-当前本地契约命令：
+当前本地轻量集成命令：
 
 ```bash
-go test ./internal/eval/smoke -run 'TestResolvePlatformSmokeConfig|TestPlatformSmoke' -count=1
+make obs-platform-smoke
 ```
 
 期望结果：
 
-- 配置缺失时测试跳过或输出清晰错误。
+- 命令通过受控内存 sender 执行，不连接 Docker、Collector 或真实后端。
+- 配置缺失时测试跳过或输出清晰诊断。
 - 配置齐备时，`RunPlatformSmoke` 构造一条低敏最小链路并通过 `PlatformSmokeSender` 发送。
 - 示例链路包含基础设施 stage、AI generation、retriever 或 tool、eval evidence 摘要。
 - payload 包含 `request_id`、`service_trace_id`、`span_id`、`ai_trace_id` 和 `eval_run_id`，便于真实平台上回查双平面关联。
 - payload 不包含 API key、secret key、token、原始 query、完整 prompt、tool args 或外部响应原文。
-- smoke 不属于默认门禁；真实平台 adapter 失败不得影响默认离线验证。
+- 该命令是可在本地或 CI 快速执行的接入契约，不属于默认 `make test` 门禁；真实平台 adapter 失败不得影响默认离线验证。
+
+真实 Collector 与后端的接收/查询验证仍需使用后续 `make obs-grafana-e2e` 或 `make obs-signoz-e2e`，不能用本地 sender 的成功替代。
 
 ### 当前实现边界
 
