@@ -42,7 +42,16 @@ services:
         limits:
           cpus: "1.0"
           memory: 512M
+    user: "__CURRENT_UID__"
+    volumes:
+      - type: bind
+        source: __STORAGE_SOURCE__
+        target: /var/lib/otelcol/storage
 EOF
+  sed -i.bak "s/__CURRENT_UID__/$(id -u)/" "${fixture_root}/deploy/observability/compose.grafana.yaml"
+  sed -i.bak "s|__STORAGE_SOURCE__|${fixture_root}/storage|" "${fixture_root}/deploy/observability/compose.grafana.yaml"
+  rm -f "${fixture_root}/deploy/observability/compose.grafana.yaml.bak"
+  cp "${fixture_root}/deploy/observability/compose.grafana.yaml" "${fixture_root}/deploy/observability/compose.signoz.yaml"
 
   cat >"${fixture_root}/manifest/config/config.yaml" <<'EOF'
 observability:
@@ -52,15 +61,17 @@ observability:
     endpoint: otel-collector:4317
 EOF
 
-  cat >"${fixture_root}/deploy/observability/collector/collector.yaml" <<EOF
+  cat >"${fixture_root}/deploy/observability/collector/collector-grafana.yaml" <<EOF
 extensions:
   file_storage/tempo:
     # The fixture uses an absolute path so static validation has no ambiguous CWD.
-    directory: ${fixture_root}/storage/tempo
+    directory: /var/lib/otelcol/storage/tempo
 receivers:
   otlp:
     protocols:
       grpc: {}
+connectors:
+  forward/infra: {}
 exporters:
   otlp/tempo:
     endpoint: tempo:4317
@@ -69,10 +80,14 @@ exporters:
 service:
   extensions: [file_storage/tempo]
   pipelines:
-    traces:
+    traces/ingress:
       receivers: [otlp]
+      exporters: [forward/infra]
+    traces/infra:
+      receivers: [forward/infra]
       exporters: [otlp/tempo]
 EOF
+  cp "${fixture_root}/deploy/observability/collector/collector-grafana.yaml" "${fixture_root}/deploy/observability/collector/collector-signoz.yaml"
 
   cat >"${fixture_root}/go.mod" <<'EOF'
 module example.com/config-check-fixture
@@ -139,12 +154,62 @@ EOF
       printf '\nrequire github.com/uber/jaeger-client-go v2.30.0+incompatible\n' >>"${fixture_root}/go.mod"
       ;;
     invalid_collector_pipeline)
-      sed -i.bak 's/exporters: \[otlp\/tempo\]/exporters: [otlp\/missing]/' "${fixture_root}/deploy/observability/collector/collector.yaml"
-      rm -f "${fixture_root}/deploy/observability/collector/collector.yaml.bak"
+      sed -i.bak 's/exporters: \[otlp\/tempo\]/exporters: [otlp\/missing]/' "${fixture_root}/deploy/observability/collector/collector-grafana.yaml"
+      rm -f "${fixture_root}/deploy/observability/collector/collector-grafana.yaml.bak"
       ;;
     storage_path_unavailable)
-      sed -i.bak 's|storage/tempo|storage/missing|' "${fixture_root}/deploy/observability/collector/collector.yaml"
-      rm -f "${fixture_root}/deploy/observability/collector/collector.yaml.bak"
+      sed -i.bak 's|storage/tempo|storage/missing|' "${fixture_root}/deploy/observability/collector/collector-grafana.yaml"
+      rm -f "${fixture_root}/deploy/observability/collector/collector-grafana.yaml.bak"
+      ;;
+    missing_compose_config)
+      rm "${fixture_root}/deploy/observability/compose.signoz.yaml"
+      ;;
+    missing_collector_config)
+      rm "${fixture_root}/deploy/observability/collector/collector-signoz.yaml"
+      ;;
+    storage_path_symlink)
+      ln -s "${fixture_root}/storage/tempo" "${fixture_root}/storage/link"
+      sed -i.bak 's|storage/tempo|storage/link|' "${fixture_root}/deploy/observability/collector/collector-grafana.yaml"
+      rm -f "${fixture_root}/deploy/observability/collector/collector-grafana.yaml.bak"
+      ;;
+    storage_runtime_user_unwritable)
+      sed -i.bak 's/user: "[0-9][0-9]*"/user: "99999"/' "${fixture_root}/deploy/observability/compose.grafana.yaml"
+      rm -f "${fixture_root}/deploy/observability/compose.grafana.yaml.bak"
+      ;;
+    empty_collector_pipeline)
+      sed -i.bak 's/receivers: \[otlp\]/receivers: []/' "${fixture_root}/deploy/observability/collector/collector-grafana.yaml"
+      rm -f "${fixture_root}/deploy/observability/collector/collector-grafana.yaml.bak"
+      ;;
+    named_storage_volume)
+      sed -i.bak 's|source: .*storage|source: collector-storage|' "${fixture_root}/deploy/observability/compose.grafana.yaml"
+      sed -i.bak 's/type: bind/type: volume/' "${fixture_root}/deploy/observability/compose.grafana.yaml"
+      rm -f "${fixture_root}/deploy/observability/compose.grafana.yaml.bak"
+      cat >>"${fixture_root}/deploy/observability/compose.grafana.yaml" <<'EOF'
+volumes:
+  collector-storage: {}
+EOF
+      ;;
+    named_storage_volume_read_only)
+      sed -i.bak 's|source: .*storage|source: collector-storage|' "${fixture_root}/deploy/observability/compose.grafana.yaml"
+      sed -i.bak 's/type: bind/type: volume/' "${fixture_root}/deploy/observability/compose.grafana.yaml"
+      awk '{ print; if ($0 ~ /target: \/var\/lib\/otelcol\/storage/) print "        read_only: true" }' "${fixture_root}/deploy/observability/compose.grafana.yaml" >"${fixture_root}/deploy/observability/compose.grafana.yaml.tmp"
+      mv "${fixture_root}/deploy/observability/compose.grafana.yaml.tmp" "${fixture_root}/deploy/observability/compose.grafana.yaml"
+      cat >>"${fixture_root}/deploy/observability/compose.grafana.yaml" <<'EOF'
+volumes:
+  collector-storage: {}
+EOF
+      ;;
+    bind_storage_read_only)
+      awk '{ print; if ($0 ~ /target: \/var\/lib\/otelcol\/storage/) print "        read_only: true" }' "${fixture_root}/deploy/observability/compose.grafana.yaml" >"${fixture_root}/deploy/observability/compose.grafana.yaml.tmp"
+      mv "${fixture_root}/deploy/observability/compose.grafana.yaml.tmp" "${fixture_root}/deploy/observability/compose.grafana.yaml"
+      ;;
+    storage_mount_symlink)
+      local outside_root
+      outside_root="$(dirname "${fixture_root}")/outside-storage"
+      mkdir -p "${outside_root}/tempo"
+      ln -s "${outside_root}" "${fixture_root}/storage-link"
+      sed -i.bak "s|source: .*storage|source: ${fixture_root}/storage-link|" "${fixture_root}/deploy/observability/compose.grafana.yaml"
+      rm -f "${fixture_root}/deploy/observability/compose.grafana.yaml.bak"
       ;;
     *)
       fail "unsupported fixture mutation: ${name}"
@@ -247,12 +312,57 @@ run_case \
   'invalid_collector_pipeline' \
   'fail' \
   'invalid_collector_pipeline' \
-  'deploy/observability/collector/collector.yaml'
+  'deploy/observability/collector/collector-grafana.yaml'
 run_case \
   'storage_path_unavailable' \
   'fail' \
   'storage_path_unavailable' \
-  'deploy/observability/collector/collector.yaml'
+  'deploy/observability/collector/collector-grafana.yaml'
+run_case \
+  'missing_compose_config' \
+  'fail' \
+  'missing_compose_config' \
+  'deploy/observability'
+run_case \
+  'missing_collector_config' \
+  'fail' \
+  'missing_collector_config' \
+  'deploy/observability/collector'
+run_case \
+  'storage_path_symlink' \
+  'fail' \
+  'storage_path_unavailable' \
+  'deploy/observability/collector/collector-grafana.yaml'
+run_case \
+  'storage_runtime_user_unwritable' \
+  'fail' \
+  'storage_path_unavailable' \
+  'deploy/observability/collector/collector-grafana.yaml'
+run_case \
+  'empty_collector_pipeline' \
+  'fail' \
+  'invalid_collector_pipeline' \
+  'deploy/observability/collector/collector-grafana.yaml'
+run_case \
+  'named_storage_volume' \
+  'pass' \
+  '' \
+  ''
+run_case \
+  'named_storage_volume_read_only' \
+  'fail' \
+  'storage_path_unavailable' \
+  'deploy/observability/collector/collector-grafana.yaml'
+run_case \
+  'bind_storage_read_only' \
+  'fail' \
+  'storage_path_unavailable' \
+  'deploy/observability/collector/collector-grafana.yaml'
+run_case \
+  'storage_mount_symlink' \
+  'fail' \
+  'storage_path_unavailable' \
+  'deploy/observability/collector/collector-grafana.yaml'
 
 if [[ "${failures}" -gt 0 ]]; then
   printf 'config_check_test: %d assertion(s) failed\n' "${failures}" >&2

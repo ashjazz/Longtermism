@@ -24,7 +24,7 @@
 **独立验收**：`make obs-config-check` 能在无密钥、无容器运行的环境中校验版本、Compose/Collector 静态约束和本地配置保护；`go mod why` 不再显示项目直接依赖 OpenTracing/Jaeger。
 
 - [X] T001 在 `hack/observability/config_check_test.sh` 编写配置检查器 RED 测试，使用临时 fixture 覆盖 `latest` 镜像、缺失 healthcheck/resource limit、host 端口冲突、backend endpoint 泄漏到应用配置、OpenTracing/Jaeger 直接依赖回流、无效 Collector pipeline、不可用 persistent-storage 路径和合法最小配置；质量门控：先运行该脚本确认因检查器尚未实现而失败，测试不得读取真实 `.env`。
-- [ ] T002 在 `hack/observability/config_check.sh` 实现静态配置检查器；质量门控：使 T001 GREEN，使用结构化 YAML/Compose 解析能力而非脆弱字符串替换，在启动 Compose 前以 `invalid_collector_pipeline` 或 `storage_path_unavailable` 拒绝无效配置，错误必须指出文件与稳定错误类别且不打印 secret 值。
+- [X] T002 在 `hack/observability/config_check.sh` 实现静态配置检查器；质量门控：使 T001 GREEN，使用结构化 YAML/Compose 解析能力而非脆弱字符串替换，在启动 Compose 前以 `invalid_collector_pipeline` 或 `storage_path_unavailable` 拒绝无效配置，错误必须指出文件与稳定错误类别且不打印 secret 值。
 - [ ] T003 [P] 在 `deploy/observability/versions.env` 固定 Collector、Prometheus、Loki、Tempo、Grafana、Langfuse 及其依赖、SigNoz 的明确 patch tag；质量门控：禁止 `latest`，每个变量附官方来源注释，首次真实 E2E 后再补 digest，不虚构未验证 digest。
 - [ ] T004 [P] 在 `docs/observability/09-backend-compatibility-matrix.md` 记录 Go/GoFrame/OTel 模块与容器版本兼容矩阵、升级顺序和回滚验证命令；质量门控：必须区分“计划基线”与“E2E 已验证”，链接到官方来源且不复制密钥配置。
 - [ ] T005 在 `go.mod` 与 `go.sum` 移除未使用的 `opentracing-go`/Jaeger 直接依赖并统一 OTel 直接依赖；质量门控：运行 `go mod tidy`、`go mod why`、`go test ./...`，不得通过升级无关依赖制造额外漂移。
