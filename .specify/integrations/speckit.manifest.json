@@ -1,0 +1,24 @@
+{
+  "integration": "speckit",
+  "version": "0.11.3",
+  "installed_at": "2026-07-10T08:37:09.992757+00:00",
+  "files": {
+    ".specify/scripts/bash/setup-plan.sh": "8fb2d7101c386f531cb32801c2b44642ed2dbaecd88e20448e25a3162d0ec497",
+    ".specify/scripts/bash/setup-tasks.sh": "b6150d9f514ef200eccf3c016785dfeb6bb157b4443bdd6c7d15c9d229c94223",
+    ".specify/templates/tasks-template.md": "37a2e9887a50780bc77c9a8c12f022cddc3f0cb46a4786afae4d88eb7d71e9c3",
+    ".specify/templates/spec-template.md": "2013463b915ddaa38e1ca1e2351f7992f9332a1b944da96ed5e664f7f5d5a7e3",
+    ".specify/templates/plan-template.md": "b9586d4d25a0dcb0946b564f727fa06d2add55a642e4b3ddf7e095613beafc22",
+    ".specify/scripts/bash/common.sh": "af8a16f87b4f9084759c42ff9abf35c0b2a2025dffe58c298758ff86de2923b2",
+    ".specify/scripts/bash/check-prerequisites.sh": "afce0aa8db177320d83aa0b8e3619c06b865fd810781894e4a7a3f81664941ce",
+    ".specify/scripts/bash/create-new-feature.sh": "9ba116b64f0328eb69bc1a195d209074ea38823a73a554160d69df34a74daa65",
+    ".specify/templates/constitution-template.md": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3",
+    ".specify/templates/checklist-template.md": "c37695297e5d3153d64f82c21223509940b13932046c7961c42d1d669516130c"
+  },
+  "recovered_files": [
+    ".specify/scripts/bash/setup-plan.sh",
+    ".specify/scripts/bash/setup-tasks.sh",
+    ".specify/templates/plan-template.md",
+    ".specify/templates/spec-template.md",
+    ".specify/templates/tasks-template.md"
+  ]
+}
