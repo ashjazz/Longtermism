@@ -661,7 +661,7 @@ OTel trace/span context 通过标准 propagation 传播，不重复塞入 baggag
 
 | 数据 | 本地默认 retention | 说明 |
 | --- | --- | --- |
-| Prometheus metrics | 15 天 | 用于趋势和 dashboard 学习 |
+| Prometheus metrics | 15 天 | 用于趋势和 dashboard 学习；作为本规格唯一的 metrics retention 基线 |
 | Loki logs | 7 天 | 日志体量和泄露风险更高 |
 | Tempo traces | 7 天 | 支持近期故障回查 |
 | Langfuse metadata/redacted traces | 14 天 | 支持 AI 调试和短期对比 |
@@ -794,7 +794,7 @@ obs-smoke-offline -> 不访问 Docker/LLM/平台的完整离线双平面 smoke
 eval-smoke        -> 固定 dataset、eval evidence 与 trace 回链
 ```
 
-`security-check` 至少包含 `gosec` 和 secret scanning；`coverage-check` 按“默认离线质量门禁”定义的分层阈值判定，失败时输出低于阈值的 package/文件。
+`security-check` 至少包含 `gosec` 和 secret scanning；`coverage-check` 按“默认离线质量门禁”定义的分层阈值判定，失败时输出低于阈值的 package/文件。对于本规格新增或修改的核心 Go 代码，基线是当前分支的 merge-base；从同次测试生成的 coverprofile 仅统计 `internal/cmd`、`internal/observability`、`internal/logic/chat` 和 `pkg/ai/obs` 中非 generated/non-config-only 的新增或修改可执行行，覆盖率分子为命中行、分母为这些可执行行，阈值为 80%。chat usecase 另以 `internal/logic/chat` 全部非 generated 可执行行为分母，阈值为 90%。
 
 #### Level 1：配置与基础设施栈
 
@@ -880,7 +880,7 @@ SigNoz 支持声明完成前额外通过：
 make obs-signoz-e2e
 ```
 
-命令输出应生成机器可读报告，至少包含 run id、profile、marker、各后端结果、耗时、失败阶段和清理状态；真实凭据和受保护 payload 不得进入报告。
+命令输出应生成机器可读报告，至少包含 run id、profile、marker、各后端结果、耗时、每个检查的失败阶段和清理状态；真实凭据和受保护 payload 不得进入报告。若 smoke 自行创建短期凭据，cleanup 必须在报告生成前完成撤销（当发行方支持）及本地删除，并同时证明 run 目录、临时 queue 数据和 raw 调试数据无残留；调用方提供的长期凭据不得由 smoke 撤销。
 
 ## 已沉淀 ADR
 

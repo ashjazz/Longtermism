@@ -67,6 +67,8 @@ This is a shape contract, not a ready-to-use secret file. Checked-in defaults ke
 | smoke disabled | infra-smoke route absent or returns 404 |
 | Langfuse score not configured | evidence persists; projection status `not_configured` |
 | backend profile missing credentials | affected real smoke fails before sending |
+| Collector pipeline references an unknown component or has an invalid graph | `obs-config-check` fails before Compose starts, with file path and stable `invalid_collector_pipeline` category |
+| Collector persistent-storage path is absent, not a directory, or not writable by the Collector runtime user | `obs-config-check` fails before Compose starts with `storage_path_unavailable`; a Level 3 injection must also prove runtime storage errors are observable and recovered safely |
 
 ## 4. Environment/secret contract
 
@@ -74,6 +76,7 @@ This is a shape contract, not a ready-to-use secret file. Checked-in defaults ke
 - Config snapshots and error messages expose only the environment variable name and `credential_present` boolean.
 - Local override files use an ignored naming convention such as `*.local.yaml`/`.env.local`.
 - No command prints the value of `OPENAI_API_KEY`, Langfuse secret/public key pair, OTLP Authorization header or SigNoz ingestion key.
+- A smoke command may create a short-lived credential only when it owns that credential lifecycle. It must revoke it at the issuing service when revocation is supported, delete all local secret files and run-scoped temporary data before writing its final report, and record cleanup status. Caller-supplied long-lived credentials are never deleted or revoked by smoke.
 
 ## 5. Collector component IDs
 
@@ -120,4 +123,4 @@ Port overrides must be supported through local environment values. Config valida
 
 ## 8. Retention contract
 
-Defaults follow `data-model.md`. If a backend cannot enforce record-level `content_raw` retention, raw debug runs use a separate project/instance/volume so the whole unit can be deleted within 24 hours.
+Defaults use the retention baseline in the decision workbench and are mirrored in `data-model.md`: Prometheus metrics 15 days; Loki and Tempo 7 days; Langfuse metadata/redacted traces 14 days; `content_raw` at most 24 hours in an isolated unit; low-sensitive eval evidence/report 90 days; persistent queue only while backlogged. If a backend cannot enforce record-level `content_raw` retention, raw debug runs use a separate project/instance/volume so the whole unit can be deleted within 24 hours.

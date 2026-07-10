@@ -182,6 +182,7 @@ queued -> sending -> sent
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
 | `run_id` | UUID/opaque string | 每次唯一；低敏 |
+| `marker` | string | 每次运行唯一、低敏且可查询；与 `run_id` 分离，禁止进入 metrics labels |
 | `profile` | enum | `grafana` 或 `signoz` |
 | `scenario` | enum | `infra`、`chat`、`score`、`privacy`、`exporter_failure`、`persistent_queue`、`storage_failure`、`score_worker_failure`、`alert`、`retention`、`platform_contract`、`full` |
 | `started_at` | timestamp | UTC；查询下界 |
@@ -189,7 +190,7 @@ queued -> sending -> sent
 | `ai_trace_id` | string? | chat 场景填充 |
 | `deadline` | timestamp | 后端轮询上界 |
 
-run ID 可进入 span/log/report，不进入 metrics labels。
+run ID 与 marker 可进入 span/log/report，不进入 metrics labels。
 
 ## 12. BackendCheckResult / SmokeReport
 
@@ -202,11 +203,12 @@ run ID 可进入 span/log/report，不进入 metrics labels。
 | `duration_ms` | integer | 非负 |
 | `query_window` | object | started/deadline |
 | `evidence` | map | 低敏计数、状态、identity；禁止 payload |
+| `failure_stage` | enum | `none`、`preflight`、`api`、`export`、`query`、`cleanup`；成功检查为 `none`，失败检查必须指出真实失败阶段 |
 | `error_class` | string? | 稳定分类，不含原始 body |
 
 ### SmokeReport
 
-包含 run identity、profile、scenario、总体状态、各 backend results、cleanup status 与版本矩阵摘要。报告一旦生成不可变，不包含 credentials。
+包含 run identity、marker、profile、scenario、总体状态、各 backend results、cleanup status 与版本矩阵摘要。报告一旦生成不可变，不包含 credentials。cleanup 同时记录 smoke 自行创建的临时凭据/secret file 是否已撤销或删除，以及 run 目录、临时 queue 数据和 raw 调试数据是否残留；调用方注入的长期凭据不属于 smoke 可撤销对象。
 
 ## 13. ExporterHealthSnapshot
 
@@ -222,7 +224,7 @@ Prometheus、Grafana 与 score worker 不使用此实体冒充 exporter 证据�
 
 | 数据 | 本地默认保留 |
 | --- | --- |
-| Prometheus metrics | 7 天 |
+| Prometheus metrics | 15 天 |
 | Loki logs | 7 天 |
 | Tempo traces | 7 天 |
 | Langfuse metadata/redacted traces | 14 天 |

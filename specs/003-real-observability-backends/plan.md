@@ -137,4 +137,4 @@ Grafana 主线的任务必须先完成第 1-7 项；SigNoz 任务不得成为主
 - **敏感数据落盘**：应用出口过滤先于 Collector；queue、日志、报告和后端查询均执行 canary 扫描；`content_raw` 只允许隔离 local/test 且最长 24 小时。
 - **观测依赖拖垮业务**：exporter 与 score worker 有界异步、独立失败指标和 shutdown 超时；所有故障注入都断言业务结果未被改写。
 - **本地资源过重**：compose 提供 infra-only 与 full profile；完整 Grafana+Langfuse/Signoz+Langfuse 本地总预算上限为 12 GiB 内存、8 vCPU、20 GiB observability volumes，并记录实测峰值。
-- **E2E 假阳性**：每次 smoke 使用唯一 marker、起始时间、轮询超时和后端 API 查询；报告包含 cleanup 状态，禁止只看容器 healthy 或手工 UI。
+- **E2E 假阳性与残留风险**：每次 smoke 使用唯一 marker、起始时间、轮询超时和后端 API 查询；报告包含每个检查的 failure stage 与 cleanup 状态，禁止只看容器 healthy 或手工 UI。smoke 自建短期凭据必须在报告前撤销（当发行方支持）并删除本地副本，run 目录、临时 queue 数据和 raw 调试数据必须零残留；外部注入的长期凭据不由 smoke 撤销。

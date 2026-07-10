@@ -23,8 +23,8 @@
 
 **独立验收**：`make obs-config-check` 能在无密钥、无容器运行的环境中校验版本、Compose/Collector 静态约束和本地配置保护；`go mod why` 不再显示项目直接依赖 OpenTracing/Jaeger。
 
-- [ ] T001 在 `hack/observability/config_check_test.sh` 编写配置检查器 RED 测试，使用临时 fixture 覆盖 `latest` 镜像、缺失 healthcheck/resource limit、host 端口冲突、backend endpoint 泄漏到应用配置、OpenTracing/Jaeger 直接依赖回流和合法最小配置；质量门控：先运行该脚本确认因检查器尚未实现而失败，测试不得读取真实 `.env`。
-- [ ] T002 在 `hack/observability/config_check.sh` 实现静态配置检查器；质量门控：使 T001 GREEN，使用结构化 YAML/Compose 解析能力而非脆弱字符串替换，错误必须指出文件与稳定错误类别且不打印 secret 值。
+- [ ] T001 在 `hack/observability/config_check_test.sh` 编写配置检查器 RED 测试，使用临时 fixture 覆盖 `latest` 镜像、缺失 healthcheck/resource limit、host 端口冲突、backend endpoint 泄漏到应用配置、OpenTracing/Jaeger 直接依赖回流、无效 Collector pipeline、不可用 persistent-storage 路径和合法最小配置；质量门控：先运行该脚本确认因检查器尚未实现而失败，测试不得读取真实 `.env`。
+- [ ] T002 在 `hack/observability/config_check.sh` 实现静态配置检查器；质量门控：使 T001 GREEN，使用结构化 YAML/Compose 解析能力而非脆弱字符串替换，在启动 Compose 前以 `invalid_collector_pipeline` 或 `storage_path_unavailable` 拒绝无效配置，错误必须指出文件与稳定错误类别且不打印 secret 值。
 - [ ] T003 [P] 在 `deploy/observability/versions.env` 固定 Collector、Prometheus、Loki、Tempo、Grafana、Langfuse 及其依赖、SigNoz 的明确 patch tag；质量门控：禁止 `latest`，每个变量附官方来源注释，首次真实 E2E 后再补 digest，不虚构未验证 digest。
 - [ ] T004 [P] 在 `docs/observability/09-backend-compatibility-matrix.md` 记录 Go/GoFrame/OTel 模块与容器版本兼容矩阵、升级顺序和回滚验证命令；质量门控：必须区分“计划基线”与“E2E 已验证”，链接到官方来源且不复制密钥配置。
 - [ ] T005 在 `go.mod` 与 `go.sum` 移除未使用的 `opentracing-go`/Jaeger 直接依赖并统一 OTel 直接依赖；质量门控：运行 `go mod tidy`、`go mod why`、`go test ./...`，不得通过升级无关依赖制造额外漂移。
@@ -50,8 +50,8 @@
 - [ ] T016 [P] 在 `internal/cmd/request_context_test.go` 编写 request identity 中间件 RED 测试；质量门控：覆盖生成/接受合法 `X-Request-ID`、拒绝超长或非法字符、response header/meta 一致、并发请求不共享身份。
 - [ ] T017 [P] 在 `internal/observability/metrics_test.go` 编写首批指标 RED 测试；质量门控：覆盖 HTTP/LLM/eval/score/queue instruments 和允许标签集合，并明确断言 request/trace/AI/session/smoke ID、raw route、prompt hash 不得成为 labels。
 - [ ] T018 [P] 在 `internal/observability/logging_test.go` 编写 JSON completion/error log RED 测试；质量门控：覆盖 UTC、request/trace/span、route template、status/duration/error class、AI/smoke 条件字段与 secret/PII/raw payload 零命中。
-- [ ] T019 [P] 在 `internal/observability/smoke/report_test.go` 编写不可变 `SmokeReport` RED 测试；质量门控：覆盖 run/profile/scenario/check/cleanup 状态聚合、防御性拷贝、过期时间窗口拒绝和 credential/raw payload 零命中。
-- [ ] T020 [P] 在 `internal/observability/smoke/schema_test.go` 编写 JSON Schema 契约 RED 测试；质量门控：使用 `contracts/smoke-report.schema.json` 验证 infra/chat/score/privacy/exporter_failure/persistent_queue/storage_failure/score_worker_failure/alert/retention/platform_contract/full 场景及缺字段、非法 backend、额外属性、负 duration 失败，先确认 validator 缺失导致测试失败。
+- [ ] T019 [P] 在 `internal/observability/smoke/report_test.go` 编写不可变 `SmokeReport` RED 测试；质量门控：覆盖 run/profile/scenario/marker/check/failure_stage/cleanup 状态聚合、防御性拷贝、过期时间窗口拒绝、smoke 自建临时凭据/数据 cleanup 证据，以及 credential/raw payload 零命中。
+- [ ] T020 [P] 在 `internal/observability/smoke/schema_test.go` 编写 JSON Schema 契约 RED 测试；质量门控：使用 `contracts/smoke-report.schema.json` 验证 infra/chat/score/privacy/exporter_failure/persistent_queue/storage_failure/score_worker_failure/alert/retention/platform_contract/full 场景及 marker、每个 check 的 failure_stage、临时凭据/数据 cleanup 字段；同时覆盖缺字段、非法 backend、额外属性、非法 failure_stage、负 duration 失败，先确认 validator 缺失导致测试失败。
 - [ ] T021 [P] 在 `internal/observability/smoke/poller_test.go` 编写限定时间窗口轮询 RED 测试；质量门控：使用 fake clock 覆盖立即成功、延迟成功、超时、旧 marker、context cancel，禁止 `time.Sleep()`。
 - [ ] T022 [P] 在 `internal/observability/privacy/scanner_test.go` 编写 synthetic canary 扫描 RED 测试；质量门控：覆盖 API/log/queue/backend/report 文本、常见 token/Authorization/PII 形式和 redacted 值，输出只包含类别与计数。
 
@@ -65,12 +65,12 @@
 - [ ] T028 在 `internal/cmd/request_context.go` 实现 request identity 中间件；质量门控：使 T016 GREEN，使用 opaque 低敏 ID、route template 而非 raw path，并保持 health endpoint 回归测试通过。
 - [ ] T029 在 `internal/observability/metrics.go` 实现 OTel Meter instruments 与低基数属性 builder；质量门控：使 T017 GREEN，业务代码只调用语义端口，`go test -race` 无共享状态竞争。
 - [ ] T030 在 `internal/observability/logging.go` 实现 GoFrame `glog` JSON 结构化字段构造；质量门控：使 T018 GREEN，不接 OTel logs SDK，不记录 provider body、prompt/output、Authorization 或 endpoint credential。
-- [ ] T031 在 `internal/observability/smoke/report.go` 实现报告值对象与稳定错误分类；质量门控：使 T019 GREEN，报告生成后不可变，失败检查不能被后续 passed 覆盖。
+- [ ] T031 在 `internal/observability/smoke/report.go` 实现报告值对象与稳定错误分类；质量门控：使 T019 GREEN，报告生成后不可变，失败检查不能被后续 passed 覆盖，报告完成前必须记录 smoke 自建临时凭据/数据的 cleanup 结果。
 - [ ] T032 在 `internal/observability/smoke/schema.go` 实现本地 schema 校验器；质量门控：使 T020 GREEN，禁止通过网络解析 `$schema`，错误包含 JSON path 且不回显敏感值。
 - [ ] T033 在 `internal/observability/smoke/poller.go` 实现 context 驱动的 bounded poller；质量门控：使 T021 GREEN，查询必须同时使用 run marker 与 `[started_at, deadline]`，超时后迟到数据不得满足后续 run，并运行 `go test -race ./internal/observability/smoke`。
 - [ ] T034 在 `internal/observability/privacy/scanner.go` 实现统一 synthetic canary/敏感模式扫描器；质量门控：使 T022 GREEN，scanner 在所有 payload modes 启用并只返回低敏分类证据。
 - [ ] T035 在 `manifest/config/config.yaml` 落地 runtime configuration contract 的非敏感默认 shape；质量门控：默认观测、chat 与 infra-smoke 均关闭，默认 App endpoint 只能指向 Collector，`make obs-config-check` 通过。
-- [ ] T036 在 `Makefile` 增加 `obs-coverage`、foundational 单测与 race 聚合入口；质量门控：显式覆盖 `./internal/cmd/... ./internal/observability/... ./internal/logic/chat/... ./pkg/ai/obs/...`，生成 ignored 的 `build/coverage/observability.out`，分别强制新核心代码 >=80% 与 chat usecase >=90%，generated/config-only 排除项必须使用可审查 allowlist，不得排除失败包或复用缓存假通过。
+- [ ] T036 在 `Makefile` 增加 `obs-coverage`、foundational 单测与 race 聚合入口；质量门控：显式覆盖 `./internal/cmd/... ./internal/observability/... ./internal/logic/chat/... ./pkg/ai/obs/...`，生成 ignored 的 `build/coverage/observability.out`。新核心代码是本 spec 新增或修改的、位于上述包中的非 generated/non-config-only 可执行 Go 行；以 merge-base 为基线，从同一测试运行生成的 coverprofile 中只统计这些行，分母为所有此类可执行行、分子为其中命中行，阈值 >=80%。chat usecase 按 `internal/logic/chat` 的全部非 generated 可执行行单独计算，阈值 >=90%。基线不存在时以首次提交前的空树为基线；重命名按新路径计入。generated/config-only 排除项必须使用可审查 allowlist，不得排除失败包、既有未覆盖行或复用缓存假通过。
 
 ## Phase 3：User Story 1 - 验证服务请求的基础观测（P1）
 
@@ -181,12 +181,12 @@
 - [ ] T111 [P] [US3] 在 `internal/observability/failure/docker_control_test.go` 编写受控容器操作 RED 测试；质量门控：使用 fake command runner 覆盖 pause/unpause/restart、project label scope、context timeout、defer cleanup，禁止拼接未校验 shell 参数。
 - [ ] T112 [P] [US3] 在 `internal/observability/smoke/exporter_failure_runner_test.go` 编写独立 exporter 故障 RED 测试；质量门控：覆盖单出口失败、其它出口继续、send_failed/enqueue/queue component 归因和 HTTP 结果不变。
 - [ ] T113 [P] [US3] 在 `internal/observability/smoke/persistent_queue_runner_test.go` 编写 queue 恢复 RED 测试；质量门控：覆盖 backend pause、产生 marker、Collector restart、backend resume、120 秒 drain、at-least-once duplicate 识别和迟到 marker 隔离。
-- [ ] T114 [P] [US3] 在 `internal/observability/smoke/storage_failure_runner_test.go` 编写 storage/queue 极限 RED 测试；质量门控：覆盖 queue exhaustion、磁盘不可写、permanent error、shutdown timeout 与 dropped/failed 证据，不要求业务失败。
+- [ ] T114 [P] [US3] 在 `internal/observability/smoke/storage_failure_runner_test.go` 编写 storage/queue 极限 RED 测试；质量门控：覆盖 queue exhaustion、磁盘不可写、permanent error、shutdown timeout 与 dropped/failed 证据；另覆盖 `obs-config-check` 对无效 Collector pipeline、缺失/非目录/不可写 storage path 的启动前拒绝和稳定错误类别，不要求业务失败。
 - [ ] T115 [P] [US3] 在 `internal/observability/smoke/score_failure_runner_test.go` 编写 score worker 故障 RED 测试；质量门控：覆盖 Langfuse API 失败、queue full、process shutdown、重试幂等，本地 evidence 完整且 chat 响应不变。
 - [ ] T116 [P] [US3] 在 `internal/logic/chat/failure_classification_test.go` 编写模型与观测故障分类 RED 测试；质量门控：模型 429/5xx/timeout 映射业务状态，telemetry/score/exporter failure 只记录观测错误，二者不得互相归类。
 - [ ] T117 [P] [US3] 在 `internal/observability/smoke/alert_runner_test.go` 编写告警 firing/resolved RED 测试；质量门控：fake Prometheus/Grafana API 覆盖四类告警触发、恢复、超时和 stale alert，不能只验证 rule 文件存在。
 - [ ] T118 [P] [US3] 在 `hack/observability/reset_test.sh` 编写安全 reset RED 测试；质量门控：覆盖无确认拒绝、dry-run 预览、仅当前 compose project/observability label、排除应用 DB/无关 volume、被中断测试残留清理。
-- [ ] T119 [P] [US3] 在 `internal/observability/smoke/retention_runner_test.go` 编写 retention RED 测试；质量门控：覆盖 metrics/logs/traces 7 天、Langfuse 14 天、raw <=24h、evidence/report 90 天和 persistent queue 仅积压保留。
+- [ ] T119 [P] [US3] 在 `internal/observability/smoke/retention_runner_test.go` 编写 retention RED 测试；质量门控：覆盖 Prometheus metrics 15 天、Loki/Tempo 7 天、Langfuse 14 天、raw <=24h、evidence/report 90 天和 persistent queue 仅积压保留。
 
 ### Implementation - GREEN/REFACTOR
 
@@ -194,7 +194,7 @@
 - [ ] T121 [US3] 在 `internal/observability/failure/docker_control.go` 实现 scoped pause/restart/restore；质量门控：使 T111 GREEN，只调用参数化 command runner，任何退出路径都尝试恢复服务并记录 residual resources，并运行 `go test -race ./internal/observability/failure`。
 - [ ] T122 [US3] 在 `internal/observability/smoke/exporter_failure_runner.go` 实现 Tempo/Loki/Langfuse 单出口故障场景；质量门控：使 T112 GREEN，报告分别记录 component sent/failed/enqueue/queue delta 和其它出口成功证据。
 - [ ] T123 [US3] 在 `internal/observability/smoke/persistent_queue_runner.go` 实现跨 Collector 重启恢复场景；质量门控：使 T113 GREEN，声明 at-least-once、不宣称 exactly-once，超时或 duplicate 不得静默忽略。
-- [ ] T124 [US3] 在 `internal/observability/smoke/storage_failure_runner.go` 实现 queue/storage/shutdown 故障场景；质量门控：使 T114 GREEN，故障注入限定当前 compose project，恢复后验证 Collector writable/healthy。
+- [ ] T124 [US3] 在 `internal/observability/smoke/storage_failure_runner.go` 实现 queue/storage/shutdown 故障场景；质量门控：使 T114 GREEN，故障注入限定当前 compose project，恢复后验证 Collector writable/healthy，并在报告中保留 `preflight` 与 runtime storage failure 的区别。
 - [ ] T125 [US3] 在 `internal/observability/smoke/score_failure_runner.go` 实现 score worker failure 场景；质量门控：使 T115 GREEN，先确认本地 evidence，再注入平台失败，业务状态与 eval 事实保持不变。
 - [ ] T126 [US3] 在 `internal/logic/chat/chat.go` 完成模型/观测失败域分离；质量门控：使 T116 GREEN，保留 ai_trace_id 与稳定业务错误类，禁止把 exporter failure 返回为 5xx。
 - [ ] T127 [US3] 在 `internal/observability/smoke/alert_runner.go` 实现告警触发与恢复查询；质量门控：使 T117 GREEN，每类告警生成 firing/resolved 时间证据且查询窗口受限。
@@ -265,9 +265,9 @@
 - [ ] T161 [P] 在 `specs/003-real-observability-backends/contracts/telemetry-contract.md` 根据最终 instruments/component IDs 更新遥测契约；质量门控：逐项引用实现测试，保留高基数禁区、AI marker 边界和真实失败证据源。
 - [ ] T162 [P] 在 `specs/003-real-observability-backends/contracts/runtime-configuration.md` 更新最终配置/端口/资源/retention 矩阵；质量门控：应用配置仍只包含 Collector endpoint，所有 secret 只记录 env 名与 present 状态。
 - [ ] T163 [P] 在 `specs/003-real-observability-backends/contracts/smoke-report.schema.json` 校准最终 scenario/backend/error fields；质量门控：运行正反 fixture 校验，保持 schema version 兼容或显式升级，不允许任意嵌套 payload 泄漏。
-- [ ] T164 在 `specs/003-real-observability-backends/quickstart.md` 完成环境准备、Level 0-4、故障注入、诊断、cleanup、credential rotation 与门禁频率 runbook；质量门控：明确 PR、观测配置变更、阶段里程碑、release candidate、scheduled canary 分别运行哪些命令及其外部依赖/费用，每个命令必须真实存在，不能把未执行命令写成已通过。
+- [ ] T164 在 `specs/003-real-observability-backends/quickstart.md` 完成环境准备、Level 0-4、故障注入、诊断、cleanup、credential rotation 与门禁频率 runbook；质量门控：明确 PR、观测配置变更、阶段里程碑、release candidate、scheduled canary 分别运行哪些命令及其外部依赖/费用；smoke 自建凭据必须撤销/删除、自建临时文件和数据必须清零，而外部注入的长期凭据不得被 smoke 撤销；每个命令必须真实存在，不能把未执行命令写成已通过。
 - [ ] T165 在 `docs/adr/0008-real-observability-backends-and-minimal-http-loop.md` 添加实施结果、偏差与 score worker 演进阈值附录；质量门控：定义何时因多进程部署、持久化需求、shutdown 丢失窗口、queue age/吞吐或重试积压迁移到 outbox/外部 worker，只记录已验证事实与 revisit condition，架构变化需新 ADR 而非静默改写 accepted 决策。
-- [ ] T166 在 `specs/003-real-observability-backends/checklists/real-backend-acceptance.md` 逐项关闭 CHK001-CHK041；质量门控：每个完成项引用具体 task/test/report，缺证据保持未勾选，不以代码存在替代实际 backend 查询。
+- [ ] T166 在 `specs/003-real-observability-backends/checklists/real-backend-acceptance.md` 逐项关闭 CHK001-CHK041；质量门控：每个完成项引用具体 task/test/report，缺证据保持未勾选，不以代码存在替代实际 backend 查询；SmokeReport 必须含 marker、每个 backend check 的 failure_stage，以及 smoke 自建临时凭据/数据的 cleanup 证据。
 - [ ] T167 在 `Makefile` 增加最终 `obs-status`、`obs-release-gate` 与 `obs-signoz-compat-gate`；质量门控：status 仅输出低敏健康/版本信息，release gate 顺序执行 verify/config/Grafana/resilience 并 fail-fast，SigNoz gate 独立且不成为默认 PR 付费/外部门禁。
 - [ ] T168 在 `docs/ROADMAP.md` 与 `README.md` 更新 003 实施状态和验证入口；质量门控：区分 generated/planned/in-progress/verified，保留 002 学习资产历史归属，不提前宣告 SigNoz 或真实后端完成。
 - [ ] T169 执行最终质量与安全审查并把低敏结果写入 `specs/003-real-observability-backends/checklists/final-verification.md`；质量门控：至少运行 `git diff --check`、`make verify`、`go test -race ./...`、覆盖率门禁、secret scan、`make obs-config-check`，有真实配置时再运行 Grafana/resilience/SigNoz gates，任何未运行项必须写明原因和剩余风险。

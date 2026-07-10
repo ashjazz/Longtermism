@@ -7,6 +7,7 @@
   "required": [
     "schema_version",
     "run_id",
+    "marker",
     "profile",
     "scenario",
     "started_at",
@@ -16,8 +17,9 @@
     "cleanup"
   ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1" },
+    "schema_version": { "type": "string", "const": "2" },
     "run_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "marker": { "type": "string", "minLength": 8, "maxLength": 128 },
     "profile": { "type": "string", "enum": ["grafana", "signoz", "local"] },
     "scenario": {
       "type": "string",
@@ -56,7 +58,7 @@
     "check": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["backend", "status", "duration_ms"],
+      "required": ["backend", "status", "duration_ms", "failure_stage"],
       "properties": {
         "backend": {
           "type": "string",
@@ -64,6 +66,10 @@
         },
         "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
         "duration_ms": { "type": "integer", "minimum": 0 },
+        "failure_stage": {
+          "type": "string",
+          "enum": ["none", "preflight", "api", "export", "query", "cleanup"]
+        },
         "error_class": { "type": "string" },
         "evidence": {
           "type": "object",
@@ -71,17 +77,35 @@
             "type": ["string", "number", "integer", "boolean", "null"]
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "passed" } }, "required": ["status"] },
+          "then": { "properties": { "failure_stage": { "const": "none" } } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
+          "then": { "properties": { "failure_stage": { "not": { "const": "none" } } } }
+        }
+      ]
     },
     "cleanup": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "residual_resources"],
+      "required": ["status", "residual_resources", "temporary_credentials", "temporary_data"],
       "properties": {
         "status": { "type": "string", "enum": ["not_required", "completed", "failed"] },
         "residual_resources": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "temporary_credentials": {
+          "type": "string",
+          "enum": ["not_created", "revoked", "deleted", "failed"]
+        },
+        "temporary_data": {
+          "type": "string",
+          "enum": ["not_created", "deleted", "failed"]
         }
       }
     }
