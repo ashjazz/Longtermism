@@ -22,9 +22,9 @@ Longtermism 是一个**观测与评估驱动的生产级 Go AI Agent Harness**�
 当前活跃 spec-kit 路线：
 
 - 规格：`specs/003-real-observability-backends/spec.md`
-- 计划（待生成）：`specs/003-real-observability-backends/plan.md`
-- 任务（待生成）：`specs/003-real-observability-backends/tasks.md`
-- Quickstart（待生成）：`specs/003-real-observability-backends/quickstart.md`
+- 计划：`specs/003-real-observability-backends/plan.md`
+- 任务：`specs/003-real-observability-backends/tasks.md`
+- Quickstart：`specs/003-real-observability-backends/quickstart.md`
 - ADR：`docs/adr/0008-real-observability-backends-and-minimal-http-loop.md`
 
 ## 为什么做这个项目

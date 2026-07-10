@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://longtermism.local/schemas/observability-smoke-report.json",
+  "title": "Observability Smoke Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "profile",
+    "scenario",
+    "started_at",
+    "finished_at",
+    "status",
+    "checks",
+    "cleanup"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1" },
+    "run_id": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "profile": { "type": "string", "enum": ["grafana", "signoz", "local"] },
+    "scenario": {
+      "type": "string",
+      "enum": [
+        "infra",
+        "chat",
+        "score",
+        "privacy",
+        "exporter_failure",
+        "persistent_queue",
+        "storage_failure",
+        "score_worker_failure",
+        "alert",
+        "retention",
+        "platform_contract",
+        "full"
+      ]
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
+    "request_id": { "type": "string" },
+    "ai_trace_id": { "type": "string" },
+    "versions": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "cleanup": { "$ref": "#/$defs/cleanup" }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "status", "duration_ms"],
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": ["api", "collector", "tempo", "loki", "prometheus", "grafana", "langfuse_trace", "langfuse_score", "signoz", "privacy"]
+        },
+        "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "error_class": { "type": "string" },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["string", "number", "integer", "boolean", "null"]
+          }
+        }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "residual_resources"],
+      "properties": {
+        "status": { "type": "string", "enum": ["not_required", "completed", "failed"] },
+        "residual_resources": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

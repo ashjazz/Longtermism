@@ -31,10 +31,11 @@ Longtermism 是一个**观测与评估驱动的生产级 Go AI Agent Harness**�
 当前活跃版本是 **003 真实可观测后端与最小 HTTP 闭环**。新会话或新执行者应优先从以下静态文件恢复上下文：
 
 - 规格文档：`specs/003-real-observability-backends/spec.md`
-- 技术计划（待 `/speckit-plan` 生成）：`specs/003-real-observability-backends/plan.md`
-- 任务拆解（待 `/speckit-tasks` 生成）：`specs/003-real-observability-backends/tasks.md`
+- 技术计划：`specs/003-real-observability-backends/plan.md`
+- 任务拆解：`specs/003-real-observability-backends/tasks.md`
 - 调研决策：`docs/observability/08-real-backend-decision-workbench.md`
 - 验收清单：`specs/003-real-observability-backends/checklists/`
+- 验证指南：`specs/003-real-observability-backends/quickstart.md`
 - 学习资产：`docs/observability/`
 - 决策记录：`docs/adr/0008-real-observability-backends-and-minimal-http-loop.md`
 

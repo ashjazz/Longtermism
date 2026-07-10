@@ -176,8 +176,8 @@ docs/ adr/ journal/       设计文档、架构决策、开发日志
 
 <!-- SPECKIT START -->
 当前 spec-kit 规格：`specs/003-real-observability-backends/spec.md`
-当前 spec-kit 实施计划（待 `/speckit-plan` 生成）：`specs/003-real-observability-backends/plan.md`
-当前 spec-kit 任务拆解与状态源（待 `/speckit-tasks` 生成）：`specs/003-real-observability-backends/tasks.md`
+当前 spec-kit 实施计划：`specs/003-real-observability-backends/plan.md`
+当前 spec-kit 任务拆解与状态源：`specs/003-real-observability-backends/tasks.md`
 <!-- SPECKIT END -->
 
 ## 常用命令
