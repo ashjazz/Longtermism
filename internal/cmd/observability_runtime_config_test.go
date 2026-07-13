@@ -111,7 +111,7 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 					t.Fatalf("ResolveObservabilityRuntimeConfig() error = nil, want field %q", tt.wantErrField)
 				}
 				if !strings.Contains(err.Error(), tt.wantErrField) {
-					t.Fatalf("error = %q, want to contain field %q", err, tt.wantErrField)
+					t.Fatalf("error did not contain expected field %q", tt.wantErrField)
 				}
 				if strings.Contains(err.Error(), syntheticHeaderValue) {
 					t.Fatalf("error leaked synthetic header value: %q", err)
@@ -120,7 +120,7 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 			}
 
 			if err != nil {
-				t.Fatalf("ResolveObservabilityRuntimeConfig() error = %v", err)
+				t.Fatal("ResolveObservabilityRuntimeConfig() returned an unexpected error")
 			}
 			if got.Mode != tt.wantMode {
 				t.Fatalf("Mode = %q, want %q", got.Mode, tt.wantMode)
@@ -137,7 +137,7 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 
 			// Header 原值可能由环境变量/secret file 提供，但绝不能进入可打印配置快照。
 			if rendered := fmt.Sprintf("%#v", got); strings.Contains(rendered, syntheticHeaderValue) {
-				t.Fatalf("runtime config snapshot leaked synthetic header value: %s", rendered)
+				t.Fatal("runtime config snapshot leaked synthetic header value")
 			}
 		})
 	}
