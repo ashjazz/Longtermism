@@ -3,12 +3,19 @@ package cmd
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
+	"go.opentelemetry.io/otel"
+	metricSDK "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
+
+// OTel 的 global provider 是进程级状态。测试必须串行化并在结束时恢复前值，避免
+// 其它包内测试误把本用例的 provider 当成自己的运行时事实。
+var observabilityGlobalProviderTestMu sync.Mutex
 
 func TestObservabilityTracerProviderLifecycle(t *testing.T) {
 	t.Run("initialization is idempotent", func(t *testing.T) {
@@ -153,6 +160,60 @@ func TestObservabilityTracerProviderLifecycleFlushContract(t *testing.T) {
 			t.Fatalf("FailureStatus = %q, want empty in no exporter mode", status.FailureStatus)
 		}
 	})
+}
+
+func TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvider(t *testing.T) {
+	observabilityGlobalProviderTestMu.Lock()
+	defer observabilityGlobalProviderTestMu.Unlock()
+
+	previousTracerProvider := otel.GetTracerProvider()
+	previousMeterProvider := otel.GetMeterProvider()
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousTracerProvider)
+		otel.SetMeterProvider(previousMeterProvider)
+	})
+
+	primarySpanExporter := tracetest.NewInMemoryExporter()
+	primaryTracerProvider := trace.NewTracerProvider(trace.WithSyncer(primarySpanExporter))
+	primaryMeterProvider := metricSDK.NewMeterProvider()
+	primaryLifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		Exporter:       &otelLifecycleExporter{provider: primaryTracerProvider},
+		TracerProvider: primaryTracerProvider,
+		MeterProvider:  primaryMeterProvider,
+	})
+
+	if err := primaryLifecycle.Initialize(context.Background()); err != nil {
+		t.Fatal("primary lifecycle initialization failed")
+	}
+	if got := otel.GetTracerProvider(); got != primaryTracerProvider {
+		t.Fatal("primary lifecycle did not install its trace provider globally")
+	}
+	if got := otel.GetMeterProvider(); got != primaryMeterProvider {
+		t.Fatal("primary lifecycle did not install its meter provider globally")
+	}
+
+	secondaryTracerProvider := trace.NewTracerProvider()
+	secondaryMeterProvider := metricSDK.NewMeterProvider()
+	secondaryLifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		TracerProvider: secondaryTracerProvider,
+		MeterProvider:  secondaryMeterProvider,
+	})
+	if err := secondaryLifecycle.Initialize(context.Background()); err != nil {
+		t.Fatal("second lifecycle initialization must reuse or safely reject the existing global providers")
+	}
+	if got := otel.GetTracerProvider(); got != primaryTracerProvider {
+		t.Fatal("second lifecycle replaced the process global trace provider")
+	}
+	if got := otel.GetMeterProvider(); got != primaryMeterProvider {
+		t.Fatal("second lifecycle replaced the process global meter provider")
+	}
+
+	if err := primaryLifecycle.Shutdown(context.Background()); err != nil {
+		t.Fatal("primary lifecycle shutdown failed")
+	}
+	if err := primaryLifecycle.Shutdown(context.Background()); err != nil {
+		t.Fatal("repeated primary lifecycle shutdown failed")
+	}
 }
 
 type lifecycleExporterStub struct {
