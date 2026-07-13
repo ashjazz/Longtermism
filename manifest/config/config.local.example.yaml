@@ -1,0 +1,16 @@
+# 本地 override 示例：复制为 config.local.yaml 后按需调整非敏感开关。
+# config.local.yaml 已由 .gitignore 忽略；本示例可提交，绝不填写 endpoint、密钥或 token 值。
+#
+# 手动执行真实 smoke 前，仅在 shell、密钥管理器或 Docker secret 中提供下列环境变量名：
+# - GF_OBSERVABILITY_SMOKE_ENDPOINT
+# - GF_OBSERVABILITY_SMOKE_PUBLICKEY
+# - GF_OBSERVABILITY_SMOKE_SECRETKEY
+# - GF_OBSERVABILITY_SMOKE_APIKEY
+# - OTEL_EXPORTER_OTLP_HEADERS
+
+observability:
+  # 本地默认保持离线；启用真实平台前必须完成相应的 fail-fast 校验。
+  enabled: false
+  smoke:
+    # smoke 不随本地启动或测试自动外连，必须由操作者显式开启。
+    enabled: false
