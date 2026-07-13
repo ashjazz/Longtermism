@@ -44,7 +44,7 @@
 
 - [X] T011 [P] 在 `internal/cmd/observability_runtime_config_test.go` 编写 `ObservabilityRuntimeConfig` 表驱动 RED 测试；质量门控：覆盖 noop/local/collector、缺 endpoint、非法 protocol/timeout、production insecure 未授权、配置快照不保留 header 值，并先确认目标断言失败。
 - [X] T012 [P] 在 `pkg/ai/obs/payload_policy_test.go` 编写三种 payload mode 的 RED 测试；质量门控：覆盖 metadata-only、redacted、raw、`production + content_raw` 拒绝及 debug 不授予 raw，synthetic secret/PII 在全部模式命中数为 0。
-- [ ] T013 [P] 在 `internal/cmd/observability_lifecycle_test.go` 扩展单一全局 Provider RED 测试；质量门控：覆盖一次初始化、重复初始化拒绝/复用、shutdown 幂等、flush 超时与无 exporter 模式，使用 OTel test exporter 且不外连。
+- [X] T013 [P] 在 `internal/cmd/observability_lifecycle_test.go` 扩展单一全局 Provider RED 测试；质量门控：覆盖一次初始化、重复初始化拒绝/复用、shutdown 幂等、flush 超时与无 exporter 模式，使用 OTel test exporter 且不外连。
 - [ ] T014 [P] 在 `internal/cmd/observability_exporter_test.go` 编写 OTLP exporter 配置 RED 测试；质量门控：覆盖默认 gRPC、HTTP/protobuf override、resource/header/TLS/timeout/sampling 映射和仅保存 header env 名，禁止 backend-specific endpoint。
 - [ ] T015 [P] 在 `internal/cmd/observability_propagation_test.go` 编写 TraceContext+Baggage 传播 RED 测试；质量门控：证明 OTel trace/span 由 SpanContext 传播，baggage 仅包含 allowlist 低敏身份且不会把 `ai_trace_id` 猜成 TraceID。
 - [ ] T016 [P] 在 `internal/cmd/request_context_test.go` 编写 request identity 中间件 RED 测试；质量门控：覆盖生成/接受合法 `X-Request-ID`、拒绝超长或非法字符、response header/meta 一致、并发请求不共享身份。
