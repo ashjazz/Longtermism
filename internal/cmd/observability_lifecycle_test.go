@@ -3,7 +3,8 @@ package cmd
 import (
 	"context"
 	"errors"
-	"sync"
+	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
@@ -12,10 +13,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
-
-// OTel 的 global provider 是进程级状态。测试必须串行化并在结束时恢复前值，避免
-// 其它包内测试误把本用例的 provider 当成自己的运行时事实。
-var observabilityGlobalProviderTestMu sync.Mutex
 
 func TestObservabilityTracerProviderLifecycle(t *testing.T) {
 	t.Run("initialization is idempotent", func(t *testing.T) {
@@ -163,15 +160,16 @@ func TestObservabilityTracerProviderLifecycleFlushContract(t *testing.T) {
 }
 
 func TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvider(t *testing.T) {
-	observabilityGlobalProviderTestMu.Lock()
-	defer observabilityGlobalProviderTestMu.Unlock()
-
-	previousTracerProvider := otel.GetTracerProvider()
-	previousMeterProvider := otel.GetMeterProvider()
-	t.Cleanup(func() {
-		otel.SetTracerProvider(previousTracerProvider)
-		otel.SetMeterProvider(previousMeterProvider)
-	})
+	if os.Getenv("T013_GLOBAL_PROVIDER_HELPER") != "1" {
+		// OTel 默认全局代理在首次 Set 后会永久委托给该 provider，不能在同一进程中
+		// 可靠恢复。用子进程隔离这条契约，避免后续测试指向已经 shutdown 的 provider。
+		command := exec.Command(os.Args[0], "-test.run=^TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvider$")
+		command.Env = append(os.Environ(), "T013_GLOBAL_PROVIDER_HELPER=1")
+		if err := command.Run(); err != nil {
+			t.Fatal("global provider lifecycle helper process failed")
+		}
+		return
+	}
 
 	primarySpanExporter := tracetest.NewInMemoryExporter()
 	primaryTracerProvider := trace.NewTracerProvider(trace.WithSyncer(primarySpanExporter))
