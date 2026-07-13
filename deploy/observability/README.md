@@ -20,8 +20,8 @@ Langfuse 始终是 AI 语义平面：它接收带 AI marker 的 trace 投影，�
 | 路径 | 责任 | 当前状态 | 对应任务 |
 | --- | --- | --- | --- |
 | `versions.env` | 唯一可读镜像 tag 矩阵 | 已实现；未有 E2E digest | T003 |
-| `compose.grafana.yaml` | Grafana 主线 Compose profile | 计划契约，尚未创建 | T051 |
-| `collector/collector-grafana.yaml` | Grafana 主线 Collector ingress/fan-out | 计划契约，尚未创建 | T052 |
+| `compose.grafana.yaml` | Grafana 主线 Compose profile | 计划契约，尚未创建 | T056 |
+| `collector/collector-grafana.yaml` | Grafana 主线 Collector ingress/fan-out | 计划契约，尚未创建 | T054 |
 | `grafana/` | datasource、dashboard、alert provisioning | 计划契约，尚未创建 | T059-T062 |
 | `compose.signoz.yaml` | SigNoz 备选 Compose profile | 计划契约，尚未创建 | T141 |
 | `collector/collector-signoz.yaml` | SigNoz 三信号与 Langfuse AI fan-out | 计划契约，尚未创建 | T142 |
