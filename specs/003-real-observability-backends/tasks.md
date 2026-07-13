@@ -28,7 +28,7 @@
 - [X] T003 [P] 在 `deploy/observability/versions.env` 固定 Collector、Prometheus、Loki、Tempo、Grafana、Langfuse 及其依赖、SigNoz 的明确 patch tag；质量门控：禁止 `latest`，每个变量附官方来源注释，首次真实 E2E 后再补 digest，不虚构未验证 digest。
 - [X] T004 [P] 在 `docs/observability/09-backend-compatibility-matrix.md` 记录 Go/GoFrame/OTel 模块与容器版本兼容矩阵、升级顺序和回滚验证命令；质量门控：必须区分“计划基线”与“E2E 已验证”，链接到官方来源且不复制密钥配置。
 - [X] T005 在 `go.mod` 与 `go.sum` 移除未使用的 `opentracing-go`/Jaeger 直接依赖并统一 OTel 直接依赖；质量门控：运行 `go mod tidy`、`go mod why`、`go test ./...`，不得通过升级无关依赖制造额外漂移。
-- [ ] T006 [P] 在 `.gitignore` 增加 `*.local.yaml`、`.env.local`、观测 smoke reports、临时 queue/volume 元数据的忽略规则；质量门控：保留可提交示例文件，运行 `git check-ignore` 证明本地 secret override 被忽略且正式配置未被误忽略。
+- [X] T006 [P] 在 `.gitignore` 增加 `*.local.yaml`、`.env.local`、观测 smoke reports、临时 queue/volume 元数据的忽略规则；质量门控：保留可提交示例文件，运行 `git check-ignore` 证明本地 secret override 被忽略且正式配置未被误忽略。
 - [ ] T007 [P] 在 `manifest/config/config.local.example.yaml` 提供无密钥本地 override 示例；质量门控：默认 `observability.enabled=false`、`smoke.enabled=false`，只写环境变量名，不包含任何 backend endpoint 或 credential 值。
 - [ ] T008 [P] 在 `deploy/observability/README.md` 建立部署资产索引与 profile 边界；质量门控：明确 Grafana 主线先行、SigNoz 后置、Langfuse 始终属于 AI 平面，并标注所有尚未实现的命令为计划契约。
 - [ ] T009 在 `Makefile` 增加 `verify`、`obs-contract`、`obs-smoke-offline`、`obs-config-check` 的 Level 0 入口；质量门控：默认目标不启动 Docker、不读取真实 LLM/Langfuse credential，任一子检查失败必须返回非零退出码。
