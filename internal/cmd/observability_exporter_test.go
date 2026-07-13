@@ -68,7 +68,7 @@ func TestBuildObservabilityOTLPExporterConfig(t *testing.T) {
 					Environment: "staging",
 					Collector: ObservabilityCollectorConfigInput{
 						Endpoint: "https://collector.example.test:4318",
-						Protocol: "http/protobuf",
+						Protocol: "http_protobuf",
 						Timeout:  "9s",
 					},
 				},

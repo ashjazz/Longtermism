@@ -14,6 +14,7 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 		input                 ObservabilityRuntimeConfigInput
 		wantMode              ObservabilityRuntimeMode
 		wantCollectorEnabled  bool
+		wantCollectorProtocol string
 		wantHeaderEnvName     string
 		wantCredentialPresent bool
 		wantErrField          string
@@ -47,8 +48,24 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 			},
 			wantMode:              ObservabilityRuntimeModeCollector,
 			wantCollectorEnabled:  true,
+			wantCollectorProtocol: "grpc",
 			wantHeaderEnvName:     "OTEL_EXPORTER_OTLP_HEADERS",
 			wantCredentialPresent: true,
+		},
+		{
+			name: "collector mode accepts an HTTP protobuf configuration",
+			input: ObservabilityRuntimeConfigInput{
+				Mode:        ObservabilityRuntimeModeCollector,
+				Environment: "staging",
+				Collector: ObservabilityCollectorConfigInput{
+					Endpoint: "https://collector.example.test:4318",
+					Protocol: "http_protobuf",
+					Timeout:  "9s",
+				},
+			},
+			wantMode:              ObservabilityRuntimeModeCollector,
+			wantCollectorEnabled:  true,
+			wantCollectorProtocol: "http_protobuf",
 		},
 		{
 			name: "collector mode rejects a missing endpoint",
@@ -74,16 +91,76 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 			wantErrField: "collector protocol",
 		},
 		{
+			name: "collector mode rejects the legacy HTTP protocol spelling",
+			input: ObservabilityRuntimeConfigInput{
+				Mode: ObservabilityRuntimeModeCollector,
+				Collector: ObservabilityCollectorConfigInput{
+					Endpoint: "https://collector.example.test:4318",
+					Protocol: "http/protobuf",
+					Timeout:  "5s",
+				},
+			},
+			wantErrField: "collector protocol",
+		},
+		{
 			name: "collector mode rejects a non-positive timeout",
 			input: ObservabilityRuntimeConfigInput{
 				Mode: ObservabilityRuntimeModeCollector,
 				Collector: ObservabilityCollectorConfigInput{
-					Endpoint: "otel-collector:4317",
-					Protocol: "http/protobuf",
+					Endpoint: "https://collector.example.test:4318",
+					Protocol: "http_protobuf",
 					Timeout:  "0s",
 				},
 			},
 			wantErrField: "collector timeout",
+		},
+		{
+			name: "collector mode rejects a timeout above the bounded export window",
+			input: ObservabilityRuntimeConfigInput{
+				Mode: ObservabilityRuntimeModeCollector,
+				Collector: ObservabilityCollectorConfigInput{
+					Endpoint: "otel-collector:4317",
+					Timeout:  "61s",
+				},
+			},
+			wantErrField: "collector timeout",
+		},
+		{
+			name: "gRPC mode rejects a URL instead of Collector authority",
+			input: ObservabilityRuntimeConfigInput{
+				Mode: ObservabilityRuntimeModeCollector,
+				Collector: ObservabilityCollectorConfigInput{
+					Endpoint: "https://collector.example.test:4317",
+					Protocol: "grpc",
+					Timeout:  "5s",
+				},
+			},
+			wantErrField: "collector endpoint",
+		},
+		{
+			name: "HTTP protobuf mode rejects a Collector authority without an HTTP URL",
+			input: ObservabilityRuntimeConfigInput{
+				Mode: ObservabilityRuntimeModeCollector,
+				Collector: ObservabilityCollectorConfigInput{
+					Endpoint: "otel-collector:4318",
+					Protocol: "http_protobuf",
+					Timeout:  "5s",
+				},
+			},
+			wantErrField: "collector endpoint",
+		},
+		{
+			name: "collector mode rejects a header value mistakenly configured as an environment name",
+			input: ObservabilityRuntimeConfigInput{
+				Mode: ObservabilityRuntimeModeCollector,
+				Collector: ObservabilityCollectorConfigInput{
+					Endpoint:      "otel-collector:4317",
+					Protocol:      "grpc",
+					Timeout:       "5s",
+					HeaderEnvName: syntheticHeaderValue,
+				},
+			},
+			wantErrField: "header environment name",
 		},
 		{
 			name: "production rejects unauthorized insecure Collector transport",
@@ -127,6 +204,9 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 			}
 			if got.CollectorEnabled != tt.wantCollectorEnabled {
 				t.Fatalf("CollectorEnabled = %v, want %v", got.CollectorEnabled, tt.wantCollectorEnabled)
+			}
+			if got.Collector.Protocol != tt.wantCollectorProtocol {
+				t.Fatalf("Collector.Protocol = %q, want %q", got.Collector.Protocol, tt.wantCollectorProtocol)
 			}
 			if got.Collector.HeaderEnvName != tt.wantHeaderEnvName {
 				t.Fatalf("Collector.HeaderEnvName = %q, want %q", got.Collector.HeaderEnvName, tt.wantHeaderEnvName)
