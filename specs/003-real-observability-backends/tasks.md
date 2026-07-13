@@ -52,7 +52,7 @@
 - [X] T018 [P] 在 `internal/observability/logging_test.go` 编写 JSON completion/error log RED 测试；质量门控：覆盖 UTC、request/trace/span、route template、status/duration/error class、AI/smoke 条件字段与 secret/PII/raw payload 零命中。
 - [X] T019 [P] 在 `internal/observability/smoke/report_test.go` 编写不可变 `SmokeReport` RED 测试；质量门控：覆盖 run/profile/scenario/marker/check/failure_stage/cleanup 状态聚合、防御性拷贝、过期时间窗口拒绝、smoke 自建临时凭据/数据 cleanup 证据，以及 credential/raw payload 零命中。
 - [X] T020 [P] 在 `internal/observability/smoke/schema_test.go` 编写 JSON Schema 契约 RED 测试；质量门控：使用 `contracts/smoke-report.schema.json` 验证 infra/chat/score/privacy/exporter_failure/persistent_queue/storage_failure/score_worker_failure/alert/retention/platform_contract/full 场景及 marker、每个 check 的 failure_stage、临时凭据/数据 cleanup 字段；同时覆盖缺字段、非法 backend、额外属性、非法 failure_stage、负 duration 失败，先确认 validator 缺失导致测试失败。
-- [ ] T021 [P] 在 `internal/observability/smoke/poller_test.go` 编写限定时间窗口轮询 RED 测试；质量门控：使用 fake clock 覆盖立即成功、延迟成功、超时、旧 marker、context cancel，禁止 `time.Sleep()`。
+- [X] T021 [P] 在 `internal/observability/smoke/poller_test.go` 编写限定时间窗口轮询 RED 测试；质量门控：使用 fake clock 覆盖立即成功、延迟成功、超时、旧 marker、context cancel，禁止 `time.Sleep()`。
 - [ ] T022 [P] 在 `internal/observability/privacy/scanner_test.go` 编写 synthetic canary 扫描 RED 测试；质量门控：覆盖 API/log/queue/backend/report 文本、常见 token/Authorization/PII 形式和 redacted 值，输出只包含类别与计数。
 
 ### Implementation - GREEN/REFACTOR
