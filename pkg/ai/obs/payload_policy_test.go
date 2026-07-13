@@ -126,8 +126,8 @@ func TestPayloadPolicySanitizeKeepsSensitiveValuesOutOfEveryMode(t *testing.T) {
 			// 强制扫描发生在所有模式、所有内容字段进入 trace/log/queue 之前；raw 只是
 			// 允许受控普通内容，不是关闭 secret 或 PII 检测的旁路。
 			snapshot := policy.Sanitize(PayloadContent{
-				Input:         safeInput,
-				Output:        safeOutput,
+				Input:         safeInput + " " + syntheticBearer,
+				Output:        safeOutput + " " + syntheticPII,
 				Authorization: syntheticBearer,
 				UserReference: syntheticPII,
 				ToolArguments: syntheticToolArgs,
