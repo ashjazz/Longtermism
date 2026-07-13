@@ -9,12 +9,12 @@
 | --- | --- | --- | --- |
 | Go module language | Go 1.25 | 计划基线 | `go.mod` 是最低兼容基线；开发机版本不改变该承诺。 |
 | GoFrame | v2.10.2 | 计划基线 | 仅作为 HTTP/框架基础埋点来源；应用运行时只能有一个全局 OTel provider。官方版本来源：<https://github.com/gogf/gf/releases/tag/v2.10.2>。 |
-| OTel API / metric / trace | v1.44.0 | **待 T005 对齐** | 目前 API 版本高于 SDK/exporter；不得将这个混合图宣称为兼容已验证。 |
-| OTel SDK / OTLP trace exporters | v1.38.0 | **待 T005 对齐** | T005 必须以同一经过测试的 OTel 模块族替换直接依赖，并运行 race/contract 测试。OTel Go 的 traces/metrics 为 stable、logs 仍为 beta：<https://opentelemetry.io/docs/languages/go/>。 |
-| OTLP protobuf | v1.7.1 | **待 T005 对齐** | 随最终 OTel Go module graph 统一，不单独升级。 |
+| OTel API / metric / trace | v1.44.0 | 计划基线 | T005 已将当前 module graph 的 API、SDK 与 metric/trace 模块统一到 v1.44.0；这只证明本地构建与 race 测试通过，不等同于后端 E2E 兼容。 |
+| OTel SDK / metric SDK | v1.44.0 | 计划基线 | `go mod tidy` 已移除未使用的 OTLP exporter/protobuf 依赖；T026 选择并装配实际 OTLP exporter 时，必须保持同一 OTel v1.44.0 模块族并重跑回归。OTel Go 的 traces/metrics 为 stable、logs 仍为 beta：<https://opentelemetry.io/docs/languages/go/>。 |
+| OTLP protobuf | 未引入 | 计划基线 | 当前应用未装配 OTLP exporter，因此不保留孤立的 protobuf 依赖；随 T026 的实际 exporter 一并引入和验证。 |
 | GoFrame OTel contrib | v2.10.2（间接） | 计划基线 | 先通过单 provider lifecycle 测试；若其初始化不能表达本规格的 TLS/header/sampling/test double，则使用 `internal/cmd` 的窄官方 SDK 装配。 |
 
-**E2E 已验证**：无。T005 完成模块统一、T026 完成 exporter 装配并通过真实 smoke 后，才可在本表补充 report 路径、日期、平台架构和 image digest。
+**E2E 已验证**：无。T005 已完成 module graph 对齐；T026 完成 exporter 装配并通过真实 smoke 后，才可在本表补充 report 路径、日期、平台架构和 image digest。
 
 ## 2. 容器后端计划基线
 
