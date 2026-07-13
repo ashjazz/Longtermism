@@ -114,7 +114,7 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 					t.Fatalf("error did not contain expected field %q", tt.wantErrField)
 				}
 				if strings.Contains(err.Error(), syntheticHeaderValue) {
-					t.Fatalf("error leaked synthetic header value: %q", err)
+					t.Fatal("runtime config error leaked synthetic header value")
 				}
 				return
 			}
