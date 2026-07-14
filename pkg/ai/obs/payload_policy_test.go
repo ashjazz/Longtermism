@@ -15,14 +15,14 @@ func TestResolvePayloadPolicy(t *testing.T) {
 		wantErrField string
 	}{
 		{
-			name: "metadata only is accepted in production",
+			name: "metadata-only is accepted without raw authorization",
 			input: PayloadPolicyInput{
 				Mode: PayloadModeMetadataOnly,
 			},
 			wantMode: PayloadModeMetadataOnly,
 		},
 		{
-			name: "redacted content is accepted in production",
+			name: "redacted content is accepted without raw authorization",
 			input: PayloadPolicyInput{
 				Mode: PayloadModeContentRedacted,
 			},
