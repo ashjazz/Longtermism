@@ -73,7 +73,7 @@
 
 ## 8. Payload policy 与日志边界
 
-**Decision**：支持 `metadata_only`、`content_redacted`、`content_raw`。`production + content_raw` 启动失败；debug 不授予 raw 权限。密钥、认证 token 和已识别 PII 在所有模式下禁止进入 span、log、metric、queue、report 和 Langfuse。应用先过滤，Collector 再做确定性字段保护。
+**Decision**：支持 `metadata_only` 与 `content_redacted`；不提供 `content_raw`，debug 不授予内容采集权限。密钥、认证 token 和已识别 PII 在所有模式下禁止进入 span、log、metric、queue、report 和 Langfuse。应用先过滤，Collector 再做确定性字段保护。
 
 **Rationale**：开发学习需要可控查看内容，但敏感信息检测不能因 debug 关闭。保护必须发生在 persistent queue 之前。
 

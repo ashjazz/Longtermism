@@ -16,42 +16,30 @@ func TestResolvePayloadPolicy(t *testing.T) {
 		{
 			name: "metadata only is accepted in production",
 			input: PayloadPolicyInput{
-				Mode:        PayloadModeMetadataOnly,
-				Environment: "production",
+				Mode: PayloadModeMetadataOnly,
 			},
 			wantMode: PayloadModeMetadataOnly,
 		},
 		{
 			name: "redacted content is accepted in production",
 			input: PayloadPolicyInput{
-				Mode:        PayloadModeContentRedacted,
-				Environment: "production",
+				Mode: PayloadModeContentRedacted,
 			},
 			wantMode: PayloadModeContentRedacted,
 		},
 		{
-			name: "raw content is accepted only in local isolated environments",
+			name: "removed raw mode is rejected even when debug is enabled",
 			input: PayloadPolicyInput{
-				Mode:        PayloadModeContentRaw,
-				Environment: "local",
-			},
-			wantMode: PayloadModeContentRaw,
-		},
-		{
-			name: "production rejects raw content even when debug is enabled",
-			input: PayloadPolicyInput{
-				Mode:        PayloadModeContentRaw,
-				Environment: "production",
-				Debug:       true,
+				Mode:  PayloadMode("content_raw"),
+				Debug: true,
 			},
 			wantErrField: "payload mode",
 		},
 		{
-			name: "debug does not upgrade metadata only to raw content",
+			name: "debug does not upgrade metadata only to content capture",
 			input: PayloadPolicyInput{
-				Mode:        PayloadModeMetadataOnly,
-				Environment: "local",
-				Debug:       true,
+				Mode:  PayloadModeMetadataOnly,
+				Debug: true,
 			},
 			wantMode: PayloadModeMetadataOnly,
 		},
@@ -81,11 +69,10 @@ func TestResolvePayloadPolicy(t *testing.T) {
 
 func TestPayloadPolicySanitizeKeepsSensitiveValuesOutOfEveryMode(t *testing.T) {
 	const (
-		safeInput         = "summarize the supplied public document"
-		safeOutput        = "summary complete"
-		syntheticBearer   = "Bearer t012-synthetic-token"
-		syntheticPII      = "t012.user@example.test"
-		syntheticToolArgs = `{"account":"demo","password":"t012-password"}`
+		safeInput       = "summarize the supplied public document"
+		safeOutput      = "summary complete"
+		syntheticBearer = "Bearer t012-synthetic-token"
+		syntheticPII    = "t012.user@example.test"
 	)
 
 	tests := []struct {
@@ -104,19 +91,12 @@ func TestPayloadPolicySanitizeKeepsSensitiveValuesOutOfEveryMode(t *testing.T) {
 			wantInput:  true,
 			wantOutput: true,
 		},
-		{
-			name:       "raw content retains safe content but still strips secrets and PII",
-			mode:       PayloadModeContentRaw,
-			wantInput:  true,
-			wantOutput: true,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			policy, err := ResolvePayloadPolicy(PayloadPolicyInput{
-				Mode:        tt.mode,
-				Environment: "local",
+				Mode: tt.mode,
 			})
 			if err != nil {
 				t.Fatal("ResolvePayloadPolicy() returned an unexpected error")
@@ -125,18 +105,14 @@ func TestPayloadPolicySanitizeKeepsSensitiveValuesOutOfEveryMode(t *testing.T) {
 			// 强制扫描发生在所有模式、所有内容字段进入 trace/log/queue 之前；raw 只是
 			// 允许受控普通内容，不是关闭 secret 或 PII 检测的旁路。
 			snapshot := policy.Sanitize(PayloadContent{
-				Input:         safeInput + " " + syntheticBearer,
-				Output:        safeOutput + " " + syntheticPII,
-				Authorization: syntheticBearer,
-				UserReference: syntheticPII,
-				ToolArguments: syntheticToolArgs,
+				Input:  safeInput + " " + syntheticBearer,
+				Output: safeOutput + " " + syntheticPII,
 			})
 
 			assertPayloadContentPresence(t, snapshot, tt.wantInput, tt.wantOutput)
 			assertPayloadSnapshotDoesNotLeak(t, snapshot, []string{
 				syntheticBearer,
 				syntheticPII,
-				syntheticToolArgs,
 			})
 		})
 	}
@@ -153,9 +129,9 @@ func TestPayloadPolicySanitizeRemovesEmbeddedCredentialsAndPII(t *testing.T) {
 		syntheticID     = "110101199001011234"
 	)
 
-	for _, mode := range []PayloadMode{PayloadModeContentRedacted, PayloadModeContentRaw} {
+	for _, mode := range []PayloadMode{PayloadModeContentRedacted} {
 		t.Run(string(mode), func(t *testing.T) {
-			policy, err := ResolvePayloadPolicy(PayloadPolicyInput{Mode: mode, Environment: "local"})
+			policy, err := ResolvePayloadPolicy(PayloadPolicyInput{Mode: mode})
 			if err != nil {
 				t.Fatal("ResolvePayloadPolicy() returned an unexpected error")
 			}

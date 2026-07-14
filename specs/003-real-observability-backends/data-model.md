@@ -22,7 +22,7 @@
 
 - `collector` mode 必须有合法 endpoint 和受支持 protocol。
 - endpoint 只允许 Collector，不接受 backend-specific 字段。
-- `production + content_raw` 必须失败。
+- 仅允许 `metadata_only` 或 `content_redacted`；未知模式（包括已移除的 `content_raw`）必须失败。
 - 配置快照只保留 header 环境变量名，不保存 header 原值。
 
 ## 2. CollectorClientConfig
@@ -173,7 +173,6 @@ queued -> sending -> sent
 | --- | --- | --- | --- |
 | `metadata_only` | hash、length、category、count、status、score | 原始 query/prompt/output/tool args | 全部 |
 | `content_redacted` | 通过检测与脱敏后的受控片段 | 密钥、token、已识别 PII、未脱敏原文 | local/test/受批准 production |
-| `content_raw` | 普通原文调试内容 | 密钥、token、已识别 PII 仍禁止 | 隔离 local/test，最长 24h |
 
 `is_debug` 只决定响应诊断摘要，不改变 payload mode。
 
@@ -208,7 +207,7 @@ run ID 与 marker 可进入 span/log/report，不进入 metrics labels。
 
 ### SmokeReport
 
-包含 run identity、marker、profile、scenario、总体状态、各 backend results、cleanup status 与版本矩阵摘要。报告一旦生成不可变，不包含 credentials。cleanup 同时记录 smoke 自行创建的临时凭据/secret file 是否已撤销或删除，以及 run 目录、临时 queue 数据和 raw 调试数据是否残留；调用方注入的长期凭据不属于 smoke 可撤销对象。
+包含 run identity、marker、profile、scenario、总体状态、各 backend results、cleanup status 与版本矩阵摘要。报告一旦生成不可变，不包含 credentials。cleanup 同时记录 smoke 自行创建的临时凭据/secret file 是否已撤销或删除，以及 run 目录、临时 queue 数据和调试临时数据是否残留；调用方注入的长期凭据不属于 smoke 可撤销对象。
 
 ## 13. ExporterHealthSnapshot
 
@@ -228,7 +227,6 @@ Prometheus、Grafana 与 score worker 不使用此实体冒充 exporter 证据�
 | Loki logs | 7 天 |
 | Tempo traces | 7 天 |
 | Langfuse metadata/redacted traces | 14 天 |
-| `content_raw` | 最长 24 小时且独立项目/volume |
 | 低敏 eval evidence/report | 90 天 |
 | Collector persistent queue | 仅积压期间；发送后清理 |
 

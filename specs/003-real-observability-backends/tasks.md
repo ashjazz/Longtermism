@@ -43,7 +43,7 @@
 ### Tests - RED
 
 - [X] T011 [P] 在 `internal/cmd/observability_runtime_config_test.go` 编写 `ObservabilityRuntimeConfig` 表驱动 RED 测试；质量门控：覆盖 noop/local/collector、缺 endpoint、非法 protocol/timeout、production insecure 未授权、配置快照不保留 header 值，并先确认目标断言失败。
-- [X] T012 [P] 在 `pkg/ai/obs/payload_policy_test.go` 编写三种 payload mode 的 RED 测试；质量门控：覆盖 metadata-only、redacted、raw、`production + content_raw` 拒绝及 debug 不授予 raw，synthetic secret/PII 在全部模式命中数为 0。
+- [X] T012 [P] 在 `pkg/ai/obs/payload_policy_test.go` 编写 payload mode 的 RED 测试；质量门控：覆盖 metadata-only、redacted、已移除的 raw mode 拒绝及 debug 不授予内容采集权限，synthetic secret/PII 在全部模式命中数为 0。
 - [X] T013 [P] 在 `internal/cmd/observability_lifecycle_test.go` 扩展单一全局 Provider RED 测试；质量门控：覆盖一次初始化、重复初始化拒绝/复用、shutdown 幂等、flush 超时与无 exporter 模式，使用 OTel test exporter 且不外连。
 - [X] T014 [P] 在 `internal/cmd/observability_exporter_test.go` 编写 OTLP exporter 配置 RED 测试；质量门控：覆盖默认 gRPC、HTTP/protobuf override、resource/header/TLS/timeout/sampling 映射和仅保存 header env 名，禁止 backend-specific endpoint。
 - [X] T015 [P] 在 `internal/cmd/observability_propagation_test.go` 编写 TraceContext+Baggage 传播 RED 测试；质量门控：证明 OTel trace/span 由 SpanContext 传播，baggage 仅包含 allowlist 低敏身份且不会把 `ai_trace_id` 猜成 TraceID。
@@ -186,7 +186,7 @@
 - [ ] T116 [P] [US3] 在 `internal/logic/chat/failure_classification_test.go` 编写模型与观测故障分类 RED 测试；质量门控：模型 429/5xx/timeout 映射业务状态，telemetry/score/exporter failure 只记录观测错误，二者不得互相归类。
 - [ ] T117 [P] [US3] 在 `internal/observability/smoke/alert_runner_test.go` 编写告警 firing/resolved RED 测试；质量门控：fake Prometheus/Grafana API 覆盖四类告警触发、恢复、超时和 stale alert，不能只验证 rule 文件存在。
 - [ ] T118 [P] [US3] 在 `hack/observability/reset_test.sh` 编写安全 reset RED 测试；质量门控：覆盖无确认拒绝、dry-run 预览、仅当前 compose project/observability label、排除应用 DB/无关 volume、被中断测试残留清理。
-- [ ] T119 [P] [US3] 在 `internal/observability/smoke/retention_runner_test.go` 编写 retention RED 测试；质量门控：覆盖 Prometheus metrics 15 天、Loki/Tempo 7 天、Langfuse 14 天、raw <=24h、evidence/report 90 天和 persistent queue 仅积压保留。
+- [ ] T119 [P] [US3] 在 `internal/observability/smoke/retention_runner_test.go` 编写 retention RED 测试；质量门控：覆盖 Prometheus metrics 15 天、Loki/Tempo 7 天、Langfuse 14 天、evidence/report 90 天和 persistent queue 仅积压保留；普通原文不得作为可观测 payload 保留。
 
 ### Implementation - GREEN/REFACTOR
 
@@ -199,7 +199,7 @@
 - [ ] T126 [US3] 在 `internal/logic/chat/chat.go` 完成模型/观测失败域分离；质量门控：使 T116 GREEN，保留 ai_trace_id 与稳定业务错误类，禁止把 exporter failure 返回为 5xx。
 - [ ] T127 [US3] 在 `internal/observability/smoke/alert_runner.go` 实现告警触发与恢复查询；质量门控：使 T117 GREEN，每类告警生成 firing/resolved 时间证据且查询窗口受限。
 - [ ] T128 [US3] 在 `hack/observability/reset.sh` 实现显式确认、dry-run 预览和 label-scoped reset；质量门控：使 T118 GREEN，不使用全局 prune，不删除应用数据或无关 volume，输出不含 secret。
-- [ ] T129 [US3] 在 `internal/observability/smoke/retention_runner.go` 实现 retention/volume 边界检查；质量门控：使 T119 GREEN，无法原生逐记录过期的 raw 模式必须验证独立 project/volume 可在 24h 内整体清理。
+- [ ] T129 [US3] 在 `internal/observability/smoke/retention_runner.go` 实现 retention/volume 边界检查；质量门控：使 T119 GREEN，并验证普通原文不进入任何可观测 retention unit。
 - [ ] T130 [US3] 在 `cmd/obs-smoke/main.go` 增加 exporter-failure、persistent-queue、score-worker-failure 与 full resilience scenarios；质量门控：每个 scenario 强制唯一 marker、cleanup trap、schema report 和稳定退出码。
 - [ ] T131 [US3] 在 `Makefile` 增加 `obs-exporter-failure-smoke`、`obs-persistent-queue-smoke`、`obs-score-worker-failure-smoke`、`obs-resilience-e2e`、`obs-reset`；质量门控：破坏性目标要求 `CONFIRM_RESET=1`，中断后仍恢复 paused services。
 - [ ] T132 [US3] 在 `deploy/observability/grafana/alerts/observability.rules.yaml` 校准实际 Collector/HTTP/storage 指标名与阈值；质量门控：通过 T117 实际 firing/resolved 验证，禁止仅凭静态语法宣布告警可用。

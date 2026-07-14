@@ -26,7 +26,7 @@
 
 **测试策略**：TDD。Level 0 默认离线门禁不启动 Docker、不访问真实 LLM；Level 1 验证配置与本地基础设施；Level 2 验证真实 chat/score/privacy；Level 3 验证故障恢复；Level 4 验证 SigNoz。平台 smoke 使用唯一 marker、限定查询窗口和机器可读报告。
 
-**约束**：业务代码只能依赖 OTel API、`pkg/ai/obs` 与应用端口，不得认识具体后端；进程内只有一个全局 TracerProvider；应用到 Collector 默认 OTLP/gRPC，保留 HTTP/protobuf override；Langfuse trace ingestion 使用 OTLP/HTTP；生产禁止 `content_raw`；观测失败不得改写业务结果；高基数身份不得进入 metrics labels。
+**约束**：业务代码只能依赖 OTel API、`pkg/ai/obs` 与应用端口，不得认识具体后端；进程内只有一个全局 TracerProvider；应用到 Collector 默认 OTLP/gRPC，保留 HTTP/protobuf override；Langfuse trace ingestion 使用 OTLP/HTTP；payload 仅允许 metadata-only 或经脱敏的受控内容；观测失败不得改写业务结果；高基数身份不得进入 metrics labels。
 
 **未知项**：无。具体镜像 digest 作为 Phase 1 的锁定产物，在任何 compose 服务实现前完成；GoFrame contrib initializer 若不能满足已定义的 resource、协议、header、TLS、sampling 与测试替身要求，则按 ADR-0008 的回退条件使用窄封装的官方 OTel SDK 装配，并继续复用 GoFrame 自动埋点。
 
@@ -134,7 +134,7 @@ Grafana 主线的任务必须先完成第 1-7 项；SigNoz 任务不得成为主
 - **历史 OpenTracing 污染**：当前 `go.mod` 仍有未使用的 OpenTracing/Jaeger 直接依赖。首个质量切片删除并用 `go mod why`/`go mod tidy` 验证无回流。
 - **Langfuse 协议误配**：Langfuse OTLP 不支持 gRPC。Collector 到 Langfuse 固定 HTTP/protobuf，并用 direct diagnostic smoke 隔离 endpoint/header 问题。
 - **高基数 metrics**：request/run/trace identity 只进入 span、log 和报告，不进入 metric labels；metrics smoke 使用 route/status 增量。
-- **敏感数据落盘**：应用出口过滤先于 Collector；queue、日志、报告和后端查询均执行 canary 扫描；`content_raw` 只允许隔离 local/test 且最长 24 小时。
+- **敏感数据落盘**：应用出口过滤先于 Collector；queue、日志、报告和后端查询均执行 canary 扫描；不提供 `content_raw`，仅允许 metadata 或经脱敏的受控内容。
 - **观测依赖拖垮业务**：exporter 与 score worker 有界异步、独立失败指标和 shutdown 超时；所有故障注入都断言业务结果未被改写。
 - **本地资源过重**：compose 提供 infra-only 与 full profile；完整 Grafana+Langfuse/Signoz+Langfuse 本地总预算上限为 12 GiB 内存、8 vCPU、20 GiB observability volumes，并记录实测峰值。
-- **E2E 假阳性与残留风险**：每次 smoke 使用唯一 marker、起始时间、轮询超时和后端 API 查询；报告包含每个检查的 failure stage 与 cleanup 状态，禁止只看容器 healthy 或手工 UI。smoke 自建短期凭据必须在报告前撤销（当发行方支持）并删除本地副本，run 目录、临时 queue 数据和 raw 调试数据必须零残留；外部注入的长期凭据不由 smoke 撤销。
+- **E2E 假阳性与残留风险**：每次 smoke 使用唯一 marker、起始时间、轮询超时和后端 API 查询；报告包含每个检查的 failure stage 与 cleanup 状态，禁止只看容器 healthy 或手工 UI。smoke 自建短期凭据必须在报告前撤销（当发行方支持）并删除本地副本，run 目录、临时 queue 数据和调试临时数据必须零残留；外部注入的长期凭据不由 smoke 撤销。

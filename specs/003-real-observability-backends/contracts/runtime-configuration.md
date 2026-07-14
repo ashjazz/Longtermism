@@ -63,7 +63,7 @@ This is a shape contract, not a ready-to-use secret file. Checked-in defaults ke
 | mode is `collector` without endpoint | startup error |
 | unsupported protocol | startup error |
 | chat enabled without model base URL/key/model | startup error |
-| production + `content_raw` | startup error |
+| `content_raw` or another unknown payload mode | startup error |
 | smoke disabled | infra-smoke route absent or returns 404 |
 | Langfuse score not configured | evidence persists; projection status `not_configured` |
 | backend profile missing credentials | affected real smoke fails before sending |
@@ -123,4 +123,4 @@ Port overrides must be supported through local environment values. Config valida
 
 ## 8. Retention contract
 
-Defaults use the retention baseline in the decision workbench and are mirrored in `data-model.md`: Prometheus metrics 15 days; Loki and Tempo 7 days; Langfuse metadata/redacted traces 14 days; `content_raw` at most 24 hours in an isolated unit; low-sensitive eval evidence/report 90 days; persistent queue only while backlogged. If a backend cannot enforce record-level `content_raw` retention, raw debug runs use a separate project/instance/volume so the whole unit can be deleted within 24 hours.
+Defaults use the retention baseline in the decision workbench and are mirrored in `data-model.md`: Prometheus metrics 15 days; Loki and Tempo 7 days; Langfuse metadata/redacted traces 14 days; low-sensitive eval evidence/report 90 days; persistent queue only while backlogged. `content_raw` is not supported, so no separate raw-content retention unit is required.

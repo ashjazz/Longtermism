@@ -134,7 +134,7 @@ curl -sS \
 
 ### 隐私 smoke
 
-隐私命令使用仓库内 synthetic markers，不使用真实秘密。它必须查询实际后端和本地报告，断言未脱敏命中数为 0。`production + content_raw` 必须在启动前失败。若 smoke 为本次运行自行创建短期凭据或 secret file，必须在退出前撤销（当发行方支持）并删除；运行目录、临时 queue 数据和 raw 调试数据也必须清零，最终报告以 cleanup 状态证明零残留。调用方提供的长期凭据不属于 smoke 可撤销对象。
+隐私命令使用仓库内 synthetic markers，不使用真实秘密。它必须查询实际后端和本地报告，断言未脱敏命中数为 0。payload 仅允许 metadata-only 或经脱敏的受控内容，`content_raw` 必须在配置解析阶段被拒绝。若 smoke 为本次运行自行创建短期凭据或 secret file，必须在退出前撤销（当发行方支持）并删除；运行目录、临时 queue 数据和调试临时数据也必须清零，最终报告以 cleanup 状态证明零残留。调用方提供的长期凭据不属于 smoke 可撤销对象。
 
 ## 7. Level 3：故障与恢复
 
@@ -153,7 +153,7 @@ make obs-resilience-e2e
 - 后端暂停、Collector 重启、后端恢复后，120 秒内 queue 排空且 marker 可查。
 - queue 满、磁盘不可写、permanent error、shutdown timeout 有 dropped/failed 证据。
 - score worker 失败不阻塞 chat，本地 evidence 不丢失。
-- 命令退出时恢复所有被暂停容器，并报告 residual resources、smoke 自建临时凭据的撤销/删除状态，以及 run 目录、临时 queue 数据和 raw 调试数据的零残留状态。
+- 命令退出时恢复所有被暂停容器，并报告 residual resources、smoke 自建临时凭据的撤销/删除状态，以及 run 目录、临时 queue 数据和调试临时数据的零残留状态。
 
 ## 8. Dashboard 与告警
 
