@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 	"github.com/gogf/gf/v2/errors/gerror"
 )
 
@@ -50,6 +51,7 @@ type ObservabilityRuntimeConfigInput struct {
 	Mode        ObservabilityRuntimeMode
 	Environment string
 	Collector   ObservabilityCollectorConfigInput
+	Payload     obs.PayloadPolicyInput
 }
 
 // ObservabilityCollectorConfig 是可安全打印、传递给 exporter 装配层的快照。
@@ -69,6 +71,7 @@ type ObservabilityRuntimeConfig struct {
 	Environment      string
 	CollectorEnabled bool
 	Collector        ObservabilityCollectorConfig
+	Payload          obs.PayloadPolicy
 }
 
 // ResolveObservabilityRuntimeConfig 将原始应用配置解析为不可携带 secret 的运行快照。
@@ -79,10 +82,14 @@ func ResolveObservabilityRuntimeConfig(input ObservabilityRuntimeConfigInput) (O
 		return ObservabilityRuntimeConfig{}, gerror.New("observability mode is required")
 	}
 	environment := valueOrDefault(input.Environment, defaultObservabilityEnvironment)
+	payload, err := resolvePayloadPolicy(environment, input.Payload)
+	if err != nil {
+		return ObservabilityRuntimeConfig{}, err
+	}
 
 	switch mode {
 	case ObservabilityRuntimeModeNoop, ObservabilityRuntimeModeLocal:
-		return ObservabilityRuntimeConfig{Mode: mode, Environment: environment}, nil
+		return ObservabilityRuntimeConfig{Mode: mode, Environment: environment, Payload: payload}, nil
 	case ObservabilityRuntimeModeCollector:
 		collector, err := resolveObservabilityCollectorConfig(environment, input.Collector)
 		if err != nil {
@@ -93,10 +100,22 @@ func ResolveObservabilityRuntimeConfig(input ObservabilityRuntimeConfigInput) (O
 			Environment:      environment,
 			CollectorEnabled: true,
 			Collector:        collector,
+			Payload:          payload,
 		}, nil
 	default:
 		return ObservabilityRuntimeConfig{}, gerror.New("observability mode is unsupported")
 	}
+}
+
+// resolvePayloadPolicy 以应用 runtime environment 覆盖嵌套输入，防止调用方把
+// production runtime 伪装成 local 来绕过 raw 内容门禁。未配置时默认 metadata-only，
+// 这是安全降级而非对业务事实的猜测。
+func resolvePayloadPolicy(environment string, input obs.PayloadPolicyInput) (obs.PayloadPolicy, error) {
+	if input.Mode == "" {
+		input.Mode = obs.PayloadModeMetadataOnly
+	}
+	input.Environment = environment
+	return obs.ResolvePayloadPolicy(input)
 }
 
 func resolveObservabilityCollectorConfig(environment string, input ObservabilityCollectorConfigInput) (ObservabilityCollectorConfig, error) {

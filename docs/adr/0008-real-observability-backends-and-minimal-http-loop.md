@@ -65,7 +65,7 @@ Collector 采用 `ingress -> forward connectors -> infra/AI downstream pipelines
 
 ### 风险与缓解
 
-- **高基数与隐私泄露**：request/run id 不进入 metrics labels；payload policy、baggage allowlist、应用内过滤与 Collector 二次过滤共同约束；只允许 metadata-only 或经脱敏的受控内容，不支持 `content_raw`。
+- **高基数与隐私泄露**：request/run id 不进入 metrics labels；payload policy、baggage allowlist、应用内过滤与 Collector 二次过滤共同约束。`content_raw` 仅在显式授权的 local/test 生成不可序列化的本地调试工件；进入观测后端的仍只能是 metadata-only 或经脱敏的受控内容。
 - **观测故障影响业务**：exporter、score worker 和 queue 失败必须被单独指标记录，但不得改写 chat 或 infra-smoke 的业务结果。
 - **积压或数据丢失**：Tempo/Loki/Langfuse 使用 persistent queue；验收覆盖 backend pause、Collector restart、queue 满、磁盘不可写和 shutdown timeout。语义是 at-least-once，不承诺 exactly-once。
 - **真实平台门禁不稳定或产生费用**：默认 PR 只跑离线门禁；真实 E2E 在首个阶段验收及相关配置变更、release candidate 中显式运行。

@@ -134,7 +134,7 @@ curl -sS \
 
 ### 隐私 smoke
 
-隐私命令使用仓库内 synthetic markers，不使用真实秘密。它必须查询实际后端和本地报告，断言未脱敏命中数为 0。payload 仅允许 metadata-only 或经脱敏的受控内容，`content_raw` 必须在配置解析阶段被拒绝。若 smoke 为本次运行自行创建短期凭据或 secret file，必须在退出前撤销（当发行方支持）并删除；运行目录、临时 queue 数据和调试临时数据也必须清零，最终报告以 cleanup 状态证明零残留。调用方提供的长期凭据不属于 smoke 可撤销对象。
+隐私命令使用仓库内 synthetic markers，不使用真实秘密。它必须查询实际后端和本地报告，断言未脱敏命中数为 0。payload 可使用 metadata-only 或经脱敏的受控内容；`content_raw` 只在 local/test 加 `raw_content_enabled=true` 时产生不可 JSON 序列化的本地调试工件，绝不进入实际后端或报告。若 smoke 为本次运行自行创建短期凭据或 secret file，必须在退出前撤销（当发行方支持）并删除；运行目录、临时 queue 数据和调试临时数据也必须清零，最终报告以 cleanup 状态证明零残留。调用方提供的长期凭据不属于 smoke 可撤销对象。
 
 ## 7. Level 3：故障与恢复
 
@@ -200,7 +200,7 @@ make obs-signoz-down
 CONFIRM_RESET=1 make obs-reset OBS_PROFILE=grafana
 ```
 
-reset 先打印删除预览，只删除当前 Compose project 带 observability labels 的容器、volumes 和 raw debug 数据；不得匹配应用数据库或无关 volume。
+reset 先打印删除预览，只删除当前 Compose project 带 observability labels 的容器、volumes 和本地 raw 调试工件；不得匹配应用数据库或无关 volume。
 
 ## 12. 阶段验收
 

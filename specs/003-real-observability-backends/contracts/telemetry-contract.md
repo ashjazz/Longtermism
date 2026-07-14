@@ -99,7 +99,7 @@ Every HTTP completion/error log contains:
 - `ai_trace_id` only for AI requests
 - `smoke_run_id` only for smoke runs
 
-Logs are JSON lines. They never contain Authorization, API keys, raw prompt/query/output/tool args, provider error body or recognized PII. Payload capture is limited to metadata-only or redacted content.
+Logs are JSON lines. They never contain Authorization, API keys, raw prompt/query/output/tool args, provider error body or recognized PII. Exportable payload capture is limited to metadata-only or redacted content; `content_raw` only creates a local/test `LocalRawPayload` debug artifact and never enters a log or telemetry sink.
 
 ## 7. Langfuse mapping
 

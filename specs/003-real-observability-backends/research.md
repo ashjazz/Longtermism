@@ -73,9 +73,9 @@
 
 ## 8. Payload policy 与日志边界
 
-**Decision**：支持 `metadata_only` 与 `content_redacted`；不提供 `content_raw`，debug 不授予内容采集权限。密钥、认证 token 和已识别 PII 在所有模式下禁止进入 span、log、metric、queue、report 和 Langfuse。应用先过滤，Collector 再做确定性字段保护。
+**Decision**：支持 `metadata_only`、`content_redacted` 与显式受限的 `content_raw`。raw 仅在 `local`/`test` 且 `raw_content_enabled=true` 时生成独立的 `LocalRawPayload` 调试工件；它不支持 JSON 序列化，也绝不进入 span、log、metric、queue、report、evidence、Collector 或 Langfuse。所有可外发的 `PayloadSnapshot` 都仍经过脱敏。应用先过滤，Collector 再做确定性字段保护。
 
-**Rationale**：开发学习需要可控查看内容，但敏感信息检测不能因 debug 关闭。保护必须发生在 persistent queue 之前。
+**Rationale**：开发学习、测试与故障排查有时必须检查完整原文，但该能力与可观测后端留存是两个信任边界。通过独立、不可序列化的本地工件保留排查价值，同时让保护继续发生在 persistent queue 之前。
 
 **Alternatives considered**：生产默认 raw；由 Collector 单独承担隐私；完全禁用所有内容。分别风险过高、保护太晚或妨碍调试学习。
 

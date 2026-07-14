@@ -22,7 +22,7 @@
 
 - `collector` mode 必须有合法 endpoint 和受支持 protocol。
 - endpoint 只允许 Collector，不接受 backend-specific 字段。
-- 仅允许 `metadata_only` 或 `content_redacted`；未知模式（包括已移除的 `content_raw`）必须失败。
+- 允许 `metadata_only`、`content_redacted` 与 `content_raw`。`content_raw` 必须同时满足 `environment in {local,test}` 与显式 `raw_content_enabled=true`；其他环境、缺少授权或未知 mode 必须失败。
 - 配置快照只保留 header 环境变量名，不保存 header 原值。
 
 ## 2. CollectorClientConfig
@@ -173,8 +173,9 @@ queued -> sending -> sent
 | --- | --- | --- | --- |
 | `metadata_only` | hash、length、category、count、status、score | 原始 query/prompt/output/tool args | 全部 |
 | `content_redacted` | 通过检测与脱敏后的受控片段 | 密钥、token、已识别 PII、未脱敏原文 | local/test/受批准 production |
+| `content_raw` | 仅 `LocalRawPayload` 内存/受限本地调试工件中的完整 input/output | trace、log、OTel、Collector、queue、Langfuse、report、evidence 和任何外部序列化 | 仅 local/test，且 `raw_content_enabled=true` |
 
-`is_debug` 只决定响应诊断摘要，不改变 payload mode。
+`content_raw` 不改变 `PayloadSnapshot` 的脱敏行为：标准 exporter 只能接收 metadata 或 redacted snapshot。raw 调试工件必须不支持 JSON 序列化，且由调用方在本地运行结束时清理；它不是观测后端的 retention 单元。
 
 ## 11. SmokeRun
 

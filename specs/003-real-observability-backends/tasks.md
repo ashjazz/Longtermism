@@ -43,7 +43,7 @@
 ### Tests - RED
 
 - [X] T011 [P] 在 `internal/cmd/observability_runtime_config_test.go` 编写 `ObservabilityRuntimeConfig` 表驱动 RED 测试；质量门控：覆盖 noop/local/collector、缺 endpoint、非法 protocol/timeout、production insecure 未授权、配置快照不保留 header 值，并先确认目标断言失败。
-- [X] T012 [P] 在 `pkg/ai/obs/payload_policy_test.go` 编写 payload mode 的 RED 测试；质量门控：覆盖 metadata-only、redacted、已移除的 raw mode 拒绝及 debug 不授予内容采集权限，synthetic secret/PII 在全部模式命中数为 0。
+- [X] T012 [P] 在 `pkg/ai/obs/payload_policy_test.go` 编写 payload mode 的 RED 测试；质量门控：覆盖 metadata-only、redacted、raw 的 local/test 显式授权门禁、标准导出快照脱敏与不可序列化的本地 raw 调试工件；synthetic secret/PII 在全部可外发快照中命中数为 0。
 - [X] T013 [P] 在 `internal/cmd/observability_lifecycle_test.go` 扩展单一全局 Provider RED 测试；质量门控：覆盖一次初始化、重复初始化拒绝/复用、shutdown 幂等、flush 超时与无 exporter 模式，使用 OTel test exporter 且不外连。
 - [X] T014 [P] 在 `internal/cmd/observability_exporter_test.go` 编写 OTLP exporter 配置 RED 测试；质量门控：覆盖默认 gRPC、HTTP/protobuf override、resource/header/TLS/timeout/sampling 映射和仅保存 header env 名，禁止 backend-specific endpoint。
 - [X] T015 [P] 在 `internal/cmd/observability_propagation_test.go` 编写 TraceContext+Baggage 传播 RED 测试；质量门控：证明 OTel trace/span 由 SpanContext 传播，baggage 仅包含 allowlist 低敏身份且不会把 `ai_trace_id` 猜成 TraceID。
@@ -58,7 +58,7 @@
 ### Implementation - GREEN/REFACTOR
 
 - [X] T023 在 `internal/cmd/observability_runtime_config.go` 实现不可变运行配置值对象与 fail-fast matrix；质量门控：使 T011 GREEN，错误只暴露字段名/credential-present，不允许应用配置出现 Tempo/Loki/Prometheus/Grafana/SigNoz/Langfuse trace 地址。
-- [X] T024 在 `pkg/ai/obs/payload_policy.go` 实现独立于 debug 的 payload policy 与强制敏感检测入口；质量门控：使 T012 GREEN，核心包不依赖平台 SDK，输入采用防御性副本且生产 raw 直接失败。
+- [X] T024 在 `pkg/ai/obs/payload_policy.go` 实现独立 payload policy 与强制敏感检测入口；质量门控：使 T012 GREEN，核心包不依赖平台 SDK，`content_raw` 只在 local/test 显式授权时生成不可序列化的本地调试工件，生产 raw 直接失败。
 - [ ] T025 在 `internal/cmd/observability_lifecycle.go` 收紧单一 TracerProvider/MeterProvider lifecycle；质量门控：使 T013 GREEN，初始化和 shutdown 幂等、批处理可 flush、失败不 panic，并运行 `go test -race ./internal/cmd`。
 - [ ] T026 在 `internal/cmd/observability_exporter.go` 实现 traces+metrics 共用配置的窄 OTel SDK 初始化器及 gRPC/HTTP 分支；质量门控：使 T014 GREEN，只创建 App -> Collector exporters，复用 GoFrame 自动 tracing，不注册互相竞争的全局 provider。
 - [ ] T027 在 `internal/cmd/observability_propagation.go` 装配 W3C TraceContext 与 allowlist Baggage propagator；质量门控：使 T015 GREEN，禁止任意 baggage 透传，跨服务测试不得出现 raw payload。
@@ -132,13 +132,13 @@
 - [ ] T074 [P] [US2] 在 `internal/logic/chat/evaluator_test.go` 编写确定性本地 evaluator 与 debug summary RED 测试；质量门控：定义第一阶段低敏 metric/threshold，覆盖 passed/warning/failed/not_run、evidence correlation、序列化 <=1024 bytes、非 debug 缺失和 reason_class 不含原文。
 - [ ] T075 [P] [US2] 在 `internal/controller/chat/chat_test.go` 编写 controller RED 测试；质量门控：覆盖 JSON 校验、错误码映射、header/meta 一致、upstream body/endpoint/credential 不回显，controller 只依赖 usecase 接口。
 - [ ] T076 [P] [US2] 在 `internal/cmd/routes_chat_test.go` 编写 chat 路由与 middleware RED 测试；质量门控：覆盖启用/关闭、request context 传播、配置化限流 429、真实 AI usecase 启动时才打 AI marker、infra route 不受影响。
-- [ ] T077 [P] [US2] 在 `internal/observability/langfuse/trace_mapper_test.go` 编写 Langfuse OTLP attribute mapper RED 测试；质量门控：覆盖 allowlist、平台属性仅在 adapter、OTel TraceID/SpanID 与 ai_trace_id 分离、metadata/redacted/raw 三模式和 secret 零命中。
+- [ ] T077 [P] [US2] 在 `internal/observability/langfuse/trace_mapper_test.go` 编写 Langfuse OTLP attribute mapper RED 测试；质量门控：覆盖 allowlist、平台属性仅在 adapter、OTel TraceID/SpanID 与 ai_trace_id 分离、metadata/redacted/raw 三模式，且 raw 本地工件不进入 mapper、所有平台属性 secret 零命中。
 - [ ] T078 [P] [US2] 在 `internal/observability/langfuse/projection_test.go` 编写 `ScoreProjection` 状态机 RED 测试；质量门控：覆盖稳定幂等 ID、真实 platform trace/observation ID 必填、queued/sending/retry/sent/drop/permanent/shutdown 状态且不修改 evidence。
 - [ ] T079 [P] [US2] 在 `internal/observability/langfuse/client_test.go` 编写 Langfuse score API client RED 测试；质量门控：httptest 覆盖 Basic Auth、稳定 score ID、timeout/429/5xx/4xx 分类、body 上限和日志不泄漏 secret/evidence 原文。
 - [ ] T080 [P] [US2] 在 `internal/observability/langfuse/worker_test.go` 编写有界异步 worker RED 测试；质量门控：覆盖非阻塞 enqueue、queue full、指数退避、幂等重试、优雅 shutdown timeout、race 与本地 evidence 不丢失，禁止 `time.Sleep()`。
 - [ ] T081 [P] [US2] 在 `internal/cmd/langfuse_score_lifecycle_test.go` 编写 score worker 装配 RED 测试；质量门控：覆盖未配置为 not_configured、配置完整启动一次、shutdown flush、有界队列指标和不阻塞 HTTP lifecycle。
 - [ ] T082 [P] [US2] 在 `hack/observability/langfuse_collector_test.sh` 编写 Langfuse downstream 静态 RED 测试；质量门控：断言 OTLP/HTTP protobuf、`/api/public/otel`、ingestion version header、secret env 注入、AI filter、独立 queue/retry/timeout/file_storage。
-- [ ] T083 [P] [US2] 在 `hack/observability/langfuse_compose_test.sh` 编写 self-hosted Langfuse 静态 RED 测试；质量门控：覆盖固定版本、依赖服务、healthcheck、14 天 retention、raw 独立 volume、loopback UI 和无默认 credential。
+- [ ] T083 [P] [US2] 在 `hack/observability/langfuse_compose_test.sh` 编写 self-hosted Langfuse 静态 RED 测试；质量门控：覆盖固定版本、依赖服务、healthcheck、14 天 retention、无 raw volume、loopback UI 和无默认 credential。
 - [ ] T084 [P] [US2] 在 `hack/observability/grafana_ai_dashboard_test.go` 编写 AI dashboard RED 测试；质量门控：断言 LLM request/duration/token/cost-ready、eval regression、score projection/queue 与 infra trace correlation 面板存在且 labels 合规。
 - [ ] T085 [P] [US2] 在 `internal/observability/smoke/chat_runner_test.go` 编写 chat smoke runner RED 测试；质量门控：fake API/backends 覆盖 60 秒双平面关联、marker/identity 匹配、模型失败与 telemetry 失败分离、schema-valid report。
 - [ ] T086 [P] [US2] 在 `internal/observability/smoke/score_runner_test.go` 编写 score smoke runner RED 测试；质量门控：覆盖 120 秒异步成功、not_configured、retry、稳定 ID 重试不重复、本地 evidence 先存在和 projection failure 可诊断。
@@ -161,7 +161,7 @@
 - [ ] T100 [US2] 在 `internal/observability/langfuse/worker.go` 实现有界异步队列与指标；质量门控：使 T080 GREEN，`go test -race` 通过，queue full/shutdown timeout 形成明确 projection 状态且 chat enqueue 非阻塞。
 - [ ] T101 [US2] 在 `internal/cmd/langfuse_score_lifecycle.go` 装配 score worker lifecycle；质量门控：使 T081 GREEN，evidence 必须先持久化，worker 未配置时返回 not_configured 而非丢弃事实。
 - [ ] T102 [US2] 在 `deploy/observability/collector/collector-grafana.yaml` 完成 Langfuse AI downstream exporter/transform；质量门控：使 T082 GREEN，只导出带 marker 的 root/bridge 与 semantic spans，infra-only marker 查询为 0。
-- [ ] T103 [US2] 在 `deploy/observability/compose.grafana.yaml` 完成固定版本 Langfuse self-hosted 服务与 retention/volume；质量门控：使 T083 GREEN，raw debug 使用独立可删除 unit，凭据只经 env/secret 注入。
+- [ ] T103 [US2] 在 `deploy/observability/compose.grafana.yaml` 完成固定版本 Langfuse self-hosted 服务与 retention/volume；质量门控：使 T083 GREEN，不创建 raw debug volume，凭据只经 env/secret 注入。
 - [ ] T104 [US2] 在 `deploy/observability/grafana/dashboards/observability-overview.json` 增加 AI/eval/score 面板；质量门控：使 T084 GREEN，同步覆盖 token/cost/eval，不能用高基数 ID 做 metrics labels。
 - [ ] T105 [US2] 在 `internal/observability/smoke/chat_runner.go` 实现真实 chat 双平面查询；质量门控：使 T085 GREEN，按响应 identity+run window 查询 Tempo/Loki/Prometheus/Langfuse，业务失败保留原始错误域。
 - [ ] T106 [US2] 在 `internal/observability/smoke/score_runner.go` 实现 evidence/score 投影查询；质量门控：使 T086 GREEN，120 秒边界内确认 sent 或稳定 failure，不把 delayed/duplicate score 误判为新成功。
@@ -186,7 +186,7 @@
 - [ ] T116 [P] [US3] 在 `internal/logic/chat/failure_classification_test.go` 编写模型与观测故障分类 RED 测试；质量门控：模型 429/5xx/timeout 映射业务状态，telemetry/score/exporter failure 只记录观测错误，二者不得互相归类。
 - [ ] T117 [P] [US3] 在 `internal/observability/smoke/alert_runner_test.go` 编写告警 firing/resolved RED 测试；质量门控：fake Prometheus/Grafana API 覆盖四类告警触发、恢复、超时和 stale alert，不能只验证 rule 文件存在。
 - [ ] T118 [P] [US3] 在 `hack/observability/reset_test.sh` 编写安全 reset RED 测试；质量门控：覆盖无确认拒绝、dry-run 预览、仅当前 compose project/observability label、排除应用 DB/无关 volume、被中断测试残留清理。
-- [ ] T119 [P] [US3] 在 `internal/observability/smoke/retention_runner_test.go` 编写 retention RED 测试；质量门控：覆盖 Prometheus metrics 15 天、Loki/Tempo 7 天、Langfuse 14 天、evidence/report 90 天和 persistent queue 仅积压保留；普通原文不得作为可观测 payload 保留。
+- [ ] T119 [P] [US3] 在 `internal/observability/smoke/retention_runner_test.go` 编写 retention RED 测试；质量门控：覆盖 Prometheus metrics 15 天、Loki/Tempo 7 天、Langfuse 14 天、evidence/report 90 天和 persistent queue 仅积压保留；普通原文不得作为可观测 payload 保留，local raw 调试工件必须在运行结束时清理。
 
 ### Implementation - GREEN/REFACTOR
 
@@ -199,7 +199,7 @@
 - [ ] T126 [US3] 在 `internal/logic/chat/chat.go` 完成模型/观测失败域分离；质量门控：使 T116 GREEN，保留 ai_trace_id 与稳定业务错误类，禁止把 exporter failure 返回为 5xx。
 - [ ] T127 [US3] 在 `internal/observability/smoke/alert_runner.go` 实现告警触发与恢复查询；质量门控：使 T117 GREEN，每类告警生成 firing/resolved 时间证据且查询窗口受限。
 - [ ] T128 [US3] 在 `hack/observability/reset.sh` 实现显式确认、dry-run 预览和 label-scoped reset；质量门控：使 T118 GREEN，不使用全局 prune，不删除应用数据或无关 volume，输出不含 secret。
-- [ ] T129 [US3] 在 `internal/observability/smoke/retention_runner.go` 实现 retention/volume 边界检查；质量门控：使 T119 GREEN，并验证普通原文不进入任何可观测 retention unit。
+- [ ] T129 [US3] 在 `internal/observability/smoke/retention_runner.go` 实现 retention/volume 边界检查；质量门控：使 T119 GREEN，验证普通原文不进入任何可观测 retention unit，local raw 调试工件在运行结束时清理。
 - [ ] T130 [US3] 在 `cmd/obs-smoke/main.go` 增加 exporter-failure、persistent-queue、score-worker-failure 与 full resilience scenarios；质量门控：每个 scenario 强制唯一 marker、cleanup trap、schema report 和稳定退出码。
 - [ ] T131 [US3] 在 `Makefile` 增加 `obs-exporter-failure-smoke`、`obs-persistent-queue-smoke`、`obs-score-worker-failure-smoke`、`obs-resilience-e2e`、`obs-reset`；质量门控：破坏性目标要求 `CONFIRM_RESET=1`，中断后仍恢复 paused services。
 - [ ] T132 [US3] 在 `deploy/observability/grafana/alerts/observability.rules.yaml` 校准实际 Collector/HTTP/storage 指标名与阈值；质量门控：通过 T117 实际 firing/resolved 验证，禁止仅凭静态语法宣布告警可用。

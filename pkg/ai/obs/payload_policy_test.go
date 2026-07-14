@@ -2,6 +2,7 @@ package obs
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -28,20 +29,63 @@ func TestResolvePayloadPolicy(t *testing.T) {
 			wantMode: PayloadModeContentRedacted,
 		},
 		{
-			name: "removed raw mode is rejected even when debug is enabled",
+			name: "raw content is accepted only with local explicit opt in",
 			input: PayloadPolicyInput{
-				Mode:  PayloadMode("content_raw"),
-				Debug: true,
+				Mode:              PayloadModeContentRaw,
+				Environment:       "local",
+				RawContentEnabled: true,
 			},
-			wantErrField: "payload mode",
+			wantMode: PayloadModeContentRaw,
 		},
 		{
-			name: "debug does not upgrade metadata only to content capture",
+			name: "raw content is accepted in test with explicit opt in",
 			input: PayloadPolicyInput{
-				Mode:  PayloadModeMetadataOnly,
-				Debug: true,
+				Mode:              PayloadModeContentRaw,
+				Environment:       "test",
+				RawContentEnabled: true,
 			},
-			wantMode: PayloadModeMetadataOnly,
+			wantMode: PayloadModeContentRaw,
+		},
+		{
+			name: "raw content without explicit opt in is rejected",
+			input: PayloadPolicyInput{
+				Mode:        PayloadModeContentRaw,
+				Environment: "local",
+			},
+			wantErrField: "raw content",
+		},
+		{
+			name: "raw content is rejected outside local and test",
+			input: PayloadPolicyInput{
+				Mode:              PayloadModeContentRaw,
+				Environment:       "production",
+				RawContentEnabled: true,
+			},
+			wantErrField: "environment",
+		},
+		{
+			name: "raw content is rejected in an unknown environment",
+			input: PayloadPolicyInput{
+				Mode:              PayloadModeContentRaw,
+				Environment:       "preview",
+				RawContentEnabled: true,
+			},
+			wantErrField: "environment",
+		},
+		{
+			name: "raw opt in is rejected for a redacted policy",
+			input: PayloadPolicyInput{
+				Mode:              PayloadModeContentRedacted,
+				RawContentEnabled: true,
+			},
+			wantErrField: "raw content",
+		},
+		{
+			name: "unknown mode is rejected without echoing its value",
+			input: PayloadPolicyInput{
+				Mode: PayloadMode("t024-unknown-mode-canary"),
+			},
+			wantErrField: "payload mode",
 		},
 	}
 
@@ -54,6 +98,9 @@ func TestResolvePayloadPolicy(t *testing.T) {
 				}
 				if !strings.Contains(err.Error(), tt.wantErrField) {
 					t.Fatalf("payload policy error did not contain expected field %q", tt.wantErrField)
+				}
+				if strings.Contains(err.Error(), string(tt.input.Mode)) {
+					t.Fatal("payload policy error reflected an untrusted mode value")
 				}
 				return
 			}
@@ -91,19 +138,28 @@ func TestPayloadPolicySanitizeKeepsSensitiveValuesOutOfEveryMode(t *testing.T) {
 			wantInput:  true,
 			wantOutput: true,
 		},
+		{
+			name:       "raw mode keeps the export snapshot redacted",
+			mode:       PayloadModeContentRaw,
+			wantInput:  true,
+			wantOutput: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			policy, err := ResolvePayloadPolicy(PayloadPolicyInput{
-				Mode: tt.mode,
-			})
+			input := PayloadPolicyInput{Mode: tt.mode}
+			if tt.mode == PayloadModeContentRaw {
+				input.Environment = "local"
+				input.RawContentEnabled = true
+			}
+			policy, err := ResolvePayloadPolicy(input)
 			if err != nil {
 				t.Fatal("ResolvePayloadPolicy() returned an unexpected error")
 			}
 
-			// 强制扫描发生在所有模式、所有内容字段进入 trace/log/queue 之前；raw 只是
-			// 允许受控普通内容，不是关闭 secret 或 PII 检测的旁路。
+			// 标准快照是唯一可进入 trace/log/queue 的类型；即使 raw 已启用，这条
+			// 外发路径仍必须脱敏，完整原文只能通过单独的本地调试工件取得。
 			snapshot := policy.Sanitize(PayloadContent{
 				Input:  safeInput + " " + syntheticBearer,
 				Output: safeOutput + " " + syntheticPII,
@@ -114,6 +170,69 @@ func TestPayloadPolicySanitizeKeepsSensitiveValuesOutOfEveryMode(t *testing.T) {
 				syntheticBearer,
 				syntheticPII,
 			})
+		})
+	}
+}
+
+func TestPayloadPolicyLocalRawPayloadIsExactAndCannotBeSerialized(t *testing.T) {
+	const (
+		syntheticBearer = "Bearer t012-synthetic-token"
+		syntheticPII    = "t012.user@example.test"
+	)
+	content := PayloadContent{
+		Input:  "prompt " + syntheticBearer,
+		Output: "answer " + syntheticPII,
+	}
+
+	rawPolicy, err := ResolvePayloadPolicy(PayloadPolicyInput{
+		Mode:              PayloadModeContentRaw,
+		Environment:       "local",
+		RawContentEnabled: true,
+	})
+	if err != nil {
+		t.Fatal("ResolvePayloadPolicy() returned an unexpected error")
+	}
+
+	localPayload, err := rawPolicy.LocalRawPayload(content)
+	if err != nil {
+		t.Fatal("LocalRawPayload() returned an unexpected error")
+	}
+	if localPayload.Input() != content.Input || localPayload.Output() != content.Output {
+		t.Fatal("LocalRawPayload() did not retain the exact local content")
+	}
+	if _, err := json.Marshal(localPayload); err == nil {
+		t.Fatal("LocalRawPayload() was JSON serializable")
+	}
+	for _, rendered := range []string{
+		fmt.Sprintf("%v", localPayload),
+		fmt.Sprintf("%+v", localPayload),
+		fmt.Sprintf("%#v", localPayload),
+	} {
+		if strings.Contains(rendered, syntheticBearer) || strings.Contains(rendered, syntheticPII) {
+			t.Fatal("LocalRawPayload() leaked complete content through fmt")
+		}
+	}
+
+	// 对比标准导出快照，避免未来 exporter 将 raw 调试工件当成可外发 payload。
+	exportSnapshot, err := json.Marshal(rawPolicy.Sanitize(content))
+	if err != nil {
+		t.Fatal("marshal raw policy export snapshot")
+	}
+	if strings.Contains(string(exportSnapshot), syntheticBearer) || strings.Contains(string(exportSnapshot), syntheticPII) {
+		t.Fatal("raw local content leaked into the standard export snapshot")
+	}
+}
+
+func TestPayloadPolicyLocalRawPayloadFailsClosedOutsideRawMode(t *testing.T) {
+	for _, mode := range []PayloadMode{PayloadModeMetadataOnly, PayloadModeContentRedacted} {
+		t.Run(string(mode), func(t *testing.T) {
+			policy, err := ResolvePayloadPolicy(PayloadPolicyInput{Mode: mode})
+			if err != nil {
+				t.Fatal("ResolvePayloadPolicy() returned an unexpected error")
+			}
+			if _, err := policy.LocalRawPayload(PayloadContent{Input: "must not escape"}); err == nil {
+				t.Fatal("LocalRawPayload() error = nil, want non-raw policy rejected")
+			}
 		})
 	}
 }

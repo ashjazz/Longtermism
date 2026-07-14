@@ -146,15 +146,17 @@ app:
 
 observability:
   payload:
-    mode: content_redacted # metadata_only / content_redacted
+    mode: content_redacted # metadata_only / content_redacted / content_raw
+    raw_content_enabled: false
   sensitive_data:
     on_match: redact # redact / drop_field / drop_export
 ```
 
 - `metadata_only`：只导出 hash、length、category、status、token、cost、score 等低敏事实。
 - `content_redacted`：导出经过检测与脱敏的 input/output，作为开发与一般环境的推荐模式。
+- `content_raw`：仅 `local`/`test` 且 `raw_content_enabled=true` 时允许生成独立 `LocalRawPayload`，用于本机排查或测试内存 sink。它不是 exporter payload，不支持 JSON 序列化，也不得写入 stdout、日志、OTel、Collector、queue、Langfuse、报告或 evidence。
 - 敏感检测是 exporter 前的强制处理阶段，不提供通用 `enabled=false` 配置。单元测试如需替身，应注入 deterministic scanner，而不是绕过该阶段。
-- `is_debug` 只控制日志级别、诊断信息及本地默认值。最终 payload mode 必须由独立配置显式确定；只允许 metadata-only 或 content-redacted，未知模式在启动时 fail fast。
+- 最终 payload mode 必须由独立配置显式确定；raw 缺少显式开关、不是 local/test，或未知模式均在启动时 fail fast。无论 raw 是否开启，标准 `PayloadSnapshot` 始终经过脱敏。
 - 敏感检测应在应用内进入 exporter 之前完成，Collector 再做基于属性键和规则的第二道过滤。Collector 适合确定性字段删除，不应被当成理解 prompt 语义和识别全部 PII 的唯一防线。
 
 ### Langfuse score 同步边界
@@ -319,7 +321,7 @@ longtermism.observability.plane = "ai"
 - Tempo、Loki 与 Langfuse OTLP exporters 分别配置独立 sending queue、retry 和 timeout，使用 Collector `file_storage` extension 持久化未发送批次。
 - 为 Collector storage 配置独立 named volume、最小文件权限、容量边界和明确清理方式；不得依赖容器临时文件系统。
 - queue 必须有界，不能用磁盘无限增长掩盖后端长期不可用；同时监控 queue size/capacity、enqueue failed、send failed、Collector 磁盘使用和重启恢复结果。
-- 应用内敏感信息保护必须发生在数据进入 Collector 之前。密钥、token 和已识别 PII 也不得写入 persistent queue；不支持 `content_raw`，因此普通原文不作为可观测 payload 落盘。
+- 应用内敏感信息保护必须发生在数据进入 Collector 之前。密钥、token 和已识别 PII 也不得写入 persistent queue；`content_raw` 只生成本地不可序列化工件，因此普通原文不作为可观测 payload 落盘。
 - smoke 覆盖“暂停后端 -> 形成积压 -> 重启 Collector -> 恢复后端 -> 队列排空并成功送达”，证明持久化不是只写配置而未验证恢复语义。
 - permanent error、queue capacity 耗尽和磁盘故障仍可能导致数据丢失；persistent queue 提高短时故障恢复能力，不承诺 exactly-once，也不替代失败指标与告警。
 
@@ -462,7 +464,8 @@ observability:
     sampling_ratio: 1.0
 
   payload:
-    mode: content_redacted # metadata_only / content_redacted
+    mode: content_redacted # metadata_only / content_redacted / content_raw
+    raw_content_enabled: false
 
   sensitive_data:
     on_match: redact # redact / drop_field / drop_export
@@ -629,8 +632,9 @@ OTel trace/span context 通过标准 propagation 传播，不重复塞入 baggag
 
 - `metadata_only`：生产推荐默认值，只输出低敏事实。
 - `content_redacted`：输出经过敏感检测和脱敏的 input/output。
+- `content_raw`：仅 local/test 的显式本地调试工件；完整 input/output 不进入任何 exporter 或观测留存单元。
 - prompt、query、tool args、retrieval content、模型 output 和外部 response 都必须走同一个 payload policy，不允许某个 adapter 私自绕过。
-- debug 只影响诊断体验，不关闭扫描器，也不自动开启内容采集。
+- raw 必须有独立 `raw_content_enabled` 授权；debug 不关闭扫描器，也不自动开启内容采集。
 
 ### v1 完全禁止项
 
@@ -666,7 +670,7 @@ OTel trace/span context 通过标准 propagation 传播，不重复塞入 baggag
 | 低敏 eval evidence/report | 90 天 | 支持回归比较，不包含 prompt/output 原文 |
 
 - 所有后端必须配置容量上限和清理策略，禁止依赖无限期默认保留。
-- 不提供 `content_raw`；普通原文不进入可观测保留单元。
+- `content_raw` 仅允许 local/test 的不可序列化本地调试工件；普通原文不进入可观测保留单元，也不配置后端 retention volume。
 - persistent queue 只用于投递恢复，不是长期归档；已发送批次应及时清理，磁盘容量与队列年龄必须监控。
 - 生产 retention 由业务、法规、成本和删除请求共同确定，但必须显式配置；本地默认值不能直接视为生产合规结论。
 - 删除或清理需要同时覆盖 Tempo、Loki、Langfuse、本地 eval evidence、Collector queue 和备份，不能只删除 Grafana 中的展示。
@@ -724,8 +728,9 @@ OTel trace/span context 通过标准 propagation 传播，不重复塞入 baggag
 
 #### 5. 隐私与配置模式门禁
 
-- `metadata_only`、`content_redacted` 两种模式都有正常、边界和禁止项测试。
-- `content_raw` 或其他未知模式在启动阶段失败。
+- `metadata_only`、`content_redacted`、`content_raw` 三种模式都有正常、边界和禁止项测试；raw 还必须覆盖 local/test 环境和显式授权门禁。
+- `content_raw` 在非 local/test、缺少显式开关，或其他未知模式时在启动阶段失败。
+- raw 的完整原文只能由 `LocalRawPayload` 在本机/测试内存 sink 查看；标准 JSON 快照、实际后端查询结果和报告中命中数必须为 0。
 - 使用包含 synthetic API key、Authorization、token、password、PII、prompt、tool args 和 provider error body 的 canary 请求后，所有实际后端查询结果中的未脱敏禁止项命中数为 0。
 - baggage 只包含 allowlist 字段，高基数 correlation ids 不进入 metrics labels。
 - persistent queue、Collector 日志、应用日志、错误响应和 score worker 失败日志不能成为敏感原文旁路。
@@ -912,7 +917,7 @@ GoFrame HTTP/API
 - 基础设施后端共识：主线采用 `Prometheus + Loki + Tempo + Grafana` 经典方案，备选支持 `SigNoz`。两者都通过 OTel Collector 接入，应用层不出现任何后端专属埋点或 SDK。
 - 基础设施实现细化共识：提供 `observability-grafana` 与 `observability-signoz` 两个 docker compose profile。Grafana 主线优先实现，并同步覆盖基础设施指标、AI token/cost 和 eval 指标；经典路线需要提供 `glog` 到 Loki 的本地采集示例。SigNoz 也维护专门 dashboard/checklist，但实施优先级靠后。
 - AI 语义后端共识：采用 Langfuse。正式链路通过 OTel Collector fan-out；另保留直连 Langfuse OTLP endpoint 的诊断 smoke，用来隔离验证 ingestion、属性映射、endpoint 和凭据。
-- Payload policy 共识：开发阶段允许经脱敏的受控内容帮助学习和追踪，但 `is_debug` 不能关闭敏感信息检测或授权原文外发。payload mode 与 debug 分离，只允许 metadata-only 与 content-redacted；应用内保护和 Collector 二次过滤共同构成出口边界。
+- Payload policy 共识：开发阶段允许经脱敏的受控内容帮助学习和追踪；完整原文只允许 `content_raw` 在 local/test 显式授权时作为不可序列化的 `LocalRawPayload` 本机调试工件查看。它不属于 exporter payload，也不得外发；应用内保护和 Collector 二次过滤共同构成出口边界。
 - 评估同步共识：本地 eval evidence 保持事实源，同时通过独立 Langfuse score adapter 同步为平台 score。OTLP 只承载 trace，score 通过 Langfuse API 投影；同步失败不影响业务和本地评估结果。
 - Collector 拓扑共识：优先采用 Collector fan-out，应用内敏感保护后由 Collector 做第二道确定性字段过滤。两个观测平面允许对同一 AI trace 做不同后端投影；纯基础设施请求只落入 infra 后端。
 - Collector pipeline 共识：采用方案 C，即 `ingress pipeline + forward connectors + infra/AI downstream pipelines`，避免公共 processor 重复，同时保留后端专属过滤、batch、queue 和 retry。
@@ -927,7 +932,7 @@ GoFrame HTTP/API
 - Langfuse score 共识：第一阶段采用应用进程内有界异步 worker，本地 evidence 保持事实源；平台投影失败不影响业务，并明确接受进程崩溃时未发送 projection 可能丢失的 v1 边界。
 - 配置安全共识：非敏感 endpoint 可进入默认/profile 配置，环境专属本地文件不得上传；所有凭据仍必须通过环境变量、secret file 或密钥管理器注入。
 - 隐私与采样共识：生产默认低敏 metadata，开发按 payload policy 受控查看内容；baggage 使用低敏 allowlist，禁止项跨所有信号和 persistent queue 生效。local/smoke 全量采集，失败/降级/eval 等由 Collector tail sampling 全量保留，普通成功请求使用可配置比例。
-- Retention 共识：本地 metrics/logs/traces/Langfuse/eval evidence 使用明确且有界的分层保留期；不提供 `content_raw`，persistent queue 不作为归档。
+- Retention 共识：本地 metrics/logs/traces/Langfuse/eval evidence 使用明确且有界的分层保留期；`content_raw` 是运行结束即清理的 local/test 调试工件，不进入任何后端 retention unit，persistent queue 不作为归档。
 - 完成标准重设计草案：验收分为默认离线、Collector 配置、infra-only、真实 AI、隐私、故障恢复、dashboard/retention/Signoz 和文档八类证据；命令分为离线、基础设施、真实 AI、恢复、备选后端五个等级，真实平台验证必须自动查询后端并生成机器可读报告。
 - 完成标准审查修订：Prometheus 使用 route/status 指标增量而不是 request id label；各后端使用独立故障证据；PR、配置变更、阶段验收和发布 canary 分层运行；SigNoz 只替换 infra backend，Langfuse 仍承载 AI 平面；补齐分后端超时、安全检查、告警、镜像/资源固定和 reset 防误删。
 - 决策 8 采纳：八类完成证据、Level 0-4 验证命令、运行频率和阶段发布门禁正式作为本阶段实施与验收契约。

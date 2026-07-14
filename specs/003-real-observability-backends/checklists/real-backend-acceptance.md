@@ -28,7 +28,7 @@
 
 - [ ] CHK013 Is the application’s single Collector dependency consistent with every endpoint and exporter requirement? [Consistency, Workbench §决策 1, §决策 4, §决策 6]
 - [ ] CHK014 Are the three-pipeline topology requirements consistent with the requirement that pure infrastructure traffic never reaches the AI backend? [Consistency, Workbench §决策 4, §决策 8]
-- [X] CHK015 Resolved: `content_raw` is not supported; only metadata-only or redacted content may enter observability. [Workbench §决策 3, §决策 7]
+- [X] CHK015 Resolved: `content_raw` is only an explicitly enabled local/test `LocalRawPayload` debug artifact; only metadata-only or redacted snapshots may enter observability. [Workbench §决策 3, §决策 7]
 - [ ] CHK016 Is the persistent storage decision reconciled with the earlier v1 statement that no persistent storage would be added? [Conflict, Workbench §决策 4]
 - [ ] CHK017 Is real model runtime validation consistent with the requirement that default gates remain offline and free of paid dependencies? [Consistency, Workbench §决策 5, §决策 8]
 - [ ] CHK018 Are retention requirements consistent across backend storage, persistent queue, raw-content isolation, local eval evidence, and cleanup commands? [Consistency, Workbench §决策 7, §决策 8]

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
 func TestResolveObservabilityRuntimeConfig(t *testing.T) {
@@ -17,6 +19,7 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 		wantCollectorProtocol string
 		wantHeaderEnvName     string
 		wantCredentialPresent bool
+		wantPayloadMode       obs.PayloadMode
 		wantErrField          string
 	}{
 		{
@@ -32,6 +35,33 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 				Mode: ObservabilityRuntimeModeLocal,
 			},
 			wantMode: ObservabilityRuntimeModeLocal,
+		},
+		{
+			name: "runtime config rejects raw payload in production before exporter setup",
+			input: ObservabilityRuntimeConfigInput{
+				Mode:        ObservabilityRuntimeModeCollector,
+				Environment: "production",
+				Payload: obs.PayloadPolicyInput{
+					Mode:              obs.PayloadModeContentRaw,
+					Environment:       "local",
+					RawContentEnabled: true,
+				},
+			},
+			wantErrField: "environment",
+		},
+		{
+			name: "runtime config permits explicit local raw policy without preserving a separate environment",
+			input: ObservabilityRuntimeConfigInput{
+				Mode:        ObservabilityRuntimeModeLocal,
+				Environment: "local",
+				Payload: obs.PayloadPolicyInput{
+					Mode:              obs.PayloadModeContentRaw,
+					Environment:       "production",
+					RawContentEnabled: true,
+				},
+			},
+			wantMode:        ObservabilityRuntimeModeLocal,
+			wantPayloadMode: obs.PayloadModeContentRaw,
 		},
 		{
 			name: "collector mode accepts a complete gRPC configuration",
@@ -213,6 +243,9 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 			}
 			if got.Collector.CredentialPresent != tt.wantCredentialPresent {
 				t.Fatalf("Collector.CredentialPresent = %v, want %v", got.Collector.CredentialPresent, tt.wantCredentialPresent)
+			}
+			if tt.wantPayloadMode != "" && got.Payload.Mode() != tt.wantPayloadMode {
+				t.Fatalf("Payload.Mode() = %q, want %q", got.Payload.Mode(), tt.wantPayloadMode)
 			}
 
 			// Header 原值可能由环境变量/secret file 提供，但绝不能进入可打印配置快照。
