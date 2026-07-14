@@ -30,10 +30,13 @@ type ObservabilityTracerProviderLifecycleConfig struct {
 
 // ObservabilityTracerProviderLifecycleStatus 是生命周期状态的只读快照。
 type ObservabilityTracerProviderLifecycleStatus struct {
-	Initialized    bool
-	Shutdown       bool
-	FailureStatus  string
-	FailureMessage string
+	Initialized bool
+	// InitializationFailed 表示不可恢复的初始化失败。Lifecycle 配置构造后不可变；
+	// 修正配置时必须新建实例，不能把失败实例误认为已成功初始化。
+	InitializationFailed bool
+	Shutdown             bool
+	FailureStatus        string
+	FailureMessage       string
 }
 
 // ObservabilityTracerProviderLifecycle 管理基础设施观测 provider 的启动和关闭。
@@ -79,36 +82,66 @@ func (l *ObservabilityTracerProviderLifecycle) Initialize(ctx context.Context) e
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.status.Initialized || l.status.Shutdown {
+	if l.status.Initialized || l.status.InitializationFailed || l.status.Shutdown {
 		return nil
 	}
 	if l.exporterOwnsTracer && l.exporter == nil {
+		l.recordInitializationFailure(fmt.Errorf("exporter-owned tracer provider requires an exporter"))
+		return nil
+	}
+	if l.tracer != nil || l.meter != nil {
+		ownsGlobalProviders, err := l.initializeGlobalProviderOwner(ctx)
+		if err != nil {
+			l.recordInitializationFailure(err)
+			return nil
+		}
+		l.ownsGlobalProviders = ownsGlobalProviders
+		// 带 provider 的第二个 lifecycle 是只读 follower：它不能再启动自己的 exporter，
+		// 否则虽未替换 global provider，仍会形成第二套发送/关闭生命周期。
+		if !l.ownsGlobalProviders {
+			l.status.Initialized = true
+			return nil
+		}
 		l.status.Initialized = true
-		l.recordFailure(fmt.Errorf("exporter-owned tracer provider requires an exporter"))
-		return nil
-	}
-	l.status.Initialized = true
-	ownsGlobalProviders, err := l.installGlobalProviders()
-	if err != nil {
-		l.recordFailure(err)
-		return nil
-	}
-	l.ownsGlobalProviders = ownsGlobalProviders
-	// 带 provider 的第二个 lifecycle 是只读 follower：它不能再启动自己的 exporter，
-	// 否则虽未替换 global provider，仍会形成第二套发送/关闭生命周期。
-	if (l.tracer != nil || l.meter != nil) && !l.ownsGlobalProviders {
 		return nil
 	}
 
+	if err := l.initializeExporter(ctx); err != nil {
+		l.recordInitializationFailure(err)
+		return nil
+	}
+	l.status.Initialized = true
+	return nil
+}
+
+// initializeGlobalProviderOwner 把 provider 安装与 exporter 初始化放进同一进程级
+// 临界区：若 exporter 初始化失败，provider 尚未成为全局对象，下一套正确配置仍可接管。
+// 这段锁只出现在一次性启动阶段，优先保证全局 provider 的原子所有权。
+func (l *ObservabilityTracerProviderLifecycle) initializeGlobalProviderOwner(ctx context.Context) (bool, error) {
+	if l.tracer == nil || l.meter == nil {
+		return false, fmt.Errorf("trace and meter providers must be configured together")
+	}
+
+	processGlobalProviders.mu.Lock()
+	defer processGlobalProviders.mu.Unlock()
+	if processGlobalProviders.installed {
+		return false, nil
+	}
+	if err := l.initializeExporter(ctx); err != nil {
+		return false, err
+	}
+	installOTelGlobalProviders(l.tracer, l.meter)
+	processGlobalProviders.installed = true
+	return true, nil
+}
+
+func (l *ObservabilityTracerProviderLifecycle) initializeExporter(ctx context.Context) error {
 	if l.exporter == nil {
 		return nil
 	}
-	if err := runLifecycleExporter(func() error {
+	return runLifecycleExporter(func() error {
 		return l.exporter.Initialize(ctx)
-	}); err != nil {
-		l.recordFailure(err)
-	}
-	return nil
+	})
 }
 
 // Flush 请求 exporter 把缓冲信号在 shutdown 前或受控 checkpoint 时送出。未实现
@@ -188,23 +221,9 @@ func (l *ObservabilityTracerProviderLifecycle) recordFailure(err error) {
 	l.status.FailureMessage = err.Error()
 }
 
-func (l *ObservabilityTracerProviderLifecycle) installGlobalProviders() (bool, error) {
-	if l.tracer == nil && l.meter == nil {
-		return false, nil
-	}
-	if l.tracer == nil || l.meter == nil {
-		return false, fmt.Errorf("trace and meter providers must be configured together")
-	}
-
-	processGlobalProviders.mu.Lock()
-	defer processGlobalProviders.mu.Unlock()
-	if processGlobalProviders.installed {
-		return false, nil
-	}
-
-	installOTelGlobalProviders(l.tracer, l.meter)
-	processGlobalProviders.installed = true
-	return true, nil
+func (l *ObservabilityTracerProviderLifecycle) recordInitializationFailure(err error) {
+	l.status.InitializationFailed = true
+	l.recordFailure(err)
 }
 
 func (l *ObservabilityTracerProviderLifecycle) flushProvider(ctx context.Context, provider any) {

@@ -326,6 +326,53 @@ func TestObservabilityTracerProviderLifecycleRejectsMissingExporterForExporterOw
 	}
 	if status := lifecycle.Status(); status.FailureStatus != string(obs.FailureTelemetryExportFailed) || status.FailureMessage != "exporter-owned tracer provider requires an exporter" {
 		t.Fatal("missing exporter for exporter-owned trace provider was not rejected safely")
+	} else if status.Initialized || !status.InitializationFailed {
+		t.Fatal("invalid lifecycle config was incorrectly reported as initialized")
+	}
+	if err := lifecycle.Initialize(context.Background()); err != nil {
+		t.Fatal("repeated invalid Initialize() must remain application-safe")
+	}
+	if status := lifecycle.Status(); status.Initialized || !status.InitializationFailed {
+		t.Fatal("repeated invalid Initialize() changed the terminal failure state")
+	}
+}
+
+func TestObservabilityTracerProviderLifecycleDoesNotClaimGlobalProvidersWhenExporterInitializationFails(t *testing.T) {
+	originalInstaller := installOTelGlobalProviders
+	processGlobalProviders.mu.Lock()
+	originalInstalled := processGlobalProviders.installed
+	processGlobalProviders.installed = false
+	processGlobalProviders.mu.Unlock()
+	t.Cleanup(func() {
+		installOTelGlobalProviders = originalInstaller
+		processGlobalProviders.mu.Lock()
+		processGlobalProviders.installed = originalInstalled
+		processGlobalProviders.mu.Unlock()
+	})
+
+	installCalls := 0
+	installOTelGlobalProviders = func(traceAPI.TracerProvider, metricAPI.MeterProvider) { installCalls++ }
+	failed := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		Exporter:       &lifecycleExporterStub{initErr: errors.New("t025-init-failed")},
+		TracerProvider: trace.NewTracerProvider(),
+		MeterProvider:  metricSDK.NewMeterProvider(),
+	})
+	if err := failed.Initialize(context.Background()); err != nil {
+		t.Fatal("failed Initialize() must not break application startup")
+	}
+	if status := failed.Status(); status.Initialized || !status.InitializationFailed || installCalls != 0 {
+		t.Fatal("failed exporter initialization claimed global providers")
+	}
+
+	working := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		TracerProvider: trace.NewTracerProvider(),
+		MeterProvider:  metricSDK.NewMeterProvider(),
+	})
+	if err := working.Initialize(context.Background()); err != nil {
+		t.Fatal("replacement lifecycle initialization failed")
+	}
+	if !working.ownsGlobalProviders || installCalls != 1 {
+		t.Fatal("working lifecycle could not claim global providers after failed startup")
 	}
 }
 
@@ -338,6 +385,7 @@ func TestRunLifecycleExporterProtectsPanic(t *testing.T) {
 
 type lifecycleExporterStub struct {
 	initCalls     int
+	initErr       error
 	shutdownCalls int
 	shutdownErr   error
 	flushCalls    int
@@ -346,7 +394,7 @@ type lifecycleExporterStub struct {
 
 func (s *lifecycleExporterStub) Initialize(_ context.Context) error {
 	s.initCalls++
-	return nil
+	return s.initErr
 }
 
 func (s *lifecycleExporterStub) Shutdown(_ context.Context) error {
