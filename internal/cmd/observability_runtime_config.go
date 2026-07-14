@@ -31,13 +31,18 @@ const maxCollectorTimeout = time.Minute
 // ObservabilityCollectorConfigInput 是配置加载层传入的临时 DTO。
 // HeaderValue 仅用于判定凭据是否被提供，绝不能被保存到运行时快照、日志或错误中。
 type ObservabilityCollectorConfigInput struct {
-	Endpoint      string
-	Protocol      string
-	Timeout       string
-	Insecure      bool
-	AllowInsecure bool // 生产环境使用明文传输时必须显式授权。
+	Endpoint string
+	Protocol string
+	Timeout  string
+	Insecure bool
+	// AllowInsecure 仅允许在生产环境显式授权明文传输；默认 fail-fast。
+	AllowInsecure bool
+	// HeaderEnvName 是保存 OTLP 认证头的环境变量名，例如
+	// OTEL_EXPORTER_OTLP_HEADERS。它可以进入低敏配置快照，方便诊断配置来源。
 	HeaderEnvName string
-	HeaderValue   string
+	// HeaderValue 是配置加载边界读取到的实际认证头值。它只用于计算
+	// CredentialPresent，绝不保存到运行时快照、日志或错误中。
+	HeaderValue string
 }
 
 // ObservabilityRuntimeConfigInput 是运行配置解析的窄输入边界。
