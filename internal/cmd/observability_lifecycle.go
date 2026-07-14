@@ -6,6 +6,9 @@ import (
 	"sync"
 
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ObservabilityLifecycleExporter 是应用层管理 TracerProvider/exporter 生命周期的窄接口。
@@ -19,7 +22,10 @@ type ObservabilityLifecycleExporter interface {
 
 // ObservabilityTracerProviderLifecycleConfig 描述生命周期封装依赖。
 type ObservabilityTracerProviderLifecycleConfig struct {
-	Exporter ObservabilityLifecycleExporter
+	Exporter                   ObservabilityLifecycleExporter
+	TracerProvider             trace.TracerProvider
+	MeterProvider              metric.MeterProvider
+	ExporterOwnsTracerProvider bool
 }
 
 // ObservabilityTracerProviderLifecycleStatus 是生命周期状态的只读快照。
@@ -32,15 +38,35 @@ type ObservabilityTracerProviderLifecycleStatus struct {
 
 // ObservabilityTracerProviderLifecycle 管理基础设施观测 provider 的启动和关闭。
 type ObservabilityTracerProviderLifecycle struct {
-	mu       sync.Mutex
-	exporter ObservabilityLifecycleExporter
-	status   ObservabilityTracerProviderLifecycleStatus
+	mu                  sync.Mutex
+	exporter            ObservabilityLifecycleExporter
+	tracer              trace.TracerProvider
+	meter               metric.MeterProvider
+	exporterOwnsTracer  bool
+	ownsGlobalProviders bool
+	status              ObservabilityTracerProviderLifecycleStatus
+}
+
+// processGlobalProviders 防止同一进程中的第二个装配入口替换 OTel 全局 provider。
+// OTel 全局代理在首次设置后会长期委托给该 provider；替换或重置会让仍在飞行中的
+// 请求产生跨 provider 的 span/meter 混用，因此生命周期只允许首次安装。
+var processGlobalProviders struct {
+	mu        sync.Mutex
+	installed bool
+}
+
+var installOTelGlobalProviders = func(tracerProvider trace.TracerProvider, meterProvider metric.MeterProvider) {
+	otel.SetTracerProvider(tracerProvider)
+	otel.SetMeterProvider(meterProvider)
 }
 
 // NewObservabilityTracerProviderLifecycle 创建幂等的 provider 生命周期管理器。
 func NewObservabilityTracerProviderLifecycle(config ObservabilityTracerProviderLifecycleConfig) *ObservabilityTracerProviderLifecycle {
 	return &ObservabilityTracerProviderLifecycle{
-		exporter: config.Exporter,
+		exporter:           config.Exporter,
+		tracer:             config.TracerProvider,
+		meter:              config.MeterProvider,
+		exporterOwnsTracer: config.ExporterOwnsTracerProvider,
 	}
 }
 
@@ -53,10 +79,26 @@ func (l *ObservabilityTracerProviderLifecycle) Initialize(ctx context.Context) e
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if l.status.Initialized {
+	if l.status.Initialized || l.status.Shutdown {
+		return nil
+	}
+	if l.exporterOwnsTracer && l.exporter == nil {
+		l.status.Initialized = true
+		l.recordFailure(fmt.Errorf("exporter-owned tracer provider requires an exporter"))
 		return nil
 	}
 	l.status.Initialized = true
+	ownsGlobalProviders, err := l.installGlobalProviders()
+	if err != nil {
+		l.recordFailure(err)
+		return nil
+	}
+	l.ownsGlobalProviders = ownsGlobalProviders
+	// 带 provider 的第二个 lifecycle 是只读 follower：它不能再启动自己的 exporter，
+	// 否则虽未替换 global provider，仍会形成第二套发送/关闭生命周期。
+	if (l.tracer != nil || l.meter != nil) && !l.ownsGlobalProviders {
+		return nil
+	}
 
 	if l.exporter == nil {
 		return nil
@@ -65,6 +107,36 @@ func (l *ObservabilityTracerProviderLifecycle) Initialize(ctx context.Context) e
 		return l.exporter.Initialize(ctx)
 	}); err != nil {
 		l.recordFailure(err)
+	}
+	return nil
+}
+
+// Flush 请求 exporter 把缓冲信号在 shutdown 前或受控 checkpoint 时送出。未实现
+// ForceFlush 的 exporter 保持兼容；超时/失败只记录观测故障，绝不能改写业务结果。
+func (l *ObservabilityTracerProviderLifecycle) Flush(ctx context.Context) error {
+	if l == nil {
+		return nil
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if flusher, ok := l.exporter.(interface {
+		ForceFlush(context.Context) error
+	}); ok && flusher != nil {
+		if err := runLifecycleExporter(func() error {
+			return flusher.ForceFlush(ctx)
+		}); err != nil {
+			l.recordFailure(err)
+		}
+	}
+	if l.ownsGlobalProviders {
+		// 默认由 lifecycle 管理直接注入的 trace/meter provider。只有装配层明确声明
+		// exporter 持有同一个 TracerProvider 时，才跳过 direct trace flush，防止重复。
+		if !l.exporterOwnsTracer {
+			l.flushProvider(ctx, l.tracer)
+		}
+		l.flushProvider(ctx, l.meter)
 	}
 	return nil
 }
@@ -83,13 +155,18 @@ func (l *ObservabilityTracerProviderLifecycle) Shutdown(ctx context.Context) err
 	}
 	l.status.Shutdown = true
 
-	if l.exporter == nil {
-		return nil
+	if l.exporter != nil {
+		if err := runLifecycleExporter(func() error {
+			return l.exporter.Shutdown(ctx)
+		}); err != nil {
+			l.recordFailure(err)
+		}
 	}
-	if err := runLifecycleExporter(func() error {
-		return l.exporter.Shutdown(ctx)
-	}); err != nil {
-		l.recordFailure(err)
+	if l.ownsGlobalProviders {
+		if !l.exporterOwnsTracer {
+			l.shutdownProvider(ctx, l.tracer)
+		}
+		l.shutdownProvider(ctx, l.meter)
 	}
 	return nil
 }
@@ -109,6 +186,45 @@ func (l *ObservabilityTracerProviderLifecycle) Status() ObservabilityTracerProvi
 func (l *ObservabilityTracerProviderLifecycle) recordFailure(err error) {
 	l.status.FailureStatus = string(obs.FailureTelemetryExportFailed)
 	l.status.FailureMessage = err.Error()
+}
+
+func (l *ObservabilityTracerProviderLifecycle) installGlobalProviders() (bool, error) {
+	if l.tracer == nil && l.meter == nil {
+		return false, nil
+	}
+	if l.tracer == nil || l.meter == nil {
+		return false, fmt.Errorf("trace and meter providers must be configured together")
+	}
+
+	processGlobalProviders.mu.Lock()
+	defer processGlobalProviders.mu.Unlock()
+	if processGlobalProviders.installed {
+		return false, nil
+	}
+
+	installOTelGlobalProviders(l.tracer, l.meter)
+	processGlobalProviders.installed = true
+	return true, nil
+}
+
+func (l *ObservabilityTracerProviderLifecycle) flushProvider(ctx context.Context, provider any) {
+	flusher, ok := provider.(interface{ ForceFlush(context.Context) error })
+	if !ok || flusher == nil {
+		return
+	}
+	if err := runLifecycleExporter(func() error { return flusher.ForceFlush(ctx) }); err != nil {
+		l.recordFailure(err)
+	}
+}
+
+func (l *ObservabilityTracerProviderLifecycle) shutdownProvider(ctx context.Context, provider any) {
+	shutdowner, ok := provider.(interface{ Shutdown(context.Context) error })
+	if !ok || shutdowner == nil {
+		return
+	}
+	if err := runLifecycleExporter(func() error { return shutdowner.Shutdown(ctx) }); err != nil {
+		l.recordFailure(err)
+	}
 }
 
 func runLifecycleExporter(run func() error) (err error) {

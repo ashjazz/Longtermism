@@ -59,7 +59,7 @@
 
 - [X] T023 在 `internal/cmd/observability_runtime_config.go` 实现不可变运行配置值对象与 fail-fast matrix；质量门控：使 T011 GREEN，错误只暴露字段名/credential-present，不允许应用配置出现 Tempo/Loki/Prometheus/Grafana/SigNoz/Langfuse trace 地址。
 - [X] T024 在 `pkg/ai/obs/payload_policy.go` 实现独立 payload policy 与强制敏感检测入口；质量门控：使 T012 GREEN，核心包不依赖平台 SDK，`content_raw` 只在 local/test 显式授权时生成不可序列化的本地调试工件，生产 raw 直接失败。
-- [ ] T025 在 `internal/cmd/observability_lifecycle.go` 收紧单一 TracerProvider/MeterProvider lifecycle；质量门控：使 T013 GREEN，初始化和 shutdown 幂等、批处理可 flush、失败不 panic，并运行 `go test -race ./internal/cmd`。
+- [X] T025 在 `internal/cmd/observability_lifecycle.go` 收紧单一 TracerProvider/MeterProvider lifecycle；质量门控：使 T013 GREEN，初始化和 shutdown 幂等、批处理可 flush、失败不 panic，并运行 `go test -race ./internal/cmd`。
 - [ ] T026 在 `internal/cmd/observability_exporter.go` 实现 traces+metrics 共用配置的窄 OTel SDK 初始化器及 gRPC/HTTP 分支；质量门控：使 T014 GREEN，只创建 App -> Collector exporters，复用 GoFrame 自动 tracing，不注册互相竞争的全局 provider。
 - [ ] T027 在 `internal/cmd/observability_propagation.go` 装配 W3C TraceContext 与 allowlist Baggage propagator；质量门控：使 T015 GREEN，禁止任意 baggage 透传，跨服务测试不得出现 raw payload。
 - [ ] T028 在 `internal/cmd/request_context.go` 实现 request identity 中间件；质量门控：使 T016 GREEN，使用 opaque 低敏 ID、route template 而非 raw path，并保持 health endpoint 回归测试通过。

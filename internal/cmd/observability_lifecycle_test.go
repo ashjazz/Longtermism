@@ -5,13 +5,16 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"sync"
 	"testing"
 
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 	"go.opentelemetry.io/otel"
+	metricAPI "go.opentelemetry.io/otel/metric"
 	metricSDK "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	traceAPI "go.opentelemetry.io/otel/trace"
 )
 
 func TestObservabilityTracerProviderLifecycle(t *testing.T) {
@@ -175,9 +178,10 @@ func TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvi
 	primaryTracerProvider := trace.NewTracerProvider(trace.WithSyncer(primarySpanExporter))
 	primaryMeterProvider := metricSDK.NewMeterProvider()
 	primaryLifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
-		Exporter:       &otelLifecycleExporter{provider: primaryTracerProvider},
-		TracerProvider: primaryTracerProvider,
-		MeterProvider:  primaryMeterProvider,
+		Exporter:                   &otelLifecycleExporter{provider: primaryTracerProvider},
+		TracerProvider:             primaryTracerProvider,
+		MeterProvider:              primaryMeterProvider,
+		ExporterOwnsTracerProvider: true,
 	})
 
 	if err := primaryLifecycle.Initialize(context.Background()); err != nil {
@@ -211,6 +215,124 @@ func TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvi
 	}
 	if err := primaryLifecycle.Shutdown(context.Background()); err != nil {
 		t.Fatal("repeated primary lifecycle shutdown failed")
+	}
+}
+
+func TestObservabilityTracerProviderLifecycleGlobalProviderRegistry(t *testing.T) {
+	// 不触碰真实 OTel 全局对象：这里验证进程级注册表的所有权和“只安装一次”语义。
+	originalInstaller := installOTelGlobalProviders
+	processGlobalProviders.mu.Lock()
+	originalInstalled := processGlobalProviders.installed
+	processGlobalProviders.installed = false
+	processGlobalProviders.mu.Unlock()
+	t.Cleanup(func() {
+		installOTelGlobalProviders = originalInstaller
+		processGlobalProviders.mu.Lock()
+		processGlobalProviders.installed = originalInstalled
+		processGlobalProviders.mu.Unlock()
+	})
+
+	installCalls := 0
+	installOTelGlobalProviders = func(traceAPI.TracerProvider, metricAPI.MeterProvider) {
+		installCalls++
+	}
+
+	primary := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		TracerProvider: trace.NewTracerProvider(),
+		MeterProvider:  metricSDK.NewMeterProvider(),
+	})
+	secondary := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		TracerProvider: trace.NewTracerProvider(),
+		MeterProvider:  metricSDK.NewMeterProvider(),
+	})
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var waitGroup sync.WaitGroup
+	for _, lifecycle := range []*ObservabilityTracerProviderLifecycle{primary, secondary} {
+		waitGroup.Add(1)
+		go func(lifecycle *ObservabilityTracerProviderLifecycle) {
+			defer waitGroup.Done()
+			<-start
+			errs <- lifecycle.Initialize(context.Background())
+		}(lifecycle)
+	}
+	close(start)
+	waitGroup.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal("concurrent lifecycle initialization returned an unexpected error")
+		}
+	}
+	if installCalls != 1 || primary.ownsGlobalProviders == secondary.ownsGlobalProviders {
+		t.Fatal("concurrent lifecycles did not elect exactly one global provider owner")
+	}
+	followerExporter := &lifecycleExporterStub{}
+	follower := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		Exporter:       followerExporter,
+		TracerProvider: trace.NewTracerProvider(),
+		MeterProvider:  metricSDK.NewMeterProvider(),
+	})
+	if err := follower.Initialize(context.Background()); err != nil {
+		t.Fatal("follower Initialize() returned an unexpected error")
+	}
+	if followerExporter.initCalls != 0 || follower.ownsGlobalProviders {
+		t.Fatal("global provider follower started a second exporter lifecycle")
+	}
+	owner := primary
+	if !primary.ownsGlobalProviders {
+		owner = secondary
+	}
+	if err := owner.Flush(context.Background()); err != nil {
+		t.Fatal("global provider owner Flush() returned an unexpected error")
+	}
+	if err := owner.Shutdown(context.Background()); err != nil {
+		t.Fatal("global provider owner Shutdown() returned an unexpected error")
+	}
+
+	partial := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		TracerProvider: trace.NewTracerProvider(),
+	})
+	if err := partial.Initialize(context.Background()); err != nil {
+		t.Fatal("partial provider Initialize() must protect application startup")
+	}
+	if partial.Status().FailureStatus != string(obs.FailureTelemetryExportFailed) {
+		t.Fatal("partial provider configuration was not recorded as a telemetry failure")
+	}
+}
+
+func TestObservabilityTracerProviderLifecycleDoesNotRestartAfterShutdown(t *testing.T) {
+	exporter := &lifecycleExporterStub{}
+	lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{Exporter: exporter})
+	if err := lifecycle.Shutdown(context.Background()); err != nil {
+		t.Fatal("Shutdown() returned an unexpected error")
+	}
+	if err := lifecycle.Initialize(context.Background()); err != nil {
+		t.Fatal("Initialize() after Shutdown() returned an unexpected error")
+	}
+	if exporter.initCalls != 0 {
+		t.Fatal("Initialize() restarted telemetry after lifecycle shutdown")
+	}
+}
+
+func TestObservabilityTracerProviderLifecycleRejectsMissingExporterForExporterOwnedTracer(t *testing.T) {
+	lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		TracerProvider:             trace.NewTracerProvider(),
+		MeterProvider:              metricSDK.NewMeterProvider(),
+		ExporterOwnsTracerProvider: true,
+	})
+	if err := lifecycle.Initialize(context.Background()); err != nil {
+		t.Fatal("Initialize() must protect application startup from invalid telemetry config")
+	}
+	if status := lifecycle.Status(); status.FailureStatus != string(obs.FailureTelemetryExportFailed) || status.FailureMessage != "exporter-owned tracer provider requires an exporter" {
+		t.Fatal("missing exporter for exporter-owned trace provider was not rejected safely")
+	}
+}
+
+func TestRunLifecycleExporterProtectsPanic(t *testing.T) {
+	err := runLifecycleExporter(func() error { panic("t025-exporter-panic") })
+	if err == nil || err.Error() != "panic: t025-exporter-panic" {
+		t.Fatal("runLifecycleExporter() did not convert exporter panic into a stable failure")
 	}
 }
 
