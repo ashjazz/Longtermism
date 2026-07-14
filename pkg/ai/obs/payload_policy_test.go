@@ -72,8 +72,8 @@ func TestResolvePayloadPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal("ResolvePayloadPolicy() returned an unexpected error")
 			}
-			if got.Mode != tt.wantMode {
-				t.Fatalf("Mode = %q, want %q", got.Mode, tt.wantMode)
+			if got.Mode() != tt.wantMode {
+				t.Fatalf("Mode = %q, want %q", got.Mode(), tt.wantMode)
 			}
 		})
 	}
@@ -89,11 +89,10 @@ func TestPayloadPolicySanitizeKeepsSensitiveValuesOutOfEveryMode(t *testing.T) {
 	)
 
 	tests := []struct {
-		name         string
-		mode         PayloadMode
-		wantInput    bool
-		wantOutput   bool
-		wantToolArgs bool
+		name       string
+		mode       PayloadMode
+		wantInput  bool
+		wantOutput bool
 	}{
 		{
 			name: "metadata only omits all content",
@@ -133,7 +132,7 @@ func TestPayloadPolicySanitizeKeepsSensitiveValuesOutOfEveryMode(t *testing.T) {
 				ToolArguments: syntheticToolArgs,
 			})
 
-			assertPayloadContentPresence(t, snapshot, tt.wantInput, tt.wantOutput, tt.wantToolArgs)
+			assertPayloadContentPresence(t, snapshot, tt.wantInput, tt.wantOutput)
 			assertPayloadSnapshotDoesNotLeak(t, snapshot, []string{
 				syntheticBearer,
 				syntheticPII,
@@ -143,17 +142,50 @@ func TestPayloadPolicySanitizeKeepsSensitiveValuesOutOfEveryMode(t *testing.T) {
 	}
 }
 
-func assertPayloadContentPresence(t *testing.T, snapshot PayloadSnapshot, wantInput, wantOutput, wantToolArgs bool) {
+func TestPayloadPolicySanitizeRemovesEmbeddedCredentialsAndPII(t *testing.T) {
+	const (
+		syntheticBasic  = "QmVhcmVyIHRoZS1yYXctdDAyNC10b2tlbg=="
+		syntheticToken  = "t024-opaque-token"
+		syntheticTokenA = "t024-token-equals"
+		syntheticTokenB = "t024-token-colon"
+		syntheticCookie = "t024-session-cookie"
+		syntheticPhone  = "13800138000"
+		syntheticID     = "110101199001011234"
+	)
+
+	for _, mode := range []PayloadMode{PayloadModeContentRedacted, PayloadModeContentRaw} {
+		t.Run(string(mode), func(t *testing.T) {
+			policy, err := ResolvePayloadPolicy(PayloadPolicyInput{Mode: mode, Environment: "local"})
+			if err != nil {
+				t.Fatal("ResolvePayloadPolicy() returned an unexpected error")
+			}
+			snapshot := policy.Sanitize(PayloadContent{
+				Input:  "safe input Authorization: Basic " + syntheticBasic + " Cookie: " + syntheticCookie,
+				Output: "safe output Token " + syntheticToken + " Token=" + syntheticTokenA + " Token:" + syntheticTokenB + " phone " + syntheticPhone + " id " + syntheticID,
+			})
+			assertPayloadSnapshotDoesNotLeak(t, snapshot, []string{syntheticBasic, syntheticToken, syntheticTokenA, syntheticTokenB, syntheticCookie, syntheticPhone, syntheticID})
+		})
+	}
+}
+
+func TestPayloadPolicySanitizeFailsClosedWhenPolicyWasNotResolved(t *testing.T) {
+	snapshot := (PayloadPolicy{}).Sanitize(PayloadContent{
+		Input:  "safe input",
+		Output: "safe output",
+	})
+	if snapshot.Input() != "" || snapshot.Output() != "" {
+		t.Fatal("an unresolved payload policy emitted content")
+	}
+}
+
+func assertPayloadContentPresence(t *testing.T, snapshot PayloadSnapshot, wantInput, wantOutput bool) {
 	t.Helper()
 
-	if (snapshot.Input != "") != wantInput {
-		t.Fatalf("snapshot input presence = %v, want %v", snapshot.Input != "", wantInput)
+	if (snapshot.Input() != "") != wantInput {
+		t.Fatalf("snapshot input presence = %v, want %v", snapshot.Input() != "", wantInput)
 	}
-	if (snapshot.Output != "") != wantOutput {
-		t.Fatalf("snapshot output presence = %v, want %v", snapshot.Output != "", wantOutput)
-	}
-	if (snapshot.ToolArguments != "") != wantToolArgs {
-		t.Fatalf("snapshot tool arguments presence = %v, want %v", snapshot.ToolArguments != "", wantToolArgs)
+	if (snapshot.Output() != "") != wantOutput {
+		t.Fatalf("snapshot output presence = %v, want %v", snapshot.Output() != "", wantOutput)
 	}
 }
 
