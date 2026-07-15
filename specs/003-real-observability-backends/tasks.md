@@ -71,6 +71,10 @@
 - [ ] T034 在 `internal/observability/privacy/scanner.go` 实现统一 synthetic canary/敏感模式扫描器；质量门控：使 T022 GREEN，scanner 在所有 payload modes 启用并只返回低敏分类证据。
 - [ ] T035 在 `manifest/config/config.yaml` 落地 runtime configuration contract 的非敏感默认 shape；质量门控：默认观测、chat 与 infra-smoke 均关闭，默认 App endpoint 只能指向 Collector，`make obs-config-check` 通过。
 - [ ] T036 在 `Makefile` 增加 `obs-coverage`、foundational 单测与 race 聚合入口；质量门控：显式覆盖 `./internal/cmd/... ./internal/observability/... ./internal/logic/chat/... ./pkg/ai/obs/...`，生成 ignored 的 `build/coverage/observability.out`。新核心代码是本 spec 新增或修改的、位于上述包中的非 generated/non-config-only 可执行 Go 行；以 merge-base 为基线，从同一测试运行生成的 coverprofile 中只统计这些行，分母为所有此类可执行行、分子为其中命中行，阈值 >=80%。chat usecase 按 `internal/logic/chat` 的全部非 generated 可执行行单独计算，阈值 >=90%。基线不存在时以首次提交前的空树为基线；重命名按新路径计入。generated/config-only 排除项必须使用可审查 allowlist，不得排除失败包、既有未覆盖行或复用缓存假通过。
+- [ ] T036A [P] 在 `internal/cmd/observability_bootstrap_test.go` 编写应用观测装配 RED 测试；质量门控：先固定 `enabled`/mode/signal/smoke 的唯一语义，覆盖 noop/local 零网络、collector 恰好一次创建和全局安装 trace+meter provider、初始化失败 fail-fast、重复装配不产生第二套 provider/middleware，以及带 deadline 的 flush/shutdown；测试不得读取真实 secret 或启动 server。
+- [ ] T036B 在 `internal/cmd/observability_bootstrap.go` 实现配置加载到 `ObservabilityProviderLifecycle` 的纯装配边界；质量门控：使 T036A GREEN，按“resolve runtime → resource/exporter config → transient header source → exporter bundle → provider lifecycle”的固定顺序组合，不让 `BuildObservabilityOTLPExporterConfig` 重复解析 raw input，只有 composition root 可以成对声明 exporter provider 所有权。
+- [ ] T036C 在 `internal/cmd/observability.go` 删除旧 `ObservabilitySinkPlatform` 直连平台模型及其测试；质量门控：新 bootstrap 契约已通过后执行，仓库扫描不得留下 `ExternalEndpoint`、`Platform` sink 或应用侧 platform credential 字段；缺 Collector 配置的 collector mode 必须 fail-fast，禁止静默降级 noop。
+- [ ] T036D 在 `internal/cmd/observability_lifecycle.go` 将 tracer-only 命名收敛为 `ObservabilityProviderLifecycle`；质量门控：更新相邻测试与 bootstrap 调用，行为不变，明确该对象仅管理 trace/meter provider 和 OTLP bundle，不管理 Langfuse score worker。
 
 ## Phase 3：User Story 1 - 验证服务请求的基础观测（P1）
 
@@ -98,7 +102,7 @@
 - [ ] T049 [US1] 在 `api/v1/observability/infra_smoke.go` 定义 GoFrame Req/Res 与统一 envelope 类型；质量门控：使 T037 GREEN，字段与 `contracts/http-api.yaml` 一致，run marker 最大 128 字节且不接受额外输入。
 - [ ] T050 [US1] 在 `internal/logic/observability/infra_smoke.go` 实现纯基础设施 usecase；质量门控：使 T038 GREEN，不创建 `ai_trace_id` 或 AI plane marker，telemetry failure 只记录诊断事实。
 - [ ] T051 [US1] 在 `internal/controller/observability/infra_smoke.go` 实现薄 controller；质量门控：使 T039 GREEN，只做校验/调用/错误映射，不包含 backend 查询或业务观测拼装。
-- [ ] T052 [US1] 在 `internal/cmd/cmd.go` 注册受配置保护的 infra-smoke 路由、request middleware 与配置化限流；质量门控：使 T040 GREEN，并运行 health 与路由回归测试，避免重复 provider/middleware，限流状态不得进入 AI 平面。
+- [ ] T052 [US1] 在 `internal/cmd/cmd.go` 消费 T036B 已准备的应用观测装配结果，在启动前初始化并在 server 退出路径以 deadline flush/shutdown，然后注册受配置保护的 infra-smoke 路由、request middleware 与配置化限流；质量门控：使 T040 GREEN，并运行 health 与路由回归测试，避免重复 provider/middleware，限流状态不得进入 AI 平面。
 - [ ] T053 [US1] 在 `internal/observability/http_logging.go` 实现 HTTP completion/error 日志 hook；质量门控：使 T041 GREEN，日志写 JSONL 到配置文件且业务响应不等待 Loki。
 - [ ] T054 [US1] 在 `deploy/observability/collector/collector-grafana.yaml` 实现方案 C、metrics/filelog、完整 trace tail sampling 与三套独立持久队列配置；质量门控：使 T042 GREEN，公共 processor 只在 ingress，infra-only 数据不能通过 AI downstream filter，smoke/error/regression 不能被采样丢弃。
 - [ ] T055 [US1] 在 `manifest/config/glog-observability.yaml` 配置结构化 JSON 文件、rotation 与 shared-volume 路径；质量门控：使 T043 GREEN，默认日志不得包含 raw prompt/output，文件权限与保留边界明确。
@@ -154,7 +158,7 @@
 - [ ] T093 [US2] 在 `internal/eval/evidence_store.go` 实现低敏本地 evidence JSONL 存储；质量门控：使 T073 GREEN，原子/并发安全、错误可诊断、保留 90 天配置边界，不成为 Langfuse 专属事实源，并运行 `go test -race ./internal/eval/...`。
 - [ ] T094 [US2] 在 `internal/logic/chat/evaluator.go` 实现确定性本地 evaluator、evidence 输入与有界低敏摘要；质量门控：使 T074 GREEN，评估事实不依赖 Langfuse，debug 只控制响应诊断，不改变 payload policy 或敏感扫描。
 - [ ] T095 [US2] 在 `internal/controller/chat/chat.go` 实现薄 controller；质量门控：使 T075 GREEN，使用统一错误 envelope 与稳定错误码，不记录 request body/provider body。
-- [ ] T096 [US2] 在 `internal/cmd/cmd.go` 注册 chat 路由、配置化限流与 usecase 依赖；质量门控：使 T076 GREEN，运行 health/infra/chat 路由回归，单进程仍只有一个 provider lifecycle，限流不暴露用户输入。
+- [ ] T096 [US2] 在 `internal/cmd/cmd.go` 在既有 T052 装配结果上注册 chat 路由、配置化限流与 usecase 依赖；质量门控：使 T076 GREEN，运行 health/infra/chat 路由回归，单进程仍只有一个 provider lifecycle，限流不暴露用户输入，不得重新解析或重新安装 telemetry provider。
 - [ ] T097 [US2] 在 `internal/observability/langfuse/trace_mapper.go` 实现平台 allowlist 映射；质量门控：使 T077 GREEN，平台 adapter 只投影，不反向决定 `pkg/ai/obs.Trace` 或 eval evidence。
 - [ ] T098 [US2] 在 `internal/observability/langfuse/projection.go` 实现不可变 score projection 与稳定幂等键；质量门控：使 T078 GREEN，缺真实 platform identity 时 fail-fast，不通过名称/时间窗口猜测。
 - [ ] T099 [US2] 在 `internal/observability/langfuse/client.go` 实现 score API client；质量门控：使 T079 GREEN，context timeout、分类重试、response body 上限、credential 只在 Authorization header。

@@ -127,6 +127,16 @@ manifest/config/                     非敏感应用配置和本地 override 示
 
 Grafana 主线的任务必须先完成第 1-7 项；SigNoz 任务不得成为主线首个闭环的前置依赖。
 
+### Phase 2 装配边界（重构审查补充）
+
+Phase 2 的值对象、SDK bundle 和 lifecycle 不是独立可交付的运行时入口。开始任何 `Main` 接线前，必须先完成一个显式的应用装配切片，并以其测试作为后续 infra/chat 路由任务的前置条件。
+
+运行时的数据流固定为：配置加载器/secret reader（唯一允许短暂读取 header 值的边界）→ `ResolveObservabilityRuntimeConfig`（安全快照）→ `BuildObservabilityResource` 与 exporter config（纯值对象组合）→ `NewObservabilityOTLPExporter`（只短暂消费 header source）→ `ObservabilityProviderLifecycle`（唯一的全局 trace/meter provider 安装、flush、shutdown）→ `Main` 的 server 启动与退出钩子。`Build...ExporterConfig` 不得重新解析原始 runtime input；应用配置快照、日志和错误中均不得留存 credential 值。
+
+`enabled`、`mode`、signal 开关和 smoke gate 必须在该切片前拥有唯一归属：当 `enabled=false` 且 mode 省略或为 `noop` 时规范化为 `noop`；若同时显式设置非 `noop` mode 则启动失败；`SignalPolicy` 决定 trace/metric provider 是否创建，`smoke_enabled` 只决定诊断路由是否注册。此处不实现 Collector、业务路由或平台查询；它们仍分别由后续任务实现。
+
+`internal/cmd/observability.go` 的旧 `ObservabilitySinkPlatform` 直连模型不属于上述装配链，也不得与新链并存。它将在新装配契约通过后删除，而非在路由任务中临时兼容。生命周期对象的名称应反映其同时管理 tracer、meter、exporter 及其连接资源，统一使用 `ObservabilityProviderLifecycle`；Langfuse score worker 保持独立 lifecycle，不纳入该对象。
+
 ## 风险与缓解
 
 - **全局 provider 冲突**：GoFrame contrib 与官方 SDK 都可能注册全局 provider。通过单一初始化端口、幂等 lifecycle 和进程级测试禁止重复注册。

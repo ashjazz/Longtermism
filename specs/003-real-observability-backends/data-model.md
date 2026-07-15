@@ -8,7 +8,7 @@
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `enabled` | bool | false 时不得创建外连 exporter |
+| `enabled` | bool | false 且 mode 省略/为 `noop` 时规范化为 `noop`，不得创建 provider 或外连 exporter；与显式非 `noop` mode 同时出现时配置失败 |
 | `mode` | enum | `noop`、`local`、`collector` |
 | `environment` | string | 非空；`production` 触发严格隐私校验 |
 | `resource` | ResourceIdentity | service name 必填，version/instance 可选 |
@@ -20,10 +20,12 @@
 
 ### 验证
 
-- `collector` mode 必须有合法 endpoint 和受支持 protocol。
+- `enabled` 与 `mode` 只能表达一种启动语义：`enabled=false` 且 mode 省略/为 `noop` 时等价 `noop`；若 mode 显式为其它值必须失败，不得由装配层猜测或静默降级。
+- `collector` mode 必须有合法 endpoint 和受支持 protocol；`local` 不创建网络 exporter。
 - endpoint 只允许 Collector，不接受 backend-specific 字段。
 - 允许 `metadata_only`、`content_redacted` 与 `content_raw`。`content_raw` 必须同时满足 `environment in {local,test}` 与显式 `raw_content_enabled=true`；其他环境、缺少授权或未知 mode 必须失败。
 - 配置快照只保留 header 环境变量名，不保存 header 原值。
+- `signals` 是 provider 创建的唯一开关，`smoke_enabled` 只控制 infra-smoke 路由，二者不隐式改写彼此。
 
 ## 2. CollectorClientConfig
 

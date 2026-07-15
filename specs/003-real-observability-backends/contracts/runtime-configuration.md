@@ -55,12 +55,15 @@ ai:
 
 This is a shape contract, not a ready-to-use secret file. Checked-in defaults keep `observability.enabled=false`, `smoke.enabled=false`, and all secret values empty.
 
+`enabled` 与 `mode` 不得形成两套可解释路径：当 `enabled=false` 且 mode 省略或为 `noop` 时，配置加载层规范化为 `mode=noop`；若使用者同时给出 `enabled=false` 与非 `noop` mode，则启动失败。`signals` 只决定 trace/metric provider 是否装配，`smoke.enabled` 只决定 infra-smoke 路由是否注册。
+
 ## 3. Fail-fast matrix
 
 | Condition | Required behavior |
 | --- | --- |
 | mode is `noop` | no exporter, server may start |
 | mode is `local` | only local/test sinks, no network |
+| `enabled=false` with a non-`noop` mode | startup error; configuration must not silently choose one |
 | mode is `collector` without endpoint | startup error |
 | unsupported protocol | startup error |
 | chat enabled without model base URL/key/model | startup error |
