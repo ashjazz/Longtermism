@@ -62,7 +62,7 @@
 - [X] T025 在 `internal/cmd/observability_lifecycle.go` 收紧单一 TracerProvider/MeterProvider lifecycle；质量门控：使 T013 GREEN，初始化和 shutdown 幂等、批处理可 flush、失败不 panic，并运行 `go test -race ./internal/cmd`。
 - [X] T026 在 `internal/cmd/observability_exporter.go` 实现 traces+metrics 共用配置的窄 OTel SDK 初始化器及 gRPC/HTTP 分支；质量门控：使 T014 GREEN，只创建 App -> Collector exporters，复用 GoFrame 自动 tracing，不注册互相竞争的全局 provider。
 - [X] T027 在 `internal/cmd/observability_propagation.go` 装配 W3C TraceContext 与 allowlist Baggage propagator；质量门控：使 T015 GREEN，禁止任意 baggage 透传，跨服务测试不得出现 raw payload。
-- [ ] T028 在 `internal/cmd/request_context.go` 实现 request identity 中间件；质量门控：使 T016 GREEN，使用 opaque 低敏 ID、route template 而非 raw path，并保持 health endpoint 回归测试通过。
+- [X] T028 在 `internal/cmd/request_context.go` 实现 request identity 中间件；质量门控：使 T016 GREEN，使用 opaque 低敏 ID、route template 而非 raw path，并保持 health endpoint 回归测试通过。
 - [ ] T029 在 `internal/observability/metrics.go` 实现 OTel Meter instruments 与低基数属性 builder；质量门控：使 T017 GREEN，业务代码只调用语义端口，`go test -race` 无共享状态竞争。
 - [ ] T030 在 `internal/observability/logging.go` 实现 GoFrame `glog` JSON 结构化字段构造；质量门控：使 T018 GREEN，不接 OTel logs SDK，不记录 provider body、prompt/output、Authorization 或 endpoint credential。
 - [ ] T031 在 `internal/observability/smoke/report.go` 实现报告值对象与稳定错误分类；质量门控：使 T019 GREEN，报告生成后不可变，失败检查不能被后续 passed 覆盖，报告完成前必须记录 smoke 自建临时凭据/数据的 cleanup 结果。

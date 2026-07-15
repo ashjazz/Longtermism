@@ -11,9 +11,28 @@ import (
 	"testing"
 
 	"github.com/gogf/gf/v2/net/ghttp"
+	"github.com/gogf/gf/v2/os/gsession"
 )
 
 var expectedOpaqueRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+func TestNewOpaqueRequestIDUsesAValidDistinctRandomValue(t *testing.T) {
+	first, err := newOpaqueRequestID()
+	if err != nil {
+		t.Fatalf("newOpaqueRequestID() error = %v", err)
+	}
+	second, err := newOpaqueRequestID()
+	if err != nil {
+		t.Fatalf("newOpaqueRequestID() error = %v", err)
+	}
+
+	if len(first) != generatedRequestIDBytes*2 || !expectedOpaqueRequestIDPattern.MatchString(first) {
+		t.Fatal("generated request ID is not a valid opaque hexadecimal value")
+	}
+	if first == second {
+		t.Fatal("independently generated request IDs must not repeat")
+	}
+}
 
 func TestRequestIdentityMiddleware(t *testing.T) {
 	tests := []struct {
@@ -116,6 +135,42 @@ func TestRequestIdentityMiddlewareDoesNotShareIdentityAcrossConcurrentRequests(t
 	}
 }
 
+func TestRequestIdentityMiddlewareRejectsMultipleRequestIDValues(t *testing.T) {
+	server, handlerCalls := newRequestIdentityProbeServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/identity", nil)
+	request.Header.Add(RequestIDHeader, "req-first")
+	request.Header.Add(RequestIDHeader, "req-second")
+	response := httptest.NewRecorder()
+
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest || handlerCalls() {
+		t.Fatal("multiple request identity headers were not rejected before the handler")
+	}
+	if strings.Contains(response.Body.String(), "req-first") || strings.Contains(response.Body.String(), "req-second") {
+		t.Fatal("multiple request identity headers were reflected in the response")
+	}
+}
+
+func TestRequestIdentityMiddlewareStoresRouteTemplateInsteadOfRawPath(t *testing.T) {
+	server, _ := newRequestIdentityProbeServer(t)
+	response := serveRequestIdentityProbePath(server, "/resources/synthetic-private-path-t028", "req-route-template")
+	if response.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	var envelope routeTemplateEnvelope
+	if err := json.NewDecoder(strings.NewReader(response.Body.String())).Decode(&envelope); err != nil {
+		t.Fatal("failed to decode route template probe response")
+	}
+	if envelope.RouteTemplate != "/resources/{id}" {
+		t.Fatalf("route template = %q, want /resources/{id}", envelope.RouteTemplate)
+	}
+	if strings.Contains(envelope.RouteTemplate, "synthetic-private-path-t028") {
+		t.Fatal("raw path was retained in request context")
+	}
+}
+
 func newRequestIdentityProbeServer(t *testing.T) (*ghttp.Server, func() bool) {
 	return newRequestIdentityProbeServerWithGate(t, nil, nil)
 }
@@ -124,6 +179,8 @@ func newRequestIdentityProbeServerWithGate(t *testing.T, started chan<- struct{}
 	t.Helper()
 	server := ghttp.GetServer("t016-" + strings.ReplaceAll(t.Name(), "/", "-"))
 	server.SetDumpRouterMap(false)
+	server.SetSessionStorage(gsession.NewStorageMemory())
+	server.SetPort(0)
 
 	var (
 		mu     sync.Mutex
@@ -140,6 +197,13 @@ func newRequestIdentityProbeServerWithGate(t *testing.T, started chan<- struct{}
 		}
 		request.Response.WriteJsonExit(requestIdentityEnvelope{Meta: NewResponseMeta(request.GetCtx())})
 	})
+	server.BindHandler("/resources/{id}", func(request *ghttp.Request) {
+		request.Response.WriteJsonExit(routeTemplateEnvelope{RouteTemplate: RouteTemplateFromContext(request.GetCtx())})
+	})
+	if err := server.Start(); err != nil {
+		t.Fatalf("failed to start request identity probe server: %v", err)
+	}
+	t.Cleanup(func() { server.Shutdown() })
 	return server, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
@@ -148,7 +212,11 @@ func newRequestIdentityProbeServerWithGate(t *testing.T, started chan<- struct{}
 }
 
 func serveRequestIdentityProbe(server *ghttp.Server, incomingID string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodGet, "/identity", nil)
+	return serveRequestIdentityProbePath(server, "/identity", incomingID)
+}
+
+func serveRequestIdentityProbePath(server *ghttp.Server, path, incomingID string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodGet, path, nil)
 	if incomingID != "" {
 		request.Header.Set(RequestIDHeader, incomingID)
 	}
@@ -159,6 +227,10 @@ func serveRequestIdentityProbe(server *ghttp.Server, incomingID string) *httptes
 
 type requestIdentityEnvelope struct {
 	Meta ResponseMeta `json:"meta"`
+}
+
+type routeTemplateEnvelope struct {
+	RouteTemplate string `json:"route_template"`
 }
 
 type requestIdentityProbeResult struct {
