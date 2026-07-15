@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestValidateBaggageFieldRejectsSensitiveContentInAllowedKeys(t *testing.T) {
+func TestValidateBaggageFieldSafetyRejectsSensitiveContentInCoreAllowedKeys(t *testing.T) {
 	tests := []struct {
 		name  string
 		key   string
@@ -50,12 +50,12 @@ func TestValidateBaggageFieldRejectsSensitiveContentInAllowedKeys(t *testing.T) 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateBaggageField(tt.key, tt.value)
+			err := ValidateBaggageFieldSafety(tt.key, tt.value)
 			if err == nil {
-				t.Fatalf("ValidateBaggageField(%q, sensitive value) error = nil, want rejection", tt.key)
+				t.Fatalf("ValidateBaggageFieldSafety(%q, sensitive value) error = nil, want rejection", tt.key)
 			}
 			if strings.Contains(err.Error(), tt.value) {
-				t.Fatalf("ValidateBaggageField() error echoed sensitive value %q: %v", tt.value, err)
+				t.Fatalf("ValidateBaggageFieldSafety() error echoed sensitive value %q: %v", tt.value, err)
 			}
 		})
 	}

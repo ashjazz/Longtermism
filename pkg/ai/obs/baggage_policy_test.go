@@ -36,7 +36,7 @@ func TestBaggageFieldsFromCorrelationIdentityAllowsOnlyLowSensitivityFields(t *t
 	}
 }
 
-func TestValidateBaggageFieldRejectsForbiddenKeys(t *testing.T) {
+func TestValidateBaggageFieldSafetyRejectsForbiddenKeys(t *testing.T) {
 	tests := []struct {
 		name  string
 		key   string
@@ -52,14 +52,14 @@ func TestValidateBaggageFieldRejectsForbiddenKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := ValidateBaggageField(tt.key, tt.value); err == nil {
-				t.Fatalf("ValidateBaggageField(%q, %q) error = nil, want rejection", tt.key, tt.value)
+			if err := ValidateBaggageFieldSafety(tt.key, tt.value); err == nil {
+				t.Fatalf("ValidateBaggageFieldSafety(%q, %q) error = nil, want rejection", tt.key, tt.value)
 			}
 		})
 	}
 }
 
-func TestValidateBaggageFieldRejectsSensitiveValues(t *testing.T) {
+func TestValidateBaggageFieldSafetyRejectsSensitiveValues(t *testing.T) {
 	tests := []struct {
 		name  string
 		key   string
@@ -73,14 +73,14 @@ func TestValidateBaggageFieldRejectsSensitiveValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := ValidateBaggageField(tt.key, tt.value); err == nil {
-				t.Fatalf("ValidateBaggageField(%q, %q) error = nil, want sensitive value rejection", tt.key, tt.value)
+			if err := ValidateBaggageFieldSafety(tt.key, tt.value); err == nil {
+				t.Fatalf("ValidateBaggageFieldSafety(%q, %q) error = nil, want sensitive value rejection", tt.key, tt.value)
 			}
 		})
 	}
 }
 
-func TestValidateBaggageFieldAllowsCorrelationFields(t *testing.T) {
+func TestValidateBaggageFieldSafetyAllowsCoreCorrelationFields(t *testing.T) {
 	tests := []struct {
 		name  string
 		key   string
@@ -96,8 +96,8 @@ func TestValidateBaggageFieldAllowsCorrelationFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := ValidateBaggageField(tt.key, tt.value); err != nil {
-				t.Fatalf("ValidateBaggageField(%q, %q) error = %v, want nil", tt.key, tt.value, err)
+			if err := ValidateBaggageFieldSafety(tt.key, tt.value); err != nil {
+				t.Fatalf("ValidateBaggageFieldSafety(%q, %q) error = %v, want nil", tt.key, tt.value, err)
 			}
 		})
 	}

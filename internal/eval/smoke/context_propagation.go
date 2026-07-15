@@ -68,7 +68,7 @@ func validatePropagationBaggage(identity obs.CorrelationIdentity, extra map[stri
 		return fmt.Errorf("validate correlation baggage: %w", err)
 	}
 	for key, value := range extra {
-		if err := obs.ValidateBaggageField(key, value); err != nil {
+		if err := obs.ValidateBaggageFieldSafety(key, value); err != nil {
 			return fmt.Errorf("validate extra baggage: %w", err)
 		}
 	}

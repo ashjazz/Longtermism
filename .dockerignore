@@ -1,0 +1,8 @@
+.git/
+.env*
+*.local.yaml
+*.out
+build/
+coverage/
+node_modules/
+*.log*

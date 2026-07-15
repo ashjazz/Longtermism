@@ -39,13 +39,13 @@ func TestNewObservabilityPropagatorExtractsTraceContextAndAllowlistedBaggage(t *
 	}
 
 	baggageValues := baggage.FromContext(ctx)
-	if got := baggageValues.Member(obs.BaggageSessionID).Value(); got != "session-opaque" {
-		t.Fatalf("session_id baggage = %q, want allowlisted opaque identity", got)
+	if baggageValues.Member(obs.BaggageSessionID).Key() != "" {
+		t.Fatal("session_id baggage was accepted without an explicit enable policy")
 	}
 	if got := baggageValues.Member(obs.BaggageAITraceID).Value(); got != aiTraceID {
 		t.Fatalf("ai_trace_id baggage = %q, want explicit domain identity", got)
 	}
-	for _, forbiddenKey := range []string{"authorization", "prompt", "raw_query", "unapproved_id"} {
+	for _, forbiddenKey := range []string{obs.BaggageSessionID, "authorization", "prompt", "raw_query", "unapproved_id"} {
 		if baggageValues.Member(forbiddenKey).Key() != "" {
 			t.Fatal("forbidden or unapproved baggage key was accepted")
 		}
@@ -103,6 +103,21 @@ func TestNewObservabilityPropagatorRejectsSensitiveValuesInAllowlistedBaggage(t 
 	}
 }
 
+func TestNewObservabilityPropagatorDropsAllowedKeysWithSensitiveProperties(t *testing.T) {
+	ctx := NewObservabilityPropagator().Extract(context.Background(), propagation.MapCarrier{
+		"baggage": "ai_trace_id=ai-trace-opaque;authorization=Bearer%20synthetic-t027",
+	})
+	if baggage.FromContext(ctx).Member(obs.BaggageAITraceID).Key() != "" {
+		t.Fatal("allowlisted baggage member retained an unapproved property")
+	}
+
+	carrier := propagation.MapCarrier{}
+	NewObservabilityPropagator().Inject(ctx, carrier)
+	if serialized := carrier.Get("baggage"); serialized != "" {
+		t.Fatalf("baggage property was re-propagated: %q", serialized)
+	}
+}
+
 func TestNewObservabilityPropagatorInjectsOnlyAllowlistedBaggage(t *testing.T) {
 	traceID, err := trace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
 	if err != nil {
@@ -116,6 +131,8 @@ func TestNewObservabilityPropagatorInjectsOnlyAllowlistedBaggage(t *testing.T) {
 	inputBaggage := mustNewBaggage(t,
 		obs.BaggageSessionID, "session-opaque",
 		obs.BaggageAITraceID, "ai-trace-opaque",
+		obs.BaggageServiceTraceID, "4bf92f3577b34da6a3ce929d0e0e4736",
+		obs.BaggageSpanID, "00f067aa0ba902b7",
 		"prompt", "synthetic-private-prompt",
 		"authorization", "Bearer synthetic-t015",
 	)
@@ -134,13 +151,28 @@ func TestNewObservabilityPropagatorInjectsOnlyAllowlistedBaggage(t *testing.T) {
 		t.Fatal("injected traceparent did not preserve the active SpanContext")
 	}
 	serializedBaggage := carrier.Get("baggage")
-	if !strings.Contains(serializedBaggage, "session_id=session-opaque") || !strings.Contains(serializedBaggage, "ai_trace_id=ai-trace-opaque") {
-		t.Fatal("injected baggage omitted explicit low-sensitivity identities")
+	if !strings.Contains(serializedBaggage, "ai_trace_id=ai-trace-opaque") {
+		t.Fatal("injected baggage omitted the explicit AI domain identity")
 	}
-	for _, forbiddenValue := range []string{"synthetic-private-prompt", "synthetic-t015", "authorization", "prompt"} {
+	for _, forbiddenValue := range []string{"synthetic-private-prompt", "synthetic-t015", "authorization", "prompt", "service_trace_id", "span_id", "session_id"} {
 		if strings.Contains(serializedBaggage, forbiddenValue) {
 			t.Fatal("injected baggage leaked forbidden content")
 		}
+	}
+}
+
+func TestNewObservabilityPropagatorAllowsOnlyTheAIPlaneMarker(t *testing.T) {
+	ctx := NewObservabilityPropagator().Extract(context.Background(), propagation.MapCarrier{
+		"baggage": "longtermism.observability.plane=ai",
+	})
+	if got := baggage.FromContext(ctx).Member(observabilityPlaneBaggageKey).Value(); got != "ai" {
+		t.Fatalf("AI plane baggage = %q, want ai", got)
+	}
+
+	carrier := propagation.MapCarrier{}
+	NewObservabilityPropagator().Inject(ctx, carrier)
+	if !strings.Contains(carrier.Get("baggage"), "longtermism.observability.plane=ai") {
+		t.Fatal("AI plane marker was not propagated")
 	}
 }
 

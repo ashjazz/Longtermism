@@ -51,7 +51,7 @@ func BaggageFieldsFromCorrelationIdentity(identity CorrelationIdentity) (map[str
 	}
 
 	for key, value := range fields {
-		if err := ValidateBaggageField(key, value); err != nil {
+		if err := ValidateBaggageFieldSafety(key, value); err != nil {
 			return nil, err
 		}
 	}
@@ -59,11 +59,12 @@ func BaggageFieldsFromCorrelationIdentity(identity CorrelationIdentity) (map[str
 	return fields, nil
 }
 
-// ValidateBaggageField 校验单个 baggage 字段是否允许传播。
+// ValidateBaggageFieldSafety 校验单个 baggage 字段是否满足核心层的基础安全规则。
 //
-// 这里做两层保护：先按 key 白名单限制传播面，再按 value 扫描常见密钥形态。
-// 后续如果需要传递租户 hash 或 feature 等低敏字段，应在这里显式加入白名单。
-func ValidateBaggageField(key, value string) error {
+// 它不是应用出口的最终传播策略：应用层可以在此基础上采用更窄的 allowlist，例如
+// 不重复传播 OTel trace/span ID，或默认关闭 session_id。后续若需要传递租户 hash
+// 或 feature 等低敏字段，必须先在这里通过安全审查，再由具体出口显式启用。
+func ValidateBaggageFieldSafety(key, value string) error {
 	normalizedKey := strings.ToLower(strings.TrimSpace(key))
 	if normalizedKey == "" {
 		return fmt.Errorf("baggage field key is empty")

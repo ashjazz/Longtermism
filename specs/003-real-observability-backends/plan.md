@@ -135,6 +135,8 @@ Phase 2 的值对象、SDK bundle 和 lifecycle 不是独立可交付的运行�
 
 `enabled`、`mode`、signal 开关和 smoke gate 必须在该切片前拥有唯一归属：当 `enabled=false` 且 mode 省略或为 `noop` 时规范化为 `noop`；若同时显式设置非 `noop` mode 则启动失败；`SignalPolicy` 决定 trace/metric provider 是否创建，`smoke_enabled` 只决定诊断路由是否注册。此处不实现 Collector、业务路由或平台查询；它们仍分别由后续任务实现。
 
+HTTP ingress 对 `traceparent`/`tracestate` 的信任不是 propagator 可以猜测的细节：装配切片必须定义受信任服务间来源与公网入口的处理策略，并验证不可信 remote sampled 标记不能绕过采样预算、不可信 `tracestate` 不会自动进入第三方调用。默认 baggage 不传播 `session_id`；只有后续有明确配置、不可逆身份约束和跨服务需求时才可加入。
+
 `internal/cmd/observability.go` 的旧 `ObservabilitySinkPlatform` 直连模型不属于上述装配链，也不得与新链并存。它将在新装配契约通过后删除，而非在路由任务中临时兼容。生命周期对象的名称应反映其同时管理 tracer、meter、exporter 及其连接资源，统一使用 `ObservabilityProviderLifecycle`；Langfuse score worker 保持独立 lifecycle，不纳入该对象。
 
 ## 风险与缓解
