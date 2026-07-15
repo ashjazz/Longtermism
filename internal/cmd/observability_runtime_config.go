@@ -134,13 +134,17 @@ func resolveObservabilityCollectorConfig(environment string, input Observability
 	if !isValidCollectorEndpoint(protocol, endpoint) {
 		return ObservabilityCollectorConfig{}, gerror.New("collector endpoint is invalid")
 	}
+	if collectorEndpointConflictsWithInsecureTransport(protocol, endpoint, input.Insecure) {
+		return ObservabilityCollectorConfig{}, gerror.New("insecure collector transport conflicts with HTTPS endpoint")
+	}
 
 	timeout, err := time.ParseDuration(strings.TrimSpace(input.Timeout))
 	if err != nil || timeout <= 0 || timeout > maxCollectorTimeout {
 		return ObservabilityCollectorConfig{}, gerror.New("collector timeout must be positive")
 	}
 
-	if strings.EqualFold(strings.TrimSpace(environment), productionEnvironment) && input.Insecure && !input.AllowInsecure {
+	insecure := input.Insecure || collectorEndpointUsesInsecureTransport(protocol, endpoint)
+	if strings.EqualFold(strings.TrimSpace(environment), productionEnvironment) && insecure && !input.AllowInsecure {
 		return ObservabilityCollectorConfig{}, gerror.New("insecure collector transport is not authorized in production")
 	}
 	headerEnvName := strings.TrimSpace(input.HeaderEnvName)
@@ -152,10 +156,29 @@ func resolveObservabilityCollectorConfig(environment string, input Observability
 		Endpoint:          endpoint,
 		Protocol:          protocol,
 		Timeout:           timeout,
-		Insecure:          input.Insecure,
+		Insecure:          insecure,
 		HeaderEnvName:     headerEnvName,
 		CredentialPresent: strings.TrimSpace(input.HeaderValue) != "",
 	}, nil
+}
+
+// collectorEndpointUsesInsecureTransport 将 HTTP URL 的真实明文语义纳入 fail-fast
+// 判断。否则 `http://...` + Insecure=false 会绕过生产授权，却仍被 HTTP exporter
+// 以明文发送；gRPC 的 authority 形式仍只由显式 Insecure 控制。
+func collectorEndpointUsesInsecureTransport(protocol, endpoint string) bool {
+	if protocol != collectorProtocolHTTPProtobuf {
+		return false
+	}
+	parsed, err := url.Parse(endpoint)
+	return err == nil && parsed.Scheme == "http"
+}
+
+func collectorEndpointConflictsWithInsecureTransport(protocol, endpoint string, insecure bool) bool {
+	if protocol != collectorProtocolHTTPProtobuf || !insecure {
+		return false
+	}
+	parsed, err := url.Parse(endpoint)
+	return err == nil && parsed.Scheme == "https"
 }
 
 func isValidCollectorEndpoint(protocol, endpoint string) bool {

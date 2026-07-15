@@ -206,6 +206,19 @@ func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 			},
 			wantErrField: "insecure",
 		},
+		{
+			name: "production rejects an HTTP Collector endpoint without explicit insecure authorization",
+			input: ObservabilityRuntimeConfigInput{
+				Mode:        ObservabilityRuntimeModeCollector,
+				Environment: "production",
+				Collector: ObservabilityCollectorConfigInput{
+					Endpoint: "http://otel-collector:4318",
+					Protocol: "http_protobuf",
+					Timeout:  "5s",
+				},
+			},
+			wantErrField: "insecure",
+		},
 	}
 
 	for _, tt := range tests {

@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	traceAPI "go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/connectivity"
 )
 
 func TestObservabilityTracerProviderLifecycle(t *testing.T) {
@@ -85,6 +86,35 @@ func TestObservabilityTracerProviderLifecycle(t *testing.T) {
 			t.Fatalf("FailureMessage = %q, want collector unavailable", lifecycle.Status().FailureMessage)
 		}
 	})
+}
+
+func TestObservabilityTracerProviderLifecycleClosesExporterOwnedGRPCConnection(t *testing.T) {
+	exporter, err := NewObservabilityOTLPExporter(context.Background(), ObservabilityOTLPExporterConfigInput{
+		Runtime: ObservabilityRuntimeConfigInput{
+			Mode:        ObservabilityRuntimeModeCollector,
+			Environment: "test",
+			Collector:   ObservabilityCollectorConfigInput{Endpoint: "collector.example.test:4317", Timeout: "5s", Insecure: true},
+		},
+		Resource:      ObservabilityResourceInput{Environment: "test"},
+		SamplingRatio: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewObservabilityOTLPExporter() error = %v", err)
+	}
+	lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		Exporter:                   exporter,
+		ExporterOwnsTracerProvider: true,
+		ExporterOwnsMeterProvider:  true,
+	})
+	if err := lifecycle.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize() error = %v", err)
+	}
+	if err := lifecycle.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	if exporter.grpcConnection.GetState() != connectivity.Shutdown {
+		t.Fatal("lifecycle did not close the exporter-owned gRPC connection")
+	}
 }
 
 func TestObservabilityTracerProviderLifecycleFlushContract(t *testing.T) {
@@ -315,25 +345,26 @@ func TestObservabilityTracerProviderLifecycleDoesNotRestartAfterShutdown(t *test
 	}
 }
 
-func TestObservabilityTracerProviderLifecycleRejectsMissingExporterForExporterOwnedTracer(t *testing.T) {
-	lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
-		TracerProvider:             trace.NewTracerProvider(),
-		MeterProvider:              metricSDK.NewMeterProvider(),
-		ExporterOwnsTracerProvider: true,
-	})
-	if err := lifecycle.Initialize(context.Background()); err != nil {
-		t.Fatal("Initialize() must protect application startup from invalid telemetry config")
-	}
-	if status := lifecycle.Status(); status.FailureStatus != string(obs.FailureTelemetryExportFailed) || status.FailureMessage != "exporter-owned tracer provider requires an exporter" {
-		t.Fatal("missing exporter for exporter-owned trace provider was not rejected safely")
-	} else if status.Initialized || !status.InitializationFailed {
-		t.Fatal("invalid lifecycle config was incorrectly reported as initialized")
-	}
-	if err := lifecycle.Initialize(context.Background()); err != nil {
-		t.Fatal("repeated invalid Initialize() must remain application-safe")
-	}
-	if status := lifecycle.Status(); status.Initialized || !status.InitializationFailed {
-		t.Fatal("repeated invalid Initialize() changed the terminal failure state")
+func TestObservabilityTracerProviderLifecycleRejectsMissingExporterForExporterOwnedProviders(t *testing.T) {
+	for _, config := range []ObservabilityTracerProviderLifecycleConfig{
+		{TracerProvider: trace.NewTracerProvider(), MeterProvider: metricSDK.NewMeterProvider(), ExporterOwnsTracerProvider: true},
+		{TracerProvider: trace.NewTracerProvider(), MeterProvider: metricSDK.NewMeterProvider(), ExporterOwnsMeterProvider: true},
+	} {
+		lifecycle := NewObservabilityTracerProviderLifecycle(config)
+		if err := lifecycle.Initialize(context.Background()); err != nil {
+			t.Fatal("Initialize() must protect application startup from invalid telemetry config")
+		}
+		if status := lifecycle.Status(); status.FailureStatus != string(obs.FailureTelemetryExportFailed) || status.FailureMessage != "exporter-owned provider requires an exporter" {
+			t.Fatal("missing exporter for exporter-owned provider was not rejected safely")
+		} else if status.Initialized || !status.InitializationFailed {
+			t.Fatal("invalid lifecycle config was incorrectly reported as initialized")
+		}
+		if err := lifecycle.Initialize(context.Background()); err != nil {
+			t.Fatal("repeated invalid Initialize() must remain application-safe")
+		}
+		if status := lifecycle.Status(); status.Initialized || !status.InitializationFailed {
+			t.Fatal("repeated invalid Initialize() changed the terminal failure state")
+		}
 	}
 }
 

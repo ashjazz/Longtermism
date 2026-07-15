@@ -26,6 +26,9 @@ type ObservabilityTracerProviderLifecycleConfig struct {
 	TracerProvider             trace.TracerProvider
 	MeterProvider              metric.MeterProvider
 	ExporterOwnsTracerProvider bool
+	// ExporterOwnsMeterProvider 与 trace 所有权成对声明。当一个 exporter bundle
+	// 统一管理 SDK provider 与底层连接时，lifecycle 不得再重复关闭 meter。
+	ExporterOwnsMeterProvider bool
 }
 
 // ObservabilityTracerProviderLifecycleStatus 是生命周期状态的只读快照。
@@ -46,6 +49,7 @@ type ObservabilityTracerProviderLifecycle struct {
 	tracer              trace.TracerProvider
 	meter               metric.MeterProvider
 	exporterOwnsTracer  bool
+	exporterOwnsMeter   bool
 	ownsGlobalProviders bool
 	status              ObservabilityTracerProviderLifecycleStatus
 }
@@ -70,6 +74,7 @@ func NewObservabilityTracerProviderLifecycle(config ObservabilityTracerProviderL
 		tracer:             config.TracerProvider,
 		meter:              config.MeterProvider,
 		exporterOwnsTracer: config.ExporterOwnsTracerProvider,
+		exporterOwnsMeter:  config.ExporterOwnsMeterProvider,
 	}
 }
 
@@ -85,8 +90,8 @@ func (l *ObservabilityTracerProviderLifecycle) Initialize(ctx context.Context) e
 	if l.status.Initialized || l.status.InitializationFailed || l.status.Shutdown {
 		return nil
 	}
-	if l.exporterOwnsTracer && l.exporter == nil {
-		l.recordInitializationFailure(fmt.Errorf("exporter-owned tracer provider requires an exporter"))
+	if (l.exporterOwnsTracer || l.exporterOwnsMeter) && l.exporter == nil {
+		l.recordInitializationFailure(fmt.Errorf("exporter-owned provider requires an exporter"))
 		return nil
 	}
 	if l.tracer != nil || l.meter != nil {
@@ -169,7 +174,9 @@ func (l *ObservabilityTracerProviderLifecycle) Flush(ctx context.Context) error 
 		if !l.exporterOwnsTracer {
 			l.flushProvider(ctx, l.tracer)
 		}
-		l.flushProvider(ctx, l.meter)
+		if !l.exporterOwnsMeter {
+			l.flushProvider(ctx, l.meter)
+		}
 	}
 	return nil
 }
@@ -199,7 +206,9 @@ func (l *ObservabilityTracerProviderLifecycle) Shutdown(ctx context.Context) err
 		if !l.exporterOwnsTracer {
 			l.shutdownProvider(ctx, l.tracer)
 		}
-		l.shutdownProvider(ctx, l.meter)
+		if !l.exporterOwnsMeter {
+			l.shutdownProvider(ctx, l.meter)
+		}
 	}
 	return nil
 }
