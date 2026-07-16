@@ -171,7 +171,16 @@ func (r SmokeReport) Cleanup() SmokeCleanup { return cloneSafeCleanup(r.cleanup)
 func (r SmokeReport) Versions() map[string]string { return cloneVersions(r.versions) }
 
 func validateSmokeReportInput(input SmokeReportInput) error {
-	if !isOpaqueSmokeIdentity(input.RunID) || !isOpaqueSmokeIdentity(input.Marker) || !contains(allowedProfiles, input.Profile) || !contains(allowedScenarios, input.Scenario) || input.StartedAt.IsZero() || input.Deadline.IsZero() || input.FinishedAt.IsZero() || input.FinishedAt.After(input.Deadline) || input.FinishedAt.Before(input.StartedAt) || len(input.Checks) == 0 {
+	if !isOpaqueSmokeIdentity(input.RunID) ||
+		!isOpaqueSmokeIdentity(input.Marker) ||
+		!contains(allowedProfiles, input.Profile) ||
+		!contains(allowedScenarios, input.Scenario) ||
+		input.StartedAt.IsZero() ||
+		input.Deadline.IsZero() ||
+		input.FinishedAt.IsZero() ||
+		input.FinishedAt.After(input.Deadline) ||
+		input.FinishedAt.Before(input.StartedAt) ||
+		len(input.Checks) == 0 {
 		return errInvalidSmokeReport
 	}
 	if err := validateVersions(input.Versions); err != nil {
@@ -195,7 +204,10 @@ func validateVersions(versions map[string]string) error {
 }
 
 func validateCheck(check BackendCheckInput) error {
-	if !contains(allowedBackends, check.Backend) || !contains(allowedStatuses, check.Status) || check.Duration < 0 || !contains(allowedFailureStages, check.FailureStage) {
+	if !contains(allowedBackends, check.Backend) ||
+		!contains(allowedStatuses, check.Status) ||
+		check.Duration < 0 ||
+		!contains(allowedFailureStages, check.FailureStage) {
 		return errInvalidSmokeReport
 	}
 	if (check.Status == "passed" || check.Status == "skipped") && check.FailureStage != "none" || check.Status == "failed" && check.FailureStage == "none" {
@@ -214,7 +226,9 @@ func validateCheck(check BackendCheckInput) error {
 }
 
 func validateCleanup(cleanup SmokeCleanupInput) error {
-	if !contains(allowedCleanupStatuses, cleanup.Status) || !contains(allowedTemporaryCredentialStatuses, cleanup.TemporaryCredentials) || !contains(allowedTemporaryDataStatuses, cleanup.TemporaryData) {
+	if !contains(allowedCleanupStatuses, cleanup.Status) ||
+		!contains(allowedTemporaryCredentialStatuses, cleanup.TemporaryCredentials) ||
+		!contains(allowedTemporaryDataStatuses, cleanup.TemporaryData) {
 		return errSensitiveSmokeReportData
 	}
 	for _, resource := range cleanup.ResidualResources {
