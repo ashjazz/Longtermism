@@ -32,6 +32,7 @@ Thumbs.db
 /build/observability/volume-metadata/
 
 # 测试覆盖率
+/build/coverage/
 coverage.out
 coverage.html
 coverage/
