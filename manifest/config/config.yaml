@@ -8,6 +8,12 @@ server:
   errorStack: false
   accessLogEnabled: true
 
+# 应用运行环境与调试状态。观测装配会读取同一环境身份，避免 production 被错误地当成
+# local 而放宽 payload 或明文传输门禁。
+app:
+  environment: "local"
+  is_debug: true
+
 logger:
   level: "info"
   stdout: true
@@ -33,8 +39,18 @@ redis:
 
 # AI 框架内核配置（pkg/ai 消费）。按 provider 分组，支持多 provider 故障切换（§10）。
 ai:
+  # chat 默认关闭：未显式提供 provider 的 URL、模型与环境变量名之前，不允许服务
+  # 启动后意外调用模型或读取生产凭据。
+  chat:
+    enabled: false
   llm:
-    defaultProvider: "openai"
+    default_provider: "openai"
+    providers:
+      openai:
+        # 仅声明注入名称，禁止把 URL、API key 或模型凭据写进受版本管理配置。
+        base_url_env: "OPENAI_BASE_URL"
+        api_key_env: "OPENAI_API_KEY"
+        default_model: ""
     # 单次 LLM 调用默认超时（§ai/integration.md：默认 60s）。
     timeout: "60s"
     retry:
@@ -48,29 +64,32 @@ ai:
     # 评估门禁阈值（§6）：指标恶化超过阈值即拦截 PR 合并。
     faithfulnessDropPct: 2
 
-# Observability v1：默认只启用本地/离线验证。
-# 真实平台 smoke 必须显式 opt-in，并通过环境变量或密钥管理器注入 endpoint 与凭据。
+# 应用只认识自身遥测和唯一的 App -> Collector 出口。Tempo、Loki、Prometheus、
+# Grafana、SigNoz 与 Langfuse 的地址属于 Collector/部署配置，不能出现在这里。
 observability:
   enabled: false
-  serviceName: "longtermism"
-  environment: "local"
-  smoke:
-    # 真实平台 smoke 默认关闭，不进入 `go test ./...` 或默认 eval/obs smoke 门禁。
-    # 只有本开关为 true，且 endpoint 与凭据均由环境变量/密钥管理器提供时，才允许外连。
-    enabled: false
-    # provider 是低敏平台类型标识，例如 "otlp" 或 "langfuse"；不要在这里写 SDK 专属对象。
-    provider: ""
-    # endpoint 没有降级默认值，禁止在源码里配置真实 collector/Langfuse URL。
-    # 推荐生产或手动 smoke 时通过环境变量覆盖：
-    #   GF_OBSERVABILITY_SMOKE_ENDPOINT="https://collector.example.com"
+  # disabled 状态必须对应 noop，避免 enabled/mode 出现两条可解释路径。
+  mode: "noop"
+  resource:
+    service_name: "longtermism"
+    service_version: "dev"
+  collector:
+    # 切换到 collector mode 时，endpoint 仍只能是 Collector；默认留空以保证零网络。
+    protocol: "grpc"
     endpoint: ""
-    # 凭据字段只保留空占位，真实值必须来自环境变量或密钥管理器，严禁提交到源码。
-    # 例如：
-    #   GF_OBSERVABILITY_SMOKE_PUBLICKEY="..."
-    #   GF_OBSERVABILITY_SMOKE_SECRETKEY="..."
-    #   GF_OBSERVABILITY_SMOKE_APIKEY="..."
-    publicKey: ""
-    secretKey: ""
-    apiKey: ""
-  privacy:
-    allowRawContent: false
+    insecure: false
+    headers_env: "OTEL_EXPORTER_OTLP_HEADERS"
+  signals:
+    traces_enabled: false
+    metrics_enabled: false
+    logs_transport: "glog_file"
+  tracing:
+    sampling_ratio: 1.0
+  payload:
+    mode: "metadata_only"
+    raw_content_enabled: false
+  sensitive_data:
+    on_match: "redact"
+  smoke:
+    # infra-smoke route 默认不注册；真实后端扫描另由命令层显式 opt-in。
+    enabled: false
