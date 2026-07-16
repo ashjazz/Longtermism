@@ -2,6 +2,7 @@ package smoke
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -128,6 +129,8 @@ func TestBuildSmokeReportRejectsSensitiveEvidenceAndErrorDetailsWithoutEcho(t *t
 		mutate func(*SmokeReportInput)
 	}{
 		{name: "evidence", mutate: func(input *SmokeReportInput) { input.Checks[1].Evidence["debug"] = "smoke-owned-t019-credential" }},
+		{name: "unknown evidence key", mutate: func(input *SmokeReportInput) { input.Checks[1].Evidence["user_name"] = "alice" }},
+		{name: "unknown version key", mutate: func(input *SmokeReportInput) { input.Versions["x-api-key"] = "secret" }},
 		{name: "error class", mutate: func(input *SmokeReportInput) { input.Checks[1].ErrorClass = "synthetic-private-payload-t019" }},
 		{name: "residual resource", mutate: func(input *SmokeReportInput) { input.Cleanup.ResidualResources = []string{"/tmp/t019-raw-debug-data"} }},
 	}
@@ -189,6 +192,29 @@ func TestBuildSmokeReportRejectsExpiredWindowAndDoesNotEchoSensitiveInput(t *tes
 	assertSmokeReportDoesNotContainSensitiveValues(t, err.Error())
 }
 
+func TestBuildSmokeReportRejectsSchemaAndCleanupContradictions(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*SmokeReportInput)
+	}{
+		{name: "short run ID", mutate: func(input *SmokeReportInput) { input.RunID = "short" }},
+		{name: "short marker", mutate: func(input *SmokeReportInput) { input.Marker = "short" }},
+		{name: "non-finite evidence", mutate: func(input *SmokeReportInput) { input.Checks[1].Evidence["matched_spans"] = math.NaN() }},
+		{name: "completed cleanup with failed credentials", mutate: func(input *SmokeReportInput) { input.Cleanup.TemporaryCredentials = "failed" }},
+		{name: "completed cleanup with residual resource", mutate: func(input *SmokeReportInput) { input.Cleanup.ResidualResources = []string{"run-directory"} }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := validSmokeReportInput()
+			test.mutate(&input)
+			if _, err := BuildSmokeReport(input); err == nil {
+				t.Fatal("BuildSmokeReport() error = nil, want contradictory input rejected")
+			}
+		})
+	}
+}
+
 func validSmokeReportInput() SmokeReportInput {
 	startedAt := time.Date(2026, time.July, 13, 1, 2, 3, 0, time.UTC)
 	return SmokeReportInput{
@@ -210,10 +236,6 @@ func validSmokeReportInput() SmokeReportInput {
 			ResidualResources:    []string{},
 			TemporaryCredentials: "revoked",
 			TemporaryData:        "deleted",
-
-			TemporaryCredentialValue: "smoke-owned-t019-credential",
-			TemporaryDataPath:        "/tmp/t019-raw-debug-data",
-			RawPayload:               "synthetic-private-payload-t019",
 		},
 	}
 }
