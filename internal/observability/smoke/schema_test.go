@@ -1,7 +1,9 @@
 package smoke
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -170,6 +172,93 @@ func TestSmokeReportSchemaValidatorNeverResolvesRemoteReferences(t *testing.T) {
 	}
 	if requests.Load() != 0 {
 		t.Fatal("NewSmokeReportSchemaValidator() attempted a remote schema request")
+	}
+}
+
+func TestSmokeReportSchemaValidatorRejectsRemoteSchemaDialectWithoutRequest(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+
+	// `$schema` 也不能变成下载入口。只接受仓库契约声明的 draft 2020-12 dialect，
+	// 未知 dialect 在编译前拒绝，避免 validator 被恶意 schema 诱导外连。
+	remoteDialectSchema := []byte(`{"$schema": "` + server.URL + `/dialect.json", "type": "object"}`)
+	_, err := NewSmokeReportSchemaValidator(remoteDialectSchema)
+	if err == nil {
+		t.Fatal("NewSmokeReportSchemaValidator() error = nil, want remote schema dialect rejected")
+	}
+	if requests.Load() != 0 {
+		t.Fatal("NewSmokeReportSchemaValidator() attempted a remote schema dialect request")
+	}
+}
+
+func TestSmokeReportSchemaValidatorRedactsUnsafePathTokensAndKeepsErrorCategory(t *testing.T) {
+	validator, err := NewSmokeReportSchemaValidator(loadSmokeReportSchema(t))
+	if err != nil {
+		t.Fatal("NewSmokeReportSchemaValidator() returned an unexpected error")
+	}
+
+	for _, propertyName := range []string{
+		"authorization=Bearer synthetic-t020-authorization",
+		"raw_payload\nsynthetic-private-payload-t020",
+		"synthetic_private_payload_t020",
+	} {
+		document := validSmokeReportDocument("privacy")
+		document[propertyName] = true
+		err := validator.ValidateJSON(marshalSmokeReportDocument(t, document))
+		if err == nil {
+			t.Fatal("ValidateJSON() error = nil, want unsafe property name rejected")
+		}
+		if !errors.Is(err, errInvalidSmokeReportDocument) {
+			t.Fatal("ValidateJSON() error did not preserve the stable invalid-document category")
+		}
+		if !strings.Contains(err.Error(), "$.<redacted>") {
+			t.Fatal("ValidateJSON() error did not replace the unsafe property name")
+		}
+		assertSchemaValidationErrorDoesNotEchoSensitiveValues(t, err.Error())
+		if strings.Contains(err.Error(), propertyName) {
+			t.Fatal("ValidateJSON() error reflected an unsafe JSON property name")
+		}
+	}
+}
+
+func TestIsBoundedSmokeJSONEnforcesSizeAndDepth(t *testing.T) {
+	tests := []struct {
+		name         string
+		document     []byte
+		maximumBytes int
+		want         bool
+	}{
+		{name: "accepts bytes at the size limit", document: bytes.Repeat([]byte(" "), maximumSmokeReportDocumentBytes), maximumBytes: maximumSmokeReportDocumentBytes, want: true},
+		{name: "rejects bytes beyond the size limit", document: bytes.Repeat([]byte(" "), maximumSmokeReportDocumentBytes+1), maximumBytes: maximumSmokeReportDocumentBytes, want: false},
+		{name: "accepts nesting at the depth limit", document: []byte(strings.Repeat("[", maximumSmokeJSONDepth) + "0" + strings.Repeat("]", maximumSmokeJSONDepth)), maximumBytes: maximumSmokeReportDocumentBytes, want: true},
+		{name: "rejects nesting beyond the depth limit", document: []byte(strings.Repeat("[", maximumSmokeJSONDepth+1) + "0" + strings.Repeat("]", maximumSmokeJSONDepth+1)), maximumBytes: maximumSmokeReportDocumentBytes, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isBoundedSmokeJSON(tt.document, tt.maximumBytes); got != tt.want {
+				t.Fatalf("isBoundedSmokeJSON() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSmokeReportSchemaValidatorRejectsOversizedDocuments(t *testing.T) {
+	validator, err := NewSmokeReportSchemaValidator(loadSmokeReportSchema(t))
+	if err != nil {
+		t.Fatal("NewSmokeReportSchemaValidator() returned an unexpected error")
+	}
+
+	// 报告是低敏运行证据而非任意 payload 容器；在解码前限长可以避免恶意 evidence
+	// 占满内存，并在后续 smoke runner 失控时快速失败。
+	document := validSmokeReportDocument("privacy")
+	document["versions"] = map[string]string{"schema": string(bytes.Repeat([]byte("x"), maximumSmokeReportDocumentBytes))}
+	err = validator.ValidateJSON(marshalSmokeReportDocument(t, document))
+	if !errors.Is(err, errInvalidSmokeReportDocument) {
+		t.Fatal("ValidateJSON() accepted an oversized smoke report")
 	}
 }
 

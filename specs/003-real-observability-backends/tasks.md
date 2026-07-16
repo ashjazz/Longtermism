@@ -66,7 +66,7 @@
 - [X] T029 在 `internal/observability/metrics.go` 实现 OTel Meter instruments 与低基数属性 builder；质量门控：使 T017 GREEN，业务代码只调用语义端口，`go test -race` 无共享状态竞争。
 - [X] T030 在 `internal/observability/logging.go` 实现 GoFrame `glog` JSON 结构化字段构造；质量门控：使 T018 GREEN，不接 OTel logs SDK，不记录 provider body、prompt/output、Authorization 或 endpoint credential。
 - [X] T031 在 `internal/observability/smoke/report.go` 实现报告值对象与稳定错误分类；质量门控：使 T019 GREEN，报告生成后不可变，失败检查不能被后续 passed 覆盖，报告完成前必须记录 smoke 自建临时凭据/数据的 cleanup 结果。
-- [ ] T032 在 `internal/observability/smoke/schema.go` 实现本地 schema 校验器；质量门控：使 T020 GREEN，禁止通过网络解析 `$schema`，错误包含 JSON path 且不回显敏感值。
+- [X] T032 在 `internal/observability/smoke/schema.go` 实现本地 schema 校验器；质量门控：使 T020 GREEN，禁止通过网络解析 `$schema`，错误包含 JSON path 且不回显敏感值。
 - [ ] T033 在 `internal/observability/smoke/poller.go` 实现 context 驱动的 bounded poller；质量门控：使 T021 GREEN，查询必须同时使用 run marker 与 `[started_at, deadline]`，超时后迟到数据不得满足后续 run，并运行 `go test -race ./internal/observability/smoke`。
 - [ ] T034 在 `internal/observability/privacy/scanner.go` 实现统一 synthetic canary/敏感模式扫描器；质量门控：使 T022 GREEN，scanner 在所有 payload modes 启用并只返回低敏分类证据。
 - [ ] T035 在 `manifest/config/config.yaml` 落地 runtime configuration contract 的非敏感默认 shape；质量门控：默认观测、chat 与 infra-smoke 均关闭，默认 App endpoint 只能指向 Collector，`make obs-config-check` 通过。
