@@ -16,13 +16,16 @@ func TestScannerAggregatesLowSensitivityFindingsAcrossObservabilitySurfaces(t *t
 
 	// 每个表面只验证“是否泄漏了某一类内容”。报告不应携带命中的字段、表面或原文，
 	// 否则隐私扫描本身会成为第二条敏感数据传播链路。
-	result := scanner.Scan([]SurfaceText{
+	result, err := scanner.Scan([]SurfaceText{
 		{Surface: SurfaceAPI, Text: "Authorization: Bearer t022-opaque-token"},
 		{Surface: SurfaceLog, Text: "request completed marker=" + canary},
 		{Surface: SurfaceQueue, Text: "token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0MDIyIn0.signature"},
 		{Surface: SurfaceBackend, Text: "email=t022.user@example.test phone=13800138000 id=110101199001011234"},
 		{Surface: SurfaceReport, Text: "api_key=sk-t022-test-key"},
 	})
+	if err != nil {
+		t.Fatal("Scan() returned an unexpected error")
+	}
 
 	assertScannerJSON(t, result, map[string]any{
 		"counts": map[string]any{
@@ -50,13 +53,16 @@ func TestScannerDoesNotFlagExplicitlyRedactedValues(t *testing.T) {
 		t.Fatal("NewScanner() returned an unexpected error")
 	}
 
-	result := scanner.Scan([]SurfaceText{
+	result, err := scanner.Scan([]SurfaceText{
 		{Surface: SurfaceAPI, Text: "Authorization: [REDACTED]"},
 		{Surface: SurfaceLog, Text: "token=<redacted>"},
 		{Surface: SurfaceQueue, Text: "api_key=***"},
 		{Surface: SurfaceBackend, Text: "email=[REDACTED]"},
 		{Surface: SurfaceReport, Text: "marker=[REDACTED]"},
 	})
+	if err != nil {
+		t.Fatal("Scan() returned an unexpected error")
+	}
 
 	assertScannerJSON(t, result, map[string]any{"counts": map[string]any{}})
 }
@@ -69,12 +75,60 @@ func TestScannerCopiesCanaries(t *testing.T) {
 	}
 	canaries[0] = "mutated-after-construction"
 
-	result := scanner.Scan([]SurfaceText{
+	result, err := scanner.Scan([]SurfaceText{
 		{Surface: SurfaceLog, Text: "synthetic-private-canary-t022"},
 	})
+	if err != nil {
+		t.Fatal("Scan() returned an unexpected error")
+	}
 	assertScannerJSON(t, result, map[string]any{
 		"counts": map[string]any{"synthetic_canary": float64(1)},
 	})
+}
+
+func TestNewScannerRejectsUnsafeCanaryAndUnboundedSurfaceInput(t *testing.T) {
+	tests := []struct {
+		name                 string
+		canaries             []string
+		surfaces             []SurfaceText
+		wantConstructorError bool
+		wantScanError        bool
+	}{
+		{
+			name:                 "rejects redaction placeholder canary",
+			canaries:             []string{"synthetic-***-t022"},
+			wantConstructorError: true,
+		},
+		{
+			name:                 "rejects a canary with an unsafe separator",
+			canaries:             []string{"synthetic.private.canary.t022"},
+			wantConstructorError: true,
+		},
+		{
+			name:     "rejects an oversized backend response",
+			canaries: []string{"synthetic-private-canary-t022"},
+			surfaces: []SurfaceText{{
+				Surface: SurfaceBackend,
+				Text:    strings.Repeat("x", maximumSurfaceTextBytes+1),
+			}},
+			wantScanError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scanner, err := NewScanner(tt.canaries)
+			if (err != nil) != tt.wantConstructorError {
+				t.Fatalf("NewScanner() error = %v, wantError %v", err, tt.wantConstructorError)
+			}
+			if err != nil {
+				return
+			}
+			if _, err := scanner.Scan(tt.surfaces); (err != nil) != tt.wantScanError {
+				t.Fatalf("Scan() error = %v, wantError %v", err, tt.wantScanError)
+			}
+		})
+	}
 }
 
 func assertScannerJSON(t *testing.T, result ScanResult, want map[string]any) {
