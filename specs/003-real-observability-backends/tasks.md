@@ -67,7 +67,7 @@
 - [X] T030 在 `internal/observability/logging.go` 实现 GoFrame `glog` JSON 结构化字段构造；质量门控：使 T018 GREEN，不接 OTel logs SDK，不记录 provider body、prompt/output、Authorization 或 endpoint credential。
 - [X] T031 在 `internal/observability/smoke/report.go` 实现报告值对象与稳定错误分类；质量门控：使 T019 GREEN，报告生成后不可变，失败检查不能被后续 passed 覆盖，报告完成前必须记录 smoke 自建临时凭据/数据的 cleanup 结果。
 - [X] T032 在 `internal/observability/smoke/schema.go` 实现本地 schema 校验器；质量门控：使 T020 GREEN，禁止通过网络解析 `$schema`，错误包含 JSON path 且不回显敏感值。
-- [ ] T033 在 `internal/observability/smoke/poller.go` 实现 context 驱动的 bounded poller；质量门控：使 T021 GREEN，查询必须同时使用 run marker 与 `[started_at, deadline]`，超时后迟到数据不得满足后续 run，并运行 `go test -race ./internal/observability/smoke`。
+- [X] T033 在 `internal/observability/smoke/poller.go` 实现 context 驱动的 bounded poller；质量门控：使 T021 GREEN，查询必须同时使用 run marker 与 `[started_at, deadline]`，超时后迟到数据不得满足后续 run，并运行 `go test -race ./internal/observability/smoke`。
 - [ ] T034 在 `internal/observability/privacy/scanner.go` 实现统一 synthetic canary/敏感模式扫描器；质量门控：使 T022 GREEN，scanner 在所有 payload modes 启用并只返回低敏分类证据。
 - [ ] T035 在 `manifest/config/config.yaml` 落地 runtime configuration contract 的非敏感默认 shape；质量门控：默认观测、chat 与 infra-smoke 均关闭，默认 App endpoint 只能指向 Collector，`make obs-config-check` 通过。
 - [ ] T036 在 `Makefile` 增加 `obs-coverage`、foundational 单测与 race 聚合入口；质量门控：显式覆盖 `./internal/cmd/... ./internal/observability/... ./internal/logic/chat/... ./pkg/ai/obs/...`，生成 ignored 的 `build/coverage/observability.out`。新核心代码是本 spec 新增或修改的、位于上述包中的非 generated/non-config-only 可执行 Go 行；以 merge-base 为基线，从同一测试运行生成的 coverprofile 中只统计这些行，分母为所有此类可执行行、分子为其中命中行，阈值 >=80%。chat usecase 按 `internal/logic/chat` 的全部非 generated 可执行行单独计算，阈值 >=90%。基线不存在时以首次提交前的空树为基线；重命名按新路径计入。generated/config-only 排除项必须使用可审查 allowlist，不得排除失败包、既有未覆盖行或复用缓存假通过。

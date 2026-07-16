@@ -3,6 +3,7 @@ package smoke
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -74,6 +75,26 @@ func TestBoundedMarkerPollerAcceptsObservationsAtBothWindowBounds(t *testing.T) 
 	}
 }
 
+func TestBoundedMarkerPollerQueriesOnceAtDeadlineBeforeTimingOut(t *testing.T) {
+	clock := newPollerTestClock(time.Date(2026, time.July, 13, 1, 2, 3, 0, time.UTC))
+	poller := NewBoundedMarkerPoller(clock, time.Second)
+	target := newMarkerPollTarget(clock.Now())
+	target.Deadline = target.StartedAt.Add(time.Second)
+	queryCalls := 0
+
+	observation, err := poller.WaitForMarker(context.Background(), target, func(_ context.Context, got PollMarkerTarget) ([]MarkerObservation, error) {
+		queryCalls++
+		assertPollTarget(t, got, target)
+		if queryCalls == 1 {
+			return nil, nil
+		}
+		return []MarkerObservation{{Marker: target.Marker, ObservedAt: target.Deadline}}, nil
+	})
+	if err != nil || !observation.ObservedAt.Equal(target.Deadline) || queryCalls != 2 || clock.WaitCount() != 1 {
+		t.Fatal("WaitForMarker() did not query and accept a marker at the deadline")
+	}
+}
+
 func TestBoundedMarkerPollerRejectsOtherAndOutOfWindowMarkers(t *testing.T) {
 	clock := newPollerTestClock(time.Date(2026, time.July, 13, 1, 2, 3, 0, time.UTC))
 	poller := NewBoundedMarkerPoller(clock, time.Second)
@@ -107,7 +128,7 @@ func TestBoundedMarkerPollerTimesOutWhenNoCurrentRunMarkerArrives(t *testing.T) 
 		assertPollTarget(t, got, target)
 		return nil, nil
 	})
-	if !errors.Is(err, context.DeadlineExceeded) || !clock.Now().Equal(target.Deadline) || clock.LastWaitDuration() != 2*time.Second || queryCalls != 1 {
+	if !errors.Is(err, context.DeadlineExceeded) || !clock.Now().Equal(target.Deadline) || clock.LastWaitDuration() != 2*time.Second || queryCalls != 2 {
 		t.Fatal("WaitForMarker() did not stop at the configured deadline")
 	}
 }
@@ -143,6 +164,52 @@ func TestBoundedMarkerPollerStopsWhenContextIsCanceledDuringWait(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) || queryCalls != 1 || clock.WaitCount() != 1 {
 		t.Fatal("WaitForMarker() continued after cancellation during a polling wait")
+	}
+}
+
+func TestBoundedMarkerPollerRejectsInvalidTargetBeforeQuery(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*PollMarkerTarget)
+	}{
+		{name: "deadline before start", mutate: func(target *PollMarkerTarget) { target.Deadline = target.StartedAt.Add(-time.Nanosecond) }},
+		{name: "oversized marker", mutate: func(target *PollMarkerTarget) { target.Marker = strings.Repeat("m", 129) }},
+		{name: "sensitive marker", mutate: func(target *PollMarkerTarget) { target.Marker = "Bearer synthetic-t021-query-secret" }},
+		{name: "path-like marker", mutate: func(target *PollMarkerTarget) { target.Marker = "marker-t021/other-run" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clock := newPollerTestClock(time.Date(2026, time.July, 13, 1, 2, 3, 0, time.UTC))
+			poller := NewBoundedMarkerPoller(clock, time.Second)
+			target := newMarkerPollTarget(clock.Now())
+			tt.mutate(&target)
+			queryCalls := 0
+
+			_, err := poller.WaitForMarker(context.Background(), target, func(context.Context, PollMarkerTarget) ([]MarkerObservation, error) {
+				queryCalls++
+				return nil, nil
+			})
+			if !errors.Is(err, errInvalidPollMarkerTarget) || queryCalls != 0 || clock.WaitCount() != 0 {
+				t.Fatal("WaitForMarker() did not reject an invalid target before querying")
+			}
+		})
+	}
+}
+
+func TestBoundedMarkerPollerReturnsStableQueryFailureWithoutEcho(t *testing.T) {
+	clock := newPollerTestClock(time.Date(2026, time.July, 13, 1, 2, 3, 0, time.UTC))
+	poller := NewBoundedMarkerPoller(clock, time.Second)
+	target := newMarkerPollTarget(clock.Now())
+
+	_, err := poller.WaitForMarker(context.Background(), target, func(context.Context, PollMarkerTarget) ([]MarkerObservation, error) {
+		return nil, errors.New("Bearer synthetic-t021-query-secret")
+	})
+	if !errors.Is(err, errSmokeMarkerQuery) {
+		t.Fatal("WaitForMarker() did not return the stable query failure category")
+	}
+	if strings.Contains(err.Error(), "synthetic-t021-query-secret") {
+		t.Fatal("WaitForMarker() echoed the raw backend query failure")
 	}
 }
 
