@@ -134,6 +134,48 @@ func TestBuildHTTPCompletionLogRejectsFailedRequestWithoutStableErrorClass(t *te
 	assertHTTPCompletionLogDoesNotContainSensitiveInput(t, err.Error())
 }
 
+func TestBuildHTTPCompletionLogRejectsUntrustedRouteAndErrorClass(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*HTTPCompletionLogInput)
+	}{
+		{
+			name: "raw route query",
+			mutate: func(input *HTTPCompletionLogInput) {
+				input.RouteTemplate = "/api/v1/chat?token=synthetic-t030-route-secret"
+			},
+		},
+		{
+			name: "raw route path value",
+			mutate: func(input *HTTPCompletionLogInput) {
+				input.RouteTemplate = "/api/v1/chat/synthetic-t030-route-secret"
+			},
+		},
+		{
+			name: "provider response as error class",
+			mutate: func(input *HTTPCompletionLogInput) {
+				input.ErrorClass = "synthetic-t030-provider-secret"
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := newHTTPCompletionLogInput(true, false, false)
+			test.mutate(&input)
+
+			_, err := BuildHTTPCompletionLog(input)
+			if err == nil {
+				t.Fatal("BuildHTTPCompletionLog() error = nil, want untrusted log field rejected")
+			}
+			assertHTTPCompletionLogDoesNotContainSensitiveInput(t, err.Error())
+			if strings.Contains(err.Error(), "synthetic-t030") {
+				t.Fatal("completion log validation error reflected sensitive input")
+			}
+		})
+	}
+}
+
 func newHTTPCompletionLogInput(isFailed, isAI, isSmoke bool) HTTPCompletionLogInput {
 	input := HTTPCompletionLogInput{
 		Timestamp:     time.Date(2026, time.July, 13, 9, 2, 3, 456000000, time.FixedZone("CST", 8*60*60)),
