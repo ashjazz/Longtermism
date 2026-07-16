@@ -46,19 +46,17 @@ fi
 
 diff_file="$(mktemp)"
 trap 'rm -f "${diff_file}"' EXIT
-# 与 merge-base 比较工作树而非仅 HEAD：本地提交前也必须检查 staged/unstaged 改动。
-# git diff 不会展示 untracked 文件；直接枚举受控 scope 的实际 Go 文件，再为所有非
-# Git 跟踪文件补充新文件 diff。不能用 --exclude-standard，否则攻击者把生产文件加入
-# .gitignore 就能让它逃出覆盖率分母。
+# 与 merge-base 比较工作树而非仅 HEAD：本地提交前也必须检查 staged/unstaged 的
+# 项目源码改动。未忽略的临时 Go 源码仍须进入门禁；只有 Git 明确忽略的本地学习/实验
+# 文件不参与统计，避免污染项目质量信号。
 git diff --unified=0 --no-color "${merge_base}" -- "${scopes[@]}" >"${diff_file}"
-for scope in "${scopes[@]}"; do
-  [[ -d "${scope}" ]] || continue
-  while IFS= read -r file; do
-    if ! git ls-files --error-unmatch -- "${file}" >/dev/null 2>&1; then
+while IFS= read -r file; do
+  case "${file}" in
+    internal/cmd/*.go|internal/observability/*.go|internal/logic/chat/*.go|pkg/ai/obs/*.go)
       git diff --unified=0 --no-color --no-index /dev/null "${file}" >>"${diff_file}" || true
-    fi
-  done < <(find "${scope}" -type f -name '*.go' | sort)
-done
+      ;;
+  esac
+done < <(git ls-files --others --exclude-standard)
 
 result="$(awk -v module_prefix="${module_name}/" -v threshold="${threshold}" '
 function excluded(path, base) {

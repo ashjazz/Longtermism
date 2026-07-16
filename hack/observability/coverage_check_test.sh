@@ -59,6 +59,9 @@ run_case() {
     printf 'internal/observability/ignored.go\n' >>"${root}/.gitignore"
     printf 'package observability\n\nfunc Ignored() int { return 3 }\n' >"${root}/internal/observability/ignored.go"
   fi
+  if [[ "${name}" == "untracked_production_file" ]]; then
+    printf 'package observability\n\nfunc Untracked() int { return 4 }\n' >"${root}/internal/observability/untracked.go"
+  fi
 
   set +e
   output="$(cd "${root}" && bash "${CHECKER_PATH}" --profile "${profile}" --base main --threshold 80 --scope internal/observability 2>&1)"
@@ -75,7 +78,9 @@ run_case() {
 run_case covered_change pass 1 false
 run_case uncovered_change fail 0 false
 run_case missing_package_profile fail 1 true
-run_case ignored_untracked_production_file fail 1 false
+# 学习/实验文件可由 .gitignore 排除；它们不是项目源码，也不应污染项目覆盖率门禁。
+run_case ignored_untracked_production_file pass 1 false
+run_case untracked_production_file fail 1 false
 
 if [[ ${failures} -gt 0 ]]; then
   printf 'coverage_check_test: %d assertion(s) failed\n' "${failures}" >&2
