@@ -86,7 +86,7 @@
 
 - [X] T037 [P] [US1] 在 `api/v1/observability/infra_smoke_test.go` 编写 Go API 契约 RED 测试；质量门控：覆盖成功 envelope、始终存在 request_id、合法/非法 run marker、`ai_trace_id`/`eval_summary` 必须缺失和 disabled 404。
 - [X] T038 [P] [US1] 在 `internal/logic/observability/infra_smoke_test.go` 编写 usecase RED 测试；质量门控：覆盖 run marker 进入 span/log、指标增加、无 AI identity/marker、观测 adapter 失败不改写业务 `ok`，使用内存 exporter。
-- [ ] T039 [P] [US1] 在 `internal/controller/observability/infra_smoke_test.go` 编写 controller RED 测试；质量门控：覆盖参数边界、统一 envelope、404 和内部错误脱敏，controller 不直接访问 OTel backend。
+- [X] T039 [P] [US1] 在 `internal/controller/observability/infra_smoke_test.go` 编写 controller RED 测试；质量门控：覆盖参数边界、统一 envelope、404 和内部错误脱敏，controller 不直接访问 OTel backend。
 - [ ] T040 [P] [US1] 在 `internal/cmd/routes_observability_test.go` 编写路由门控 RED 测试；质量门控：证明启用时注册 GET 路由、关闭时不可达、超限请求返回 429，重复装配不产生双路由或重复 middleware。
 - [ ] T041 [P] [US1] 在 `internal/observability/http_logging_test.go` 编写 HTTP completion log RED 测试；质量门控：覆盖 infra-smoke 成功/错误字段、真实 SpanContext identity、route template 和 synthetic secret 零命中。
 - [ ] T042 [P] [US1] 在 `hack/observability/collector_grafana_config_test.sh` 编写 Collector 主线静态 RED 测试；质量门控：断言 traces ingress+forward/infra+forward/ai、metrics、filelog、稳定 component IDs、三套 persistent queues、AI filter、二次字段删除，以及 smoke/error/regression/指定 AI trace 的完整保留采样。
