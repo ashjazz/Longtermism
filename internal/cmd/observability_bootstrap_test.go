@@ -353,14 +353,14 @@ func replaceOTelGlobalProviderInstallerForTest(t *testing.T) *observabilityGloba
 
 func resetObservabilityBootstrapForTest(t *testing.T) {
 	t.Helper()
-	processObservabilityBootstrap.mu.Lock()
-	original := processObservabilityBootstrap.bootstrap
-	processObservabilityBootstrap.bootstrap = nil
-	processObservabilityBootstrap.mu.Unlock()
+	processObservabilityBootstrapState.mu.Lock()
+	original := processObservabilityBootstrapState.bootstrap
+	processObservabilityBootstrapState.bootstrap = nil
+	processObservabilityBootstrapState.mu.Unlock()
 	t.Cleanup(func() {
-		processObservabilityBootstrap.mu.Lock()
-		processObservabilityBootstrap.bootstrap = original
-		processObservabilityBootstrap.mu.Unlock()
+		processObservabilityBootstrapState.mu.Lock()
+		processObservabilityBootstrapState.bootstrap = original
+		processObservabilityBootstrapState.mu.Unlock()
 	})
 }
 

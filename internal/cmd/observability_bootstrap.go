@@ -67,16 +67,16 @@ type observabilityBootstrapState struct {
 	bootstrap *ObservabilityBootstrap
 }
 
-// processObservabilityBootstrap 是默认 composition root 的唯一装配状态。应用进程只
+// processObservabilityBootstrapState 是默认 composition root 的唯一装配状态。应用进程只
 // 有一个全局 provider，所以零值依赖的重复调用必须复用它，而非仅成为 lifecycle follower。
-var processObservabilityBootstrap observabilityBootstrapState
+var processObservabilityBootstrapState observabilityBootstrapState
 
 // BuildObservabilityBootstrap 以固定顺序完成唯一的应用装配边界：解析 runtime、建立
 // resource/exporter 配置、短暂消费 header、创建 bundle，最后让 lifecycle 安装全局 provider。
 func BuildObservabilityBootstrap(ctx context.Context, input ObservabilityBootstrapInput, dependencies ObservabilityBootstrapDependencies) (*ObservabilityBootstrap, error) {
 	state := dependencies.state
 	if state == nil {
-		state = &processObservabilityBootstrap
+		state = &processObservabilityBootstrapState
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
