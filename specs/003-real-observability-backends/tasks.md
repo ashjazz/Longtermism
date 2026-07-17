@@ -88,7 +88,7 @@
 - [X] T038 [P] [US1] 在 `internal/logic/observability/infra_smoke_test.go` 编写 usecase RED 测试；质量门控：覆盖 run marker 进入 span/log、指标增加、无 AI identity/marker、观测 adapter 失败不改写业务 `ok`，使用内存 exporter。
 - [X] T039 [P] [US1] 在 `internal/controller/observability/infra_smoke_test.go` 编写 controller RED 测试；质量门控：覆盖参数边界、统一 envelope、404 和内部错误脱敏，controller 不直接访问 OTel backend。
 - [X] T040 [P] [US1] 在 `internal/cmd/routes_observability_test.go` 编写路由门控 RED 测试；质量门控：证明启用时注册 GET 路由、关闭时不可达、超限请求返回 429，重复装配不产生双路由或重复 middleware。
-- [ ] T041 [P] [US1] 在 `internal/observability/http_logging_test.go` 编写 HTTP completion log RED 测试；质量门控：覆盖 infra-smoke 成功/错误字段、真实 SpanContext identity、route template 和 synthetic secret 零命中。
+- [X] T041 [P] [US1] 在 `internal/observability/http_logging_test.go` 编写 HTTP completion log RED 测试；质量门控：覆盖 infra-smoke 成功/错误字段、真实 SpanContext identity、route template 和 synthetic secret 零命中。
 - [ ] T042 [P] [US1] 在 `hack/observability/collector_grafana_config_test.sh` 编写 Collector 主线静态 RED 测试；质量门控：断言 traces ingress+forward/infra+forward/ai、metrics、filelog、稳定 component IDs、三套 persistent queues、AI filter、二次字段删除，以及 smoke/error/regression/指定 AI trace 的完整保留采样。
 - [ ] T043 [P] [US1] 在 `hack/observability/glog_filelog_fixture_test.sh` 编写 glog->filelog->Loki 配置映射 RED 测试；质量门控：fixture 覆盖 JSON、trace correlation、malformed line 隔离、文件 rotation、Loki native OTLP/structured metadata/低基数 label 与 secret/raw payload 丢弃，作为 T055/T058 的先行测试。
 - [ ] T044 [P] [US1] 在 `hack/observability/compose_grafana_test.sh` 编写 Grafana profile 与 wiring 静态 RED 测试；质量门控：覆盖固定镜像、loopback 端口、healthcheck、resource limit、独立 volume/retention、Tempo/Prometheus 配置引用、Grafana datasource UID、Langfuse 依赖、Make target dry-run 和 12GiB/8vCPU/20GiB 预算声明，作为 T056/T057/T059/T060/T066 的先行测试。
