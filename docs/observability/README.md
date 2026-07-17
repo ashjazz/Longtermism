@@ -48,12 +48,12 @@
 
 | 主题 | 工程切片 | 推荐验证命令 |
 | --- | --- | --- |
-| 基础设施平面 | bootstrap、resource、lifecycle、HTTP/service span、export failure | `go test ./internal/cmd ./internal/eval/smoke -run 'TestBuildObservabilityBootstrap|TestBuildObservabilityResource|TestObservabilityTracerProviderLifecycle|TestInfrastructure' -count=1` |
+| 基础设施平面 | bootstrap、resource、lifecycle、HTTP/service span、export failure | `go test ./internal/cmd ./internal/eval/smoke -run 'TestBuildObservabilityBootstrap|TestBuildObservabilityResource|TestObservabilityProviderLifecycle|TestInfrastructure' -count=1` |
 | 分布式追踪 | 关联身份、context 传播、baggage 白名单、link 规则 | `go test ./pkg/ai/obs -run 'TestCorrelationIdentity|TestBaggage|TestBuildDualPlaneLinks' -count=1` |
 | AI 语义平面 | observation type、mapper、retriever observation、agent step observation | `go test ./pkg/ai/obs ./pkg/ai/rag ./pkg/ai/agent -run 'TestValidateObservationType|TestMapTraceToSpanSnapshot|TestBasicRetrieverRecordsRetrieval|TestExecutorRecords' -count=1` |
 | 评估证据 | dataset identity、evidence、runner trace link、eval trace smoke | `go test ./pkg/ai/eval ./internal/eval/smoke -run 'TestNewEvaluationEvidence|TestRunner.*Trace|TestEvalTraceLinkSmoke' -count=1` |
 | 隐私边界 | safe summary、redaction、logger/mapper/baggage/privacy smoke | `go test ./pkg/ai/obs ./internal/eval/smoke -run 'TestScanForbiddenPayloadFields|TestCrossAdapterPrivacyContract|TestObservabilityPrivacySmoke' -count=1` |
-| 平台接入 | noop/local/collector bootstrap、resource/lifecycle、OTel-style adapter | `go test ./internal/cmd ./pkg/ai/obs -run 'TestBuildObservabilityBootstrap|TestObservabilityTracerProviderLifecycle|TestOTelTracer' -count=1` |
+| 平台接入 | noop/local/collector bootstrap、resource/lifecycle、OTel-style adapter | `go test ./internal/cmd ./pkg/ai/obs -run 'TestBuildObservabilityBootstrap|TestObservabilityProviderLifecycle|TestOTelTracer' -count=1` |
 | 双平面关联 | request chain、parent/link、eval evidence 回链、完整链路 smoke | `go test ./pkg/ai/obs ./internal/eval/smoke -run 'TestRequestObservationChainRecorder|TestBuildDualPlaneLinks|TestObservabilityChainSmoke' -count=1` |
 
 ## 使用方式

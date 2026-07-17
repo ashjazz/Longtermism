@@ -34,7 +34,7 @@ type ObservabilityBootstrapInput struct {
 type ObservabilityBootstrap struct {
 	Runtime           ObservabilityRuntimeConfig
 	InfraSmokeEnabled bool
-	Lifecycle         *ObservabilityTracerProviderLifecycle
+	Lifecycle         *ObservabilityProviderLifecycle
 	Middleware        func(http.Handler) http.Handler
 	Propagator        ObservabilityIngressPropagator
 }
@@ -138,7 +138,7 @@ func BuildObservabilityBootstrap(ctx context.Context, input ObservabilityBootstr
 	if tracerProvider == nil || meterProvider == nil {
 		return nil, fmt.Errorf("trace and meter providers must be configured together")
 	}
-	lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	lifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		Exporter:                   exporter,
 		TracerProvider:             tracerProvider,
 		MeterProvider:              meterProvider,

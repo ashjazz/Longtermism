@@ -18,10 +18,10 @@ import (
 	"google.golang.org/grpc/connectivity"
 )
 
-func TestObservabilityTracerProviderLifecycle(t *testing.T) {
+func TestObservabilityProviderLifecycle(t *testing.T) {
 	t.Run("initialization is idempotent", func(t *testing.T) {
 		exporter := &lifecycleExporterStub{}
-		lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		lifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 			Exporter: exporter,
 		})
 
@@ -42,7 +42,7 @@ func TestObservabilityTracerProviderLifecycle(t *testing.T) {
 
 	t.Run("shutdown is idempotent", func(t *testing.T) {
 		exporter := &lifecycleExporterStub{}
-		lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		lifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 			Exporter: exporter,
 		})
 
@@ -68,7 +68,7 @@ func TestObservabilityTracerProviderLifecycle(t *testing.T) {
 		exporter := &lifecycleExporterStub{
 			shutdownErr: errors.New("collector unavailable"),
 		}
-		lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		lifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 			Exporter: exporter,
 		})
 
@@ -88,7 +88,7 @@ func TestObservabilityTracerProviderLifecycle(t *testing.T) {
 	})
 }
 
-func TestObservabilityTracerProviderLifecycleClosesExporterOwnedGRPCConnection(t *testing.T) {
+func TestObservabilityProviderLifecycleClosesExporterOwnedGRPCConnection(t *testing.T) {
 	exporter, err := NewObservabilityOTLPExporter(context.Background(), ObservabilityOTLPExporterConfigInput{
 		Runtime: ObservabilityRuntimeConfigInput{
 			Mode:        ObservabilityRuntimeModeCollector,
@@ -101,7 +101,7 @@ func TestObservabilityTracerProviderLifecycleClosesExporterOwnedGRPCConnection(t
 	if err != nil {
 		t.Fatalf("NewObservabilityOTLPExporter() error = %v", err)
 	}
-	lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	lifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		Exporter:                   exporter,
 		ExporterOwnsTracerProvider: true,
 		ExporterOwnsMeterProvider:  true,
@@ -117,12 +117,12 @@ func TestObservabilityTracerProviderLifecycleClosesExporterOwnedGRPCConnection(t
 	}
 }
 
-func TestObservabilityTracerProviderLifecycleFlushContract(t *testing.T) {
+func TestObservabilityProviderLifecycleFlushContract(t *testing.T) {
 	t.Run("one lifecycle reuses one OTel provider and flushes its test exporter", func(t *testing.T) {
 		spanExporter := tracetest.NewInMemoryExporter()
 		provider := trace.NewTracerProvider(trace.WithSyncer(spanExporter))
 		lifecycleExporter := &otelLifecycleExporter{provider: provider}
-		lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		lifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 			Exporter: lifecycleExporter,
 		})
 
@@ -154,7 +154,7 @@ func TestObservabilityTracerProviderLifecycleFlushContract(t *testing.T) {
 		exporter := &lifecycleExporterStub{
 			flushErr: context.DeadlineExceeded,
 		}
-		lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+		lifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 			Exporter: exporter,
 		})
 
@@ -175,7 +175,7 @@ func TestObservabilityTracerProviderLifecycleFlushContract(t *testing.T) {
 	})
 
 	t.Run("no exporter mode remains safe through initialize flush and shutdown", func(t *testing.T) {
-		lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{})
+		lifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{})
 
 		if err := lifecycle.Initialize(context.Background()); err != nil {
 			t.Fatal("Initialize() in no exporter mode returned an error")
@@ -192,11 +192,11 @@ func TestObservabilityTracerProviderLifecycleFlushContract(t *testing.T) {
 	})
 }
 
-func TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvider(t *testing.T) {
+func TestObservabilityProviderLifecycleInstallsOneGlobalTraceAndMeterProvider(t *testing.T) {
 	if os.Getenv("T013_GLOBAL_PROVIDER_HELPER") != "1" {
 		// OTel 默认全局代理在首次 Set 后会永久委托给该 provider，不能在同一进程中
 		// 可靠恢复。用子进程隔离这条契约，避免后续测试指向已经 shutdown 的 provider。
-		command := exec.Command(os.Args[0], "-test.run=^TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvider$")
+		command := exec.Command(os.Args[0], "-test.run=^TestObservabilityProviderLifecycleInstallsOneGlobalTraceAndMeterProvider$")
 		command.Env = append(os.Environ(), "T013_GLOBAL_PROVIDER_HELPER=1")
 		if err := command.Run(); err != nil {
 			t.Fatal("global provider lifecycle helper process failed")
@@ -207,7 +207,7 @@ func TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvi
 	primarySpanExporter := tracetest.NewInMemoryExporter()
 	primaryTracerProvider := trace.NewTracerProvider(trace.WithSyncer(primarySpanExporter))
 	primaryMeterProvider := metricSDK.NewMeterProvider()
-	primaryLifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	primaryLifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		Exporter:                   &otelLifecycleExporter{provider: primaryTracerProvider},
 		TracerProvider:             primaryTracerProvider,
 		MeterProvider:              primaryMeterProvider,
@@ -226,7 +226,7 @@ func TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvi
 
 	secondaryTracerProvider := trace.NewTracerProvider()
 	secondaryMeterProvider := metricSDK.NewMeterProvider()
-	secondaryLifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	secondaryLifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		TracerProvider: secondaryTracerProvider,
 		MeterProvider:  secondaryMeterProvider,
 	})
@@ -248,7 +248,7 @@ func TestObservabilityTracerProviderLifecycleInstallsOneGlobalTraceAndMeterProvi
 	}
 }
 
-func TestObservabilityTracerProviderLifecycleGlobalProviderRegistry(t *testing.T) {
+func TestObservabilityProviderLifecycleGlobalProviderRegistry(t *testing.T) {
 	// 不触碰真实 OTel 全局对象：这里验证进程级注册表的所有权和“只安装一次”语义。
 	originalInstaller := installOTelGlobalProviders
 	processGlobalProviders.mu.Lock()
@@ -267,20 +267,20 @@ func TestObservabilityTracerProviderLifecycleGlobalProviderRegistry(t *testing.T
 		installCalls++
 	}
 
-	primary := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	primary := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		TracerProvider: trace.NewTracerProvider(),
 		MeterProvider:  metricSDK.NewMeterProvider(),
 	})
-	secondary := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	secondary := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		TracerProvider: trace.NewTracerProvider(),
 		MeterProvider:  metricSDK.NewMeterProvider(),
 	})
 	start := make(chan struct{})
 	errs := make(chan error, 2)
 	var waitGroup sync.WaitGroup
-	for _, lifecycle := range []*ObservabilityTracerProviderLifecycle{primary, secondary} {
+	for _, lifecycle := range []*ObservabilityProviderLifecycle{primary, secondary} {
 		waitGroup.Add(1)
-		go func(lifecycle *ObservabilityTracerProviderLifecycle) {
+		go func(lifecycle *ObservabilityProviderLifecycle) {
 			defer waitGroup.Done()
 			<-start
 			errs <- lifecycle.Initialize(context.Background())
@@ -298,7 +298,7 @@ func TestObservabilityTracerProviderLifecycleGlobalProviderRegistry(t *testing.T
 		t.Fatal("concurrent lifecycles did not elect exactly one global provider owner")
 	}
 	followerExporter := &lifecycleExporterStub{}
-	follower := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	follower := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		Exporter:       followerExporter,
 		TracerProvider: trace.NewTracerProvider(),
 		MeterProvider:  metricSDK.NewMeterProvider(),
@@ -320,7 +320,7 @@ func TestObservabilityTracerProviderLifecycleGlobalProviderRegistry(t *testing.T
 		t.Fatal("global provider owner Shutdown() returned an unexpected error")
 	}
 
-	partial := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	partial := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		TracerProvider: trace.NewTracerProvider(),
 	})
 	if err := partial.Initialize(context.Background()); err != nil {
@@ -331,9 +331,9 @@ func TestObservabilityTracerProviderLifecycleGlobalProviderRegistry(t *testing.T
 	}
 }
 
-func TestObservabilityTracerProviderLifecycleDoesNotRestartAfterShutdown(t *testing.T) {
+func TestObservabilityProviderLifecycleDoesNotRestartAfterShutdown(t *testing.T) {
 	exporter := &lifecycleExporterStub{}
-	lifecycle := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{Exporter: exporter})
+	lifecycle := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{Exporter: exporter})
 	if err := lifecycle.Shutdown(context.Background()); err != nil {
 		t.Fatal("Shutdown() returned an unexpected error")
 	}
@@ -345,12 +345,12 @@ func TestObservabilityTracerProviderLifecycleDoesNotRestartAfterShutdown(t *test
 	}
 }
 
-func TestObservabilityTracerProviderLifecycleRejectsMissingExporterForExporterOwnedProviders(t *testing.T) {
-	for _, config := range []ObservabilityTracerProviderLifecycleConfig{
+func TestObservabilityProviderLifecycleRejectsMissingExporterForExporterOwnedProviders(t *testing.T) {
+	for _, config := range []ObservabilityProviderLifecycleConfig{
 		{TracerProvider: trace.NewTracerProvider(), MeterProvider: metricSDK.NewMeterProvider(), ExporterOwnsTracerProvider: true},
 		{TracerProvider: trace.NewTracerProvider(), MeterProvider: metricSDK.NewMeterProvider(), ExporterOwnsMeterProvider: true},
 	} {
-		lifecycle := NewObservabilityTracerProviderLifecycle(config)
+		lifecycle := NewObservabilityProviderLifecycle(config)
 		if err := lifecycle.Initialize(context.Background()); err != nil {
 			t.Fatal("Initialize() must protect application startup from invalid telemetry config")
 		}
@@ -368,7 +368,7 @@ func TestObservabilityTracerProviderLifecycleRejectsMissingExporterForExporterOw
 	}
 }
 
-func TestObservabilityTracerProviderLifecycleDoesNotClaimGlobalProvidersWhenExporterInitializationFails(t *testing.T) {
+func TestObservabilityProviderLifecycleDoesNotClaimGlobalProvidersWhenExporterInitializationFails(t *testing.T) {
 	originalInstaller := installOTelGlobalProviders
 	processGlobalProviders.mu.Lock()
 	originalInstalled := processGlobalProviders.installed
@@ -383,7 +383,7 @@ func TestObservabilityTracerProviderLifecycleDoesNotClaimGlobalProvidersWhenExpo
 
 	installCalls := 0
 	installOTelGlobalProviders = func(traceAPI.TracerProvider, metricAPI.MeterProvider) { installCalls++ }
-	failed := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	failed := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		Exporter:       &lifecycleExporterStub{initErr: errors.New("t025-init-failed")},
 		TracerProvider: trace.NewTracerProvider(),
 		MeterProvider:  metricSDK.NewMeterProvider(),
@@ -395,7 +395,7 @@ func TestObservabilityTracerProviderLifecycleDoesNotClaimGlobalProvidersWhenExpo
 		t.Fatal("failed exporter initialization claimed global providers")
 	}
 
-	working := NewObservabilityTracerProviderLifecycle(ObservabilityTracerProviderLifecycleConfig{
+	working := NewObservabilityProviderLifecycle(ObservabilityProviderLifecycleConfig{
 		TracerProvider: trace.NewTracerProvider(),
 		MeterProvider:  metricSDK.NewMeterProvider(),
 	})

@@ -74,7 +74,7 @@
 - [X] T036A [P] 在 `internal/cmd/observability_bootstrap_test.go` 编写应用观测装配 RED 测试；质量门控：先固定 `enabled`/mode/signal/smoke 的唯一语义，覆盖 noop/local 零网络、collector 恰好一次创建和全局安装 trace+meter provider、初始化失败 fail-fast、重复装配不产生第二套 provider/middleware，以及带 deadline 的 flush/shutdown；同时固定 HTTP ingress 对 `traceparent`/`tracestate` 的信任策略，证明不可信 remote sampled 标记不绕过采样预算、未审计 tracestate 不会自动跨第三方传播。测试不得读取真实 secret 或启动 server。
 - [X] T036B 在 `internal/cmd/observability_bootstrap.go` 实现配置加载到 `ObservabilityProviderLifecycle` 的纯装配边界；质量门控：使 T036A GREEN，按“resolve runtime → resource/exporter config → transient header source → exporter bundle → provider lifecycle”的固定顺序组合，不让 `BuildObservabilityOTLPExporterConfig` 重复解析 raw input，只有 composition root 可以成对声明 exporter provider 所有权。
 - [X] T036C 在 `internal/cmd/observability.go` 删除旧 `ObservabilitySinkPlatform` 直连平台模型及其测试；质量门控：新 bootstrap 契约已通过后执行，仓库扫描不得留下 `ExternalEndpoint`、`Platform` sink 或应用侧 platform credential 字段；缺 Collector 配置的 collector mode 必须 fail-fast，禁止静默降级 noop。
-- [ ] T036D 在 `internal/cmd/observability_lifecycle.go` 将 tracer-only 命名收敛为 `ObservabilityProviderLifecycle`；质量门控：更新相邻测试与 bootstrap 调用，行为不变，明确该对象仅管理 trace/meter provider 和 OTLP bundle，不管理 Langfuse score worker。
+- [X] T036D 在 `internal/cmd/observability_lifecycle.go` 将 tracer-only 命名收敛为 `ObservabilityProviderLifecycle`；质量门控：更新相邻测试与 bootstrap 调用，行为不变，明确该对象仅管理 trace/meter provider 和 OTLP bundle，不管理 Langfuse score worker。
 
 ## Phase 3：User Story 1 - 验证服务请求的基础观测（P1）
 

@@ -20,8 +20,8 @@ type ObservabilityLifecycleExporter interface {
 	Shutdown(ctx context.Context) error
 }
 
-// ObservabilityTracerProviderLifecycleConfig 描述生命周期封装依赖。
-type ObservabilityTracerProviderLifecycleConfig struct {
+// ObservabilityProviderLifecycleConfig 描述生命周期封装依赖。
+type ObservabilityProviderLifecycleConfig struct {
 	Exporter                   ObservabilityLifecycleExporter
 	TracerProvider             trace.TracerProvider
 	MeterProvider              metric.MeterProvider
@@ -31,8 +31,8 @@ type ObservabilityTracerProviderLifecycleConfig struct {
 	ExporterOwnsMeterProvider bool
 }
 
-// ObservabilityTracerProviderLifecycleStatus 是生命周期状态的只读快照。
-type ObservabilityTracerProviderLifecycleStatus struct {
+// ObservabilityProviderLifecycleStatus 是生命周期状态的只读快照。
+type ObservabilityProviderLifecycleStatus struct {
 	Initialized bool
 	// InitializationFailed 表示不可恢复的初始化失败。Lifecycle 配置构造后不可变；
 	// 修正配置时必须新建实例，不能把失败实例误认为已成功初始化。
@@ -42,8 +42,10 @@ type ObservabilityTracerProviderLifecycleStatus struct {
 	FailureMessage       string
 }
 
-// ObservabilityTracerProviderLifecycle 管理基础设施观测 provider 的启动和关闭。
-type ObservabilityTracerProviderLifecycle struct {
+// ObservabilityProviderLifecycle 只管理 trace/meter provider 与 OTLP exporter bundle
+// 的启动、flush 和关闭。Langfuse score worker 有独立的失败域和重试语义，不能由此
+// 对象接管，否则会把基础设施观测的全局 provider 生命周期与 AI 语义分数投递混在一起。
+type ObservabilityProviderLifecycle struct {
 	mu                  sync.Mutex
 	exporter            ObservabilityLifecycleExporter
 	tracer              trace.TracerProvider
@@ -51,7 +53,7 @@ type ObservabilityTracerProviderLifecycle struct {
 	exporterOwnsTracer  bool
 	exporterOwnsMeter   bool
 	ownsGlobalProviders bool
-	status              ObservabilityTracerProviderLifecycleStatus
+	status              ObservabilityProviderLifecycleStatus
 }
 
 // processGlobalProviders 防止同一进程中的第二个装配入口替换 OTel 全局 provider。
@@ -67,9 +69,9 @@ var installOTelGlobalProviders = func(tracerProvider trace.TracerProvider, meter
 	otel.SetMeterProvider(meterProvider)
 }
 
-// NewObservabilityTracerProviderLifecycle 创建幂等的 provider 生命周期管理器。
-func NewObservabilityTracerProviderLifecycle(config ObservabilityTracerProviderLifecycleConfig) *ObservabilityTracerProviderLifecycle {
-	return &ObservabilityTracerProviderLifecycle{
+// NewObservabilityProviderLifecycle 创建幂等的 provider 生命周期管理器。
+func NewObservabilityProviderLifecycle(config ObservabilityProviderLifecycleConfig) *ObservabilityProviderLifecycle {
+	return &ObservabilityProviderLifecycle{
 		exporter:           config.Exporter,
 		tracer:             config.TracerProvider,
 		meter:              config.MeterProvider,
@@ -79,7 +81,7 @@ func NewObservabilityTracerProviderLifecycle(config ObservabilityTracerProviderL
 }
 
 // Initialize 初始化 exporter。重复调用不会重复初始化。
-func (l *ObservabilityTracerProviderLifecycle) Initialize(ctx context.Context) error {
+func (l *ObservabilityProviderLifecycle) Initialize(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
@@ -122,7 +124,7 @@ func (l *ObservabilityTracerProviderLifecycle) Initialize(ctx context.Context) e
 // initializeGlobalProviderOwner 把 provider 安装与 exporter 初始化放进同一进程级
 // 临界区：若 exporter 初始化失败，provider 尚未成为全局对象，下一套正确配置仍可接管。
 // 这段锁只出现在一次性启动阶段，优先保证全局 provider 的原子所有权。
-func (l *ObservabilityTracerProviderLifecycle) initializeGlobalProviderOwner(ctx context.Context) (bool, error) {
+func (l *ObservabilityProviderLifecycle) initializeGlobalProviderOwner(ctx context.Context) (bool, error) {
 	if l.tracer == nil || l.meter == nil {
 		return false, fmt.Errorf("trace and meter providers must be configured together")
 	}
@@ -140,7 +142,7 @@ func (l *ObservabilityTracerProviderLifecycle) initializeGlobalProviderOwner(ctx
 	return true, nil
 }
 
-func (l *ObservabilityTracerProviderLifecycle) initializeExporter(ctx context.Context) error {
+func (l *ObservabilityProviderLifecycle) initializeExporter(ctx context.Context) error {
 	if l.exporter == nil {
 		return nil
 	}
@@ -151,7 +153,7 @@ func (l *ObservabilityTracerProviderLifecycle) initializeExporter(ctx context.Co
 
 // Flush 请求 exporter 把缓冲信号在 shutdown 前或受控 checkpoint 时送出。未实现
 // ForceFlush 的 exporter 保持兼容；超时/失败只记录观测故障，绝不能改写业务结果。
-func (l *ObservabilityTracerProviderLifecycle) Flush(ctx context.Context) error {
+func (l *ObservabilityProviderLifecycle) Flush(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
@@ -182,7 +184,7 @@ func (l *ObservabilityTracerProviderLifecycle) Flush(ctx context.Context) error 
 }
 
 // Shutdown 关闭 exporter。重复调用不会重复 shutdown，exporter 失败不会影响主流程。
-func (l *ObservabilityTracerProviderLifecycle) Shutdown(ctx context.Context) error {
+func (l *ObservabilityProviderLifecycle) Shutdown(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}
@@ -214,9 +216,9 @@ func (l *ObservabilityTracerProviderLifecycle) Shutdown(ctx context.Context) err
 }
 
 // Status 返回生命周期状态快照。
-func (l *ObservabilityTracerProviderLifecycle) Status() ObservabilityTracerProviderLifecycleStatus {
+func (l *ObservabilityProviderLifecycle) Status() ObservabilityProviderLifecycleStatus {
 	if l == nil {
-		return ObservabilityTracerProviderLifecycleStatus{}
+		return ObservabilityProviderLifecycleStatus{}
 	}
 
 	l.mu.Lock()
@@ -225,17 +227,17 @@ func (l *ObservabilityTracerProviderLifecycle) Status() ObservabilityTracerProvi
 	return l.status
 }
 
-func (l *ObservabilityTracerProviderLifecycle) recordFailure(err error) {
+func (l *ObservabilityProviderLifecycle) recordFailure(err error) {
 	l.status.FailureStatus = string(obs.FailureTelemetryExportFailed)
 	l.status.FailureMessage = err.Error()
 }
 
-func (l *ObservabilityTracerProviderLifecycle) recordInitializationFailure(err error) {
+func (l *ObservabilityProviderLifecycle) recordInitializationFailure(err error) {
 	l.status.InitializationFailed = true
 	l.recordFailure(err)
 }
 
-func (l *ObservabilityTracerProviderLifecycle) flushProvider(ctx context.Context, provider any) {
+func (l *ObservabilityProviderLifecycle) flushProvider(ctx context.Context, provider any) {
 	flusher, ok := provider.(interface{ ForceFlush(context.Context) error })
 	if !ok || flusher == nil {
 		return
@@ -245,7 +247,7 @@ func (l *ObservabilityTracerProviderLifecycle) flushProvider(ctx context.Context
 	}
 }
 
-func (l *ObservabilityTracerProviderLifecycle) shutdownProvider(ctx context.Context, provider any) {
+func (l *ObservabilityProviderLifecycle) shutdownProvider(ctx context.Context, provider any) {
 	shutdowner, ok := provider.(interface{ Shutdown(context.Context) error })
 	if !ok || shutdowner == nil {
 		return

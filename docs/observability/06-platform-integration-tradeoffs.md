@@ -43,7 +43,7 @@ Observability v1 的取舍是：默认路径必须离线可验证，真实平台
 可运行的验证命令：
 
 ```bash
-go test ./internal/cmd -run 'TestBuildObservabilityBootstrap|TestBuildObservabilityResource|TestObservabilityTracerProviderLifecycle' -count=1
+go test ./internal/cmd -run 'TestBuildObservabilityBootstrap|TestBuildObservabilityResource|TestObservabilityProviderLifecycle' -count=1
 go test ./pkg/ai/obs -run 'TestMapTraceToSpanSnapshot|TestOTelTracerContract|TestOTelTracerDropsTraceWithoutObservationType' -count=1
 ```
 

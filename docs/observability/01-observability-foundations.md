@@ -43,7 +43,7 @@
 
 ```bash
 go test ./internal/eval/smoke -run 'TestInfrastructureSpan|TestInfrastructureExportFailure' -count=1
-go test ./internal/cmd -run 'TestBuildObservabilityBootstrap|TestObservabilityTracerProviderLifecycle|TestBuildObservabilityResource' -count=1
+go test ./internal/cmd -run 'TestBuildObservabilityBootstrap|TestObservabilityProviderLifecycle|TestBuildObservabilityResource' -count=1
 go test ./pkg/ai/obs -run 'TestCorrelationIdentity|TestBaggage' -count=1
 ```
 

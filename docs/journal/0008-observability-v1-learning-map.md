@@ -106,7 +106,7 @@ AI 语义平面负责 Agent 领域事实：generation、retriever、tool、agent
 go test ./pkg/ai/obs -run 'TestCorrelationIdentity|TestBaggageFieldsFromCorrelationIdentity|TestBuildDualPlaneLinks|TestRequestObservationChainRecorder|TestMapTraceToSpanSnapshot|TestOTelTracerContract|TestCrossAdapterPrivacyContractRejectsRawPayload' -count=1
 go test ./pkg/ai/eval -run 'TestNewEvaluationEvidence|TestValidateEvaluationEvidence|TestRunnerAddsEvaluationEvidence|TestRunnerReportsMissingTraceLink|TestRunnerAddsFailedRegressionEvidence' -count=1
 go test ./internal/eval/smoke -run 'TestInfrastructureSpan|TestInfrastructureExportFailure|TestObservabilityChainSmoke|TestEvalTraceLinkSmoke|TestObservabilityPrivacySmoke' -count=1
-go test ./internal/cmd -run 'TestBuildObservabilityBootstrap|TestBuildObservabilityResource|TestObservabilityTracerProviderLifecycle' -count=1
+go test ./internal/cmd -run 'TestBuildObservabilityBootstrap|TestBuildObservabilityResource|TestObservabilityProviderLifecycle' -count=1
 ```
 
 这些命令不是为了证明文档存在，而是为了证明文档中的学习主题确实对应可运行的工程切片。
