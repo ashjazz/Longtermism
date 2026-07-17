@@ -7,6 +7,7 @@ import (
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // NewObservabilityPropagator 只传播 W3C TraceContext 与经过 allowlist 校验的
@@ -16,6 +17,49 @@ func NewObservabilityPropagator() propagation.TextMapPropagator {
 		propagation.TraceContext{},
 		observabilityBaggagePropagator{},
 	)
+}
+
+// ObservabilityIngressTrustPolicy 明确区分已认证的服务间流量和公网入口。默认零值代表
+// 不受信：remote sampled/tracestate 都不能影响本地采样或被转发给下一跳。调用方只能在
+// mTLS、受信 proxy 或等价认证边界之后设置 TrustedRemote，不能让公网 header 自行声明信任。
+type ObservabilityIngressTrustPolicy struct {
+	TrustedRemote bool
+}
+
+// ObservabilityIngressPropagator 只用于 HTTP ingress；出站传播必须使用同一个对象，
+// 才能保证从不受信入口提取的 tracestate 不会在第三方调用时被意外继承。
+type ObservabilityIngressPropagator struct {
+	trust ObservabilityIngressTrustPolicy
+}
+
+func NewObservabilityIngressPropagator(trust ObservabilityIngressTrustPolicy) ObservabilityIngressPropagator {
+	return ObservabilityIngressPropagator{trust: trust}
+}
+
+func (p ObservabilityIngressPropagator) Inject(ctx context.Context, carrier propagation.TextMapCarrier) {
+	NewObservabilityPropagator().Inject(ctx, carrier)
+}
+
+func (p ObservabilityIngressPropagator) Extract(ctx context.Context, carrier propagation.TextMapCarrier) context.Context {
+	ctx = observabilityBaggagePropagator{}.Extract(ctx, carrier)
+	traceContext := propagation.TraceContext{}.Extract(ctx, carrier)
+	spanContext := trace.SpanContextFromContext(traceContext)
+	if !spanContext.IsValid() || p.trust.TrustedRemote {
+		return traceContext
+	}
+	// 保留 trace identity 便于排障关联，但清除远端 sample 与 tracestate；本地
+	// exporter sampler 对 remote 两个分支都使用本地预算，因此不会被 `-00`/`-01` 绕过。
+	trustedByLocalPolicy := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    spanContext.TraceID(),
+		SpanID:     spanContext.SpanID(),
+		TraceFlags: 0,
+		Remote:     true,
+	})
+	return trace.ContextWithRemoteSpanContext(traceContext, trustedByLocalPolicy)
+}
+
+func (p ObservabilityIngressPropagator) Fields() []string {
+	return NewObservabilityPropagator().Fields()
 }
 
 // observabilityBaggagePropagator 在进程边界重新校验 baggage，而不是直接复用

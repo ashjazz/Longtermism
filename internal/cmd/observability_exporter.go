@@ -126,13 +126,18 @@ func BuildObservabilityOTLPExporterConfig(input ObservabilityOTLPExporterConfigI
 	if err != nil {
 		return ObservabilityOTLPExporterConfig{}, err
 	}
+	return buildObservabilityOTLPExporterConfig(runtime, input.Resource, input.SamplingRatio)
+}
+
+// buildObservabilityOTLPExporterConfig 只接收已解析的安全 runtime 快照。Bootstrap 用它
+// 保证原始配置（尤其 header source）不会在 resource/exporter 阶段被重复解析。
+func buildObservabilityOTLPExporterConfig(runtime ObservabilityRuntimeConfig, resourceInput ObservabilityResourceInput, samplingRatio float64) (ObservabilityOTLPExporterConfig, error) {
 	if !runtime.CollectorEnabled {
 		return ObservabilityOTLPExporterConfig{}, fmt.Errorf("collector mode is required for OTLP exporter")
 	}
-	if math.IsNaN(input.SamplingRatio) || input.SamplingRatio < 0 || input.SamplingRatio > 1 {
+	if math.IsNaN(samplingRatio) || samplingRatio < 0 || samplingRatio > 1 {
 		return ObservabilityOTLPExporterConfig{}, fmt.Errorf("sampling ratio must be within [0,1]")
 	}
-	resourceInput := input.Resource
 	if resourceInput.Environment == "" {
 		resourceInput.Environment = runtime.Environment
 	} else if !strings.EqualFold(strings.TrimSpace(resourceInput.Environment), strings.TrimSpace(runtime.Environment)) {
@@ -148,7 +153,7 @@ func BuildObservabilityOTLPExporterConfig(input ObservabilityOTLPExporterConfigI
 		Endpoint:          runtime.Collector.Endpoint,
 		Insecure:          runtime.Collector.Insecure,
 		Timeout:           runtime.Collector.Timeout,
-		SamplingRatio:     input.SamplingRatio,
+		SamplingRatio:     samplingRatio,
 		HeaderEnvName:     runtime.Collector.HeaderEnvName,
 		CredentialPresent: runtime.Collector.CredentialPresent,
 		Resource:          ObservabilityResource{Attributes: cloneResourceAttributes(observabilityResource.Attributes)},
@@ -162,7 +167,11 @@ func NewObservabilityOTLPExporter(ctx context.Context, input ObservabilityOTLPEx
 	if err != nil {
 		return nil, err
 	}
-	headers, err := parseOTLPHeaders(input.Runtime.Collector.HeaderValue)
+	return newObservabilityOTLPExporterFromConfig(ctx, config, input.Runtime.Collector.HeaderValue)
+}
+
+func newObservabilityOTLPExporterFromConfig(ctx context.Context, config ObservabilityOTLPExporterConfig, headerValue string) (*ObservabilityOTLPExporter, error) {
+	headers, err := parseOTLPHeaders(headerValue)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +185,7 @@ func NewObservabilityOTLPExporter(ctx context.Context, input ObservabilityOTLPEx
 		grpcConnection: grpcConnection,
 		tracerProvider: trace.NewTracerProvider(
 			trace.WithResource(sdkResource),
-			trace.WithSampler(trace.ParentBased(trace.TraceIDRatioBased(config.SamplingRatio))),
+			trace.WithSampler(newObservabilitySampler(config.SamplingRatio)),
 			trace.WithBatcher(traceExporter),
 		),
 		meterProvider: metric.NewMeterProvider(
@@ -185,6 +194,17 @@ func NewObservabilityOTLPExporter(ctx context.Context, input ObservabilityOTLPEx
 		),
 	}
 	return provider, nil
+}
+
+// newObservabilitySampler 对公网可控的 remote sampled bit 保持本地预算的最终裁决。
+// 默认 ParentBased 会让 remote `-00` 永远不采样、remote `-01` 永远采样，二者都可
+// 被攻击者用来规避或耗尽观测预算；因此两条 remote 分支都显式使用本地 ratio。
+func newObservabilitySampler(ratio float64) trace.Sampler {
+	localBudget := trace.TraceIDRatioBased(ratio)
+	return trace.ParentBased(localBudget,
+		trace.WithRemoteParentSampled(trace.TraceIDRatioBased(ratio)),
+		trace.WithRemoteParentNotSampled(trace.TraceIDRatioBased(ratio)),
+	)
 }
 
 func newOTLPResource(input ObservabilityResource) *resource.Resource {

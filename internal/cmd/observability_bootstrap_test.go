@@ -16,6 +16,8 @@ import (
 func TestBuildObservabilityBootstrapNormalizesRuntimeOwnership(t *testing.T) {
 	// 这组契约防止 enabled、mode、signals 与 smoke 分别在路由和 exporter 层解释，
 	// 否则同一份配置可能在不同启动路径中产生不同的网络副作用。
+	// 测试不得永久替换进程的 OTel provider，避免影响同包的其它 lifecycle 契约。
+	replaceOTelGlobalProviderInstallerForTest(t)
 	tests := []struct {
 		name              string
 		input             ObservabilityBootstrapInput
@@ -158,13 +160,16 @@ func TestBuildObservabilityBootstrapFailsFastBeforeGlobalInstallation(t *testing
 func TestBuildObservabilityBootstrapReusesOneProviderAndMiddleware(t *testing.T) {
 	dependencies := newObservabilityBootstrapDependenciesStub()
 	installer := replaceOTelGlobalProviderInstallerForTest(t)
+	resetObservabilityBootstrapForTest(t)
 	input := collectorBootstrapInput()
+	bootstrapDependencies := dependencies.dependencies()
+	bootstrapDependencies.state = nil
 
-	first, err := BuildObservabilityBootstrap(context.Background(), input, dependencies.dependencies())
+	first, err := BuildObservabilityBootstrap(context.Background(), input, bootstrapDependencies)
 	if err != nil {
 		t.Fatalf("first BuildObservabilityBootstrap() error = %v", err)
 	}
-	second, err := BuildObservabilityBootstrap(context.Background(), input, dependencies.dependencies())
+	second, err := BuildObservabilityBootstrap(context.Background(), input, bootstrapDependencies)
 	if err != nil {
 		t.Fatalf("second BuildObservabilityBootstrap() error = %v", err)
 	}
@@ -209,13 +214,20 @@ func TestObservabilityIngressTrustPolicyPreventsRemoteSamplingAndTracestateRelay
 	if spanContext.IsSampled() {
 		t.Fatal("untrusted remote sampled bit bypassed local sampling budget")
 	}
-	provider := trace.NewTracerProvider(trace.WithSampler(trace.ParentBased(trace.TraceIDRatioBased(0))))
+	provider := trace.NewTracerProvider(trace.WithSampler(newObservabilitySampler(0)))
 	defer func() { _ = provider.Shutdown(context.Background()) }()
 	_, localSpan := provider.Tracer("t036a-ingress").Start(ctx, "local-budget")
 	if localSpan.SpanContext().IsSampled() {
 		t.Fatal("untrusted remote sampled bit bypassed the zero local sampling budget")
 	}
 	localSpan.End()
+	fullBudgetProvider := trace.NewTracerProvider(trace.WithSampler(newObservabilitySampler(1)))
+	defer func() { _ = fullBudgetProvider.Shutdown(context.Background()) }()
+	_, fullBudgetSpan := fullBudgetProvider.Tracer("t036a-ingress").Start(ctx, "local-full-budget")
+	if !fullBudgetSpan.SpanContext().IsSampled() {
+		t.Fatal("untrusted remote not sampled bit prevented the full local sampling budget")
+	}
+	fullBudgetSpan.End()
 	outbound := propagationCarrier{}
 	propagator.Inject(ctx, outbound)
 	if outbound.Get("tracestate") != "" {
@@ -271,6 +283,7 @@ func newObservabilityBootstrapDependenciesStub() *observabilityBootstrapDependen
 
 func (s *observabilityBootstrapDependenciesStub) dependencies() ObservabilityBootstrapDependencies {
 	return ObservabilityBootstrapDependencies{
+		state: &observabilityBootstrapState{},
 		BuildCollector: func(context.Context, ObservabilityOTLPExporterConfig) (ObservabilityLifecycleExporter, error) {
 			s.collectorCalls++
 			if s.collectorErr != nil {
@@ -336,6 +349,19 @@ func replaceOTelGlobalProviderInstallerForTest(t *testing.T) *observabilityGloba
 		processGlobalProviders.mu.Unlock()
 	})
 	return installer
+}
+
+func resetObservabilityBootstrapForTest(t *testing.T) {
+	t.Helper()
+	processObservabilityBootstrap.mu.Lock()
+	original := processObservabilityBootstrap.bootstrap
+	processObservabilityBootstrap.bootstrap = nil
+	processObservabilityBootstrap.mu.Unlock()
+	t.Cleanup(func() {
+		processObservabilityBootstrap.mu.Lock()
+		processObservabilityBootstrap.bootstrap = original
+		processObservabilityBootstrap.mu.Unlock()
+	})
 }
 
 type propagationCarrier map[string]string
