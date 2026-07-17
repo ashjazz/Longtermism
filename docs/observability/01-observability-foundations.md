@@ -35,7 +35,7 @@
 
 1. `internal/eval/smoke/infrastructure_span.go` 构造 HTTP/service span 快照，记录 method、path、status、duration、`request_id`、`service_trace_id`、`span_id` 和 outcome。
 2. `internal/eval/smoke/infrastructure_export_failure.go` 验证 exporter 或 collector 不可用时，业务结果不能被观测上报失败覆盖；失败状态必须保留为可诊断信息。
-3. `internal/cmd/observability.go` 将 no-op、local 和 platform sink 做成显式配置结果，默认路径不访问外部平台。
+3. `internal/cmd/observability_bootstrap.go` 将 enabled/mode/signals 归一到 noop、local 或 collector 装配边界；应用只认识 Collector，默认路径不访问网络。
 4. `internal/cmd/observability_lifecycle.go` 管理基础设施 tracer provider/exporter 的初始化与关闭，并记录失败状态和错误消息。
 5. `pkg/ai/obs/correlation.go` 提供 `request_id`、`service_trace_id`、`span_id`、`ai_trace_id` 等关联身份，为后续双平面链路打地基。
 
@@ -43,7 +43,7 @@
 
 ```bash
 go test ./internal/eval/smoke -run 'TestInfrastructureSpan|TestInfrastructureExportFailure' -count=1
-go test ./internal/cmd -run 'TestResolveObservabilityConfig|TestObservabilityTracerProviderLifecycle|TestBuildObservabilityResource' -count=1
+go test ./internal/cmd -run 'TestBuildObservabilityBootstrap|TestObservabilityTracerProviderLifecycle|TestBuildObservabilityResource' -count=1
 go test ./pkg/ai/obs -run 'TestCorrelationIdentity|TestBaggage' -count=1
 ```
 
@@ -60,7 +60,7 @@ go test ./pkg/ai/obs -run 'TestCorrelationIdentity|TestBaggage' -count=1
 本项目在基础设施平面采用以下实践：
 
 - **先离线可验证，再接真实平台**：默认测试必须不依赖 collector、Langfuse endpoint 或真实 API key。真实平台 smoke 必须显式 opt-in。
-- **配置解析即安全边界**：当用户选择 platform sink 但缺少 endpoint 或凭据时，解析结果应退回不可外连的 no-op 状态，而不是让后续调用方自己组合多个字段判断。
+- **配置解析即安全边界**：collector mode 缺 endpoint、协议或超时时必须启动失败；不得静默退回 no-op。
 - **上报失败不影响主流程**：observability exporter 是诊断能力，不应成为业务可用性的单点故障。失败必须可记录，但不能覆盖业务结果。
 - **基础设施字段低敏化**：HTTP path、method、status、duration、trace/span identity 可以进入普通观测；请求体、query 原文、header token 和外部响应原文不能进入普通观测。
 - **字段语义显式**：`request_id` 是请求查询入口，`service_trace_id` 是基础设施 trace 身份，`span_id` 是基础设施 span 身份。不要用一个字符串字段同时表达多个身份。
@@ -86,9 +86,9 @@ go test ./pkg/ai/obs -run 'TestCorrelationIdentity|TestBaggage' -count=1
 
 基础设施平面的降级策略分为三层：
 
-1. **No-op sink**：观测未启用或平台配置不完整时，不进行外部上报，保证默认路径安全。
+1. **No-op mode**：观测未启用时不创建 provider 或网络 exporter，保证默认路径安全。
 2. **Local sink / in-memory smoke**：开发和 CI 中保留可断言的本地记录，证明字段、顺序、失败状态和隐私边界正确。
-3. **Platform exporter failure protection**：真实平台不可用时，业务流程继续返回业务结果，同时记录 `telemetry_export_failed` 等可诊断状态。
+3. **Collector exporter failure protection**：Collector 不可用时，业务流程继续返回业务结果，同时记录 `telemetry_export_failed` 等可诊断状态。
 
 降级的边界是：可以降低上报能力，不能伪造业务事实；可以跳过外部平台，不能丢掉本地诊断证据；可以隐藏敏感原文，不能隐藏失败分类。
 
@@ -112,7 +112,7 @@ go test ./pkg/ai/obs -run 'TestCorrelationIdentity|TestBaggage' -count=1
 - 测试：
   - `internal/eval/smoke/infrastructure_span_test.go`
   - `internal/eval/smoke/infrastructure_export_failure_test.go`
-  - `internal/cmd/observability_config_test.go`
+  - `internal/cmd/observability_bootstrap_test.go`
   - `internal/cmd/observability_lifecycle_test.go`
   - `internal/cmd/observability_resource_test.go`
   - `pkg/ai/obs/baggage_policy_test.go`

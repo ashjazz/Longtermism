@@ -157,6 +157,20 @@ func TestBuildObservabilityBootstrapFailsFastBeforeGlobalInstallation(t *testing
 	}
 }
 
+func TestBuildObservabilityBootstrapRejectsCollectorModeWithoutCollectorConfig(t *testing.T) {
+	dependencies := newObservabilityBootstrapDependenciesStub()
+	input := collectorBootstrapInput()
+	input.Runtime.Collector = ObservabilityCollectorConfigInput{}
+
+	_, err := BuildObservabilityBootstrap(context.Background(), input, dependencies.dependencies())
+	if err == nil {
+		t.Fatal("BuildObservabilityBootstrap() error = nil, want missing Collector configuration rejection")
+	}
+	if dependencies.collectorCalls != 0 || dependencies.providerCalls != 0 || dependencies.middlewareCalls != 0 {
+		t.Fatal("missing Collector configuration silently fell back to an assembly path")
+	}
+}
+
 func TestBuildObservabilityBootstrapReusesOneProviderAndMiddleware(t *testing.T) {
 	dependencies := newObservabilityBootstrapDependenciesStub()
 	installer := replaceOTelGlobalProviderInstallerForTest(t)

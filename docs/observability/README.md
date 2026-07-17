@@ -32,7 +32,7 @@
 6. [平台接入取舍](06-platform-integration-tradeoffs.md)
    - 目标：理解默认离线验证、真实平台 opt-in smoke、adapter 边界和 SDK 污染风险。
    - 工程落点：OTel/Langfuse adapter、配置占位、真实平台 smoke 和上报失败降级。
-   - 测试证据：`internal/cmd/observability_config_test.go`、`internal/cmd/observability_lifecycle_test.go`、`pkg/ai/obs/otel_tracer_test.go`。
+   - 测试证据：`internal/cmd/observability_bootstrap_test.go`、`internal/cmd/observability_lifecycle_test.go`、`pkg/ai/obs/otel_tracer_test.go`。
 
 7. [双平面关联](07-dual-plane-correlation.md)
    - 目标：理解基础 span、AI observation、eval evidence 的 parent/link/baggage 规则。
@@ -48,12 +48,12 @@
 
 | 主题 | 工程切片 | 推荐验证命令 |
 | --- | --- | --- |
-| 基础设施平面 | 配置、resource、lifecycle、HTTP/service span、export failure | `go test ./internal/cmd ./internal/eval/smoke -run 'TestResolveObservabilityConfig|TestBuildObservabilityResource|TestObservabilityTracerProviderLifecycle|TestInfrastructure' -count=1` |
+| 基础设施平面 | bootstrap、resource、lifecycle、HTTP/service span、export failure | `go test ./internal/cmd ./internal/eval/smoke -run 'TestBuildObservabilityBootstrap|TestBuildObservabilityResource|TestObservabilityTracerProviderLifecycle|TestInfrastructure' -count=1` |
 | 分布式追踪 | 关联身份、context 传播、baggage 白名单、link 规则 | `go test ./pkg/ai/obs -run 'TestCorrelationIdentity|TestBaggage|TestBuildDualPlaneLinks' -count=1` |
 | AI 语义平面 | observation type、mapper、retriever observation、agent step observation | `go test ./pkg/ai/obs ./pkg/ai/rag ./pkg/ai/agent -run 'TestValidateObservationType|TestMapTraceToSpanSnapshot|TestBasicRetrieverRecordsRetrieval|TestExecutorRecords' -count=1` |
 | 评估证据 | dataset identity、evidence、runner trace link、eval trace smoke | `go test ./pkg/ai/eval ./internal/eval/smoke -run 'TestNewEvaluationEvidence|TestRunner.*Trace|TestEvalTraceLinkSmoke' -count=1` |
 | 隐私边界 | safe summary、redaction、logger/mapper/baggage/privacy smoke | `go test ./pkg/ai/obs ./internal/eval/smoke -run 'TestScanForbiddenPayloadFields|TestCrossAdapterPrivacyContract|TestObservabilityPrivacySmoke' -count=1` |
-| 平台接入 | no-op/local/platform 配置、resource/lifecycle、OTel-style adapter | `go test ./internal/cmd ./pkg/ai/obs -run 'TestResolveObservabilityConfig|TestObservabilityTracerProviderLifecycle|TestOTelTracer' -count=1` |
+| 平台接入 | noop/local/collector bootstrap、resource/lifecycle、OTel-style adapter | `go test ./internal/cmd ./pkg/ai/obs -run 'TestBuildObservabilityBootstrap|TestObservabilityTracerProviderLifecycle|TestOTelTracer' -count=1` |
 | 双平面关联 | request chain、parent/link、eval evidence 回链、完整链路 smoke | `go test ./pkg/ai/obs ./internal/eval/smoke -run 'TestRequestObservationChainRecorder|TestBuildDualPlaneLinks|TestObservabilityChainSmoke' -count=1` |
 
 ## 使用方式

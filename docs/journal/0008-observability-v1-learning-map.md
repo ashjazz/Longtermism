@@ -35,7 +35,7 @@ Observability v1 的学习路径按从底层事实到高层评估的顺序展开
 
 - `internal/eval/smoke/infrastructure_span.go` 验证基础设施 span 的最小烟测。
 - `internal/eval/smoke/infrastructure_export_failure.go` 验证 exporter 失败不能覆盖业务结果。
-- `internal/cmd/observability.go` 和 `internal/cmd/observability_lifecycle.go` 验证默认 local/no-op、真实平台 opt-in 和生命周期降级。
+- `internal/cmd/observability_bootstrap.go` 和 `internal/cmd/observability_lifecycle.go` 验证 noop/local/collector 装配、Collector-only 边界和生命周期降级。
 - `docs/observability/01-observability-foundations.md` 和 `docs/observability/02-distributed-tracing.md` 记录理论基础。
 
 ### AI 语义平面
@@ -95,7 +95,7 @@ AI 语义平面负责 Agent 领域事实：generation、retriever、tool、agent
 - `pkg/ai/obs/otel_mapper.go` 将核心 trace 映射为 OTel-style span snapshot。
 - `pkg/ai/obs/otel_tracer.go` 保持 adapter 壳层，不猜测缺失语义。
 - `internal/cmd/observability_resource.go` 生成基础设施 resource 摘要。
-- `internal/cmd/observability.go` 明确 platform sink 的配置可用性。
+- `internal/cmd/observability_bootstrap.go` 明确 noop/local/collector 的装配与 Collector-only 边界。
 - `docs/observability/06-platform-integration-tradeoffs.md` 记录平台接入取舍。
 
 ## 工程验证索引
@@ -106,7 +106,7 @@ AI 语义平面负责 Agent 领域事实：generation、retriever、tool、agent
 go test ./pkg/ai/obs -run 'TestCorrelationIdentity|TestBaggageFieldsFromCorrelationIdentity|TestBuildDualPlaneLinks|TestRequestObservationChainRecorder|TestMapTraceToSpanSnapshot|TestOTelTracerContract|TestCrossAdapterPrivacyContractRejectsRawPayload' -count=1
 go test ./pkg/ai/eval -run 'TestNewEvaluationEvidence|TestValidateEvaluationEvidence|TestRunnerAddsEvaluationEvidence|TestRunnerReportsMissingTraceLink|TestRunnerAddsFailedRegressionEvidence' -count=1
 go test ./internal/eval/smoke -run 'TestInfrastructureSpan|TestInfrastructureExportFailure|TestObservabilityChainSmoke|TestEvalTraceLinkSmoke|TestObservabilityPrivacySmoke' -count=1
-go test ./internal/cmd -run 'TestResolveObservabilityConfig|TestBuildObservabilityResource|TestObservabilityTracerProviderLifecycle' -count=1
+go test ./internal/cmd -run 'TestBuildObservabilityBootstrap|TestBuildObservabilityResource|TestObservabilityTracerProviderLifecycle' -count=1
 ```
 
 这些命令不是为了证明文档存在，而是为了证明文档中的学习主题确实对应可运行的工程切片。
