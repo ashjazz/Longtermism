@@ -93,7 +93,7 @@
 - [X] T043 [P] [US1] 在 `hack/observability/glog_filelog_fixture_test.sh` 编写 glog->filelog->Loki 配置映射 RED 测试；质量门控：fixture 覆盖 JSON、trace correlation、malformed line 隔离、文件 rotation、Loki native OTLP/structured metadata/低基数 label 与 secret/raw payload 丢弃，作为 T055/T058 的先行测试。
 - [X] T044 [P] [US1] 在 `hack/observability/compose_grafana_test.sh` 编写 Grafana profile 与 wiring 静态 RED 测试；质量门控：覆盖固定镜像、loopback 端口、healthcheck、resource limit、独立 volume/retention、Tempo/Prometheus 配置引用、Grafana datasource UID、Langfuse 依赖、Make target dry-run 和 12GiB/8vCPU/20GiB 预算声明，作为 T056/T057/T059/T060/T066 的先行测试。
 - [X] T045 [P] [US1] 在 `hack/observability/grafana_dashboard_test.go` 编写基础 dashboard JSON RED 测试；质量门控：断言 request/error/latency、export failure、queue、日志到 trace 关联查询均使用 provisioned datasource UID 和低基数 labels。
-- [ ] T046 [P] [US1] 在 `hack/observability/grafana_alerts_test.go` 编写基础告警规则 RED 测试；质量门控：覆盖 HTTP error、exporter send/enqueue failure、queue saturation/age、storage pressure 的 firing/resolved 条件和稳定 component ID。
+- [X] T046 [P] [US1] 在 `hack/observability/grafana_alerts_test.go` 编写基础告警规则 RED 测试；质量门控：覆盖 HTTP error、exporter send/enqueue failure、queue saturation/age、storage pressure 的 firing/resolved 条件和稳定 component ID。
 - [ ] T047 [P] [US1] 在 `internal/observability/backend/grafana_query_test.go` 编写 Tempo/Loki/Prometheus/Grafana 查询客户端 RED 测试；质量门控：httptest 覆盖成功、认证/超时/5xx/畸形响应和旧数据，错误只保留 backend+error_class。
 - [ ] T048 [P] [US1] 在 `internal/observability/smoke/infra_runner_test.go` 编写 infra E2E runner RED 测试；质量门控：使用 fake backend 证明基线/增量查询、AI 负向断言、60 秒 deadline、cleanup 和 schema report，禁止只检查容器 healthy。
 
