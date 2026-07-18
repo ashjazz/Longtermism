@@ -140,11 +140,11 @@ func assertInfraSmokeControllerEnvelope(t *testing.T, envelope v1.InfraSmokeErro
 		t.Fatalf("error envelope = %s, want code=%d message=%q data=null", payload, wantStatusCode, wantMessage)
 	}
 	assertInfraSmokeControllerMeta(t, decoded.Meta, marker, wantSmokeMeta)
-	if internalErr != nil && strings.Contains(payload, internalErr.Error()) {
+	if internalErr != nil && strings.Contains(string(payload), internalErr.Error()) {
 		t.Fatalf("controller error envelope leaked full internal failure detail: %s", payload)
 	}
 	for _, forbidden := range []string{"Authorization", "synthetic-secret", "prompt=private", "private.example.invalid"} {
-		if strings.Contains(payload, forbidden) {
+		if strings.Contains(string(payload), forbidden) {
 			t.Fatalf("controller error envelope leaked internal failure detail: %s", payload)
 		}
 	}
