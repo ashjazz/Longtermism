@@ -1,20 +1,18 @@
 // Package observability 固定 infra-smoke 的 HTTP API 契约。
 //
-// 这些测试只保护 T049 的请求/响应类型与输入规则；真实路由注册、disabled 404
-// 和 X-Request-ID header 的运行时行为由后续 T040/T052 在应用装配层覆盖。
+// 这些测试只保护 T049 的请求/响应类型与输入规则。GoFrame 的 raw BindHandler
+// 缺少验证 `in:"header"` 绑定优先级所需的请求结构元数据；该运行时边界行为由
+// 后续 T051/T052 在真实控制器与应用装配层覆盖。
 package observability
 
 import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/gogf/gf/v2/net/ghttp"
-	"github.com/gogf/gf/v2/os/gsession"
 	"github.com/gogf/gf/v2/util/gvalid"
 )
 
@@ -32,6 +30,9 @@ func TestInfraSmokeRequestContract(t *testing.T) {
 	if !ok {
 		t.Fatal("InfraSmokeReq must expose the smoke run marker")
 	}
+	if SmokeRunIDHeader != "X-Observability-Smoke-Run-ID" {
+		t.Fatalf("smoke run marker header = %q, want OpenAPI contract header", SmokeRunIDHeader)
+	}
 	if runMarker.Tag.Get("p") != SmokeRunIDHeader || runMarker.Tag.Get("in") != "header" || runMarker.Tag.Get("json") != "-" {
 		t.Fatal("smoke run marker must be header-only and never read from a JSON body")
 	}
@@ -43,6 +44,7 @@ func TestInfraSmokeRequestContract(t *testing.T) {
 	}{
 		{name: "allows omitted marker", marker: ""},
 		{name: "allows eight byte opaque marker", marker: "run-0001"},
+		{name: "allows dots and leading punctuation permitted by the contract", marker: ".run-001"},
 		{name: "allows 128 byte opaque marker", marker: "r" + strings.Repeat("a", 127)},
 		{name: "rejects marker shorter than eight bytes", marker: "short", wantErr: true},
 		{name: "rejects marker longer than 128 bytes", marker: "r" + strings.Repeat("a", 128), wantErr: true},
@@ -57,47 +59,6 @@ func TestInfraSmokeRequestContract(t *testing.T) {
 			err := gvalid.New().Data(InfraSmokeReq{SmokeRunID: tt.marker}).Run(context.Background())
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("validation error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestInfraSmokeRequestBindsRunMarkerFromHeaderOnly(t *testing.T) {
-	server := newInfraSmokeRequestBindingServer(t)
-	tests := []struct {
-		name       string
-		query      string
-		body       string
-		header     string
-		wantMarker string
-	}{
-		{name: "uses the header over query and body", query: "query-marker", body: "body-marker", header: "run-header-01", wantMarker: "run-header-01"},
-		{name: "rejects query when header is absent", query: "query-marker"},
-		{name: "rejects body when header is absent", body: "body-marker"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/contract?"+SmokeRunIDHeader+"="+tt.query, strings.NewReader(`{"`+SmokeRunIDHeader+`":"`+tt.body+`"}`))
-			request.Header.Set("Content-Type", "application/json")
-			if tt.header != "" {
-				request.Header.Set(SmokeRunIDHeader, tt.header)
-			}
-			response := httptest.NewRecorder()
-
-			server.ServeHTTP(response, request)
-
-			if response.Code != http.StatusOK {
-				t.Fatalf("header binding response status = %d, want %d", response.Code, http.StatusOK)
-			}
-			var parsed struct {
-				SmokeRunID string `json:"smoke_run_id"`
-			}
-			if err := json.NewDecoder(response.Body).Decode(&parsed); err != nil {
-				t.Fatalf("decode header binding response: %v", err)
-			}
-			if parsed.SmokeRunID != tt.wantMarker {
-				t.Fatalf("bound smoke run marker = %q, want %q", parsed.SmokeRunID, tt.wantMarker)
 			}
 		})
 	}
@@ -213,27 +174,6 @@ func assertInfraSmokeMetaHasRequestIDJSONKey(t *testing.T, meta InfraSmokeMeta) 
 	if raw["request_id"] == nil {
 		t.Fatal("request_id must not be omitted when its value is empty")
 	}
-}
-
-func newInfraSmokeRequestBindingServer(t *testing.T) *ghttp.Server {
-	t.Helper()
-	server := ghttp.GetServer("t037-" + strings.ReplaceAll(t.Name(), "/", "-"))
-	server.SetDumpRouterMap(false)
-	server.SetSessionStorage(gsession.NewStorageMemory())
-	server.SetPort(0)
-	server.BindHandler("/contract", func(request *ghttp.Request) {
-		var input InfraSmokeReq
-		if err := request.Parse(&input); err != nil {
-			request.Response.Status = http.StatusBadRequest
-			request.Response.WriteJsonExit(map[string]string{"error": "invalid request"})
-		}
-		request.Response.WriteJsonExit(map[string]string{"smoke_run_id": input.SmokeRunID})
-	})
-	if err := server.Start(); err != nil {
-		t.Fatalf("start infra smoke request binding server: %v", err)
-	}
-	t.Cleanup(func() { server.Shutdown() })
-	return server
 }
 
 func boolToInt(value bool) int {
