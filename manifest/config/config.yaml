@@ -93,3 +93,7 @@ observability:
   smoke:
     # infra-smoke route 默认不注册；真实后端扫描另由命令层显式 opt-in。
     enabled: false
+    rate_limit:
+      # 仅保护诊断路由，避免与 health/chat 共用令牌桶或把高基数身份放入限流状态。
+      rate: 10
+      period: "1m"

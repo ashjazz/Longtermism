@@ -102,7 +102,7 @@
 - [X] T049 [US1] 在 `api/v1/observability/infra_smoke.go` 定义 GoFrame Req/Res 与统一 envelope 类型；质量门控：使 T037 GREEN，字段与 `contracts/http-api.yaml` 一致，run marker 最大 128 字节且不接受额外输入。
 - [X] T050 [US1] 在 `internal/logic/observability/infra_smoke.go` 实现纯基础设施 usecase；质量门控：使 T038 GREEN，不创建 `ai_trace_id` 或 AI plane marker，telemetry failure 只记录诊断事实。
 - [X] T051 [US1] 在 `internal/controller/observability/infra_smoke.go` 实现薄 controller；质量门控：使 T039 GREEN，只做校验/调用/错误映射，不包含 backend 查询或业务观测拼装。
-- [ ] T052 [US1] 在 `internal/cmd/cmd.go` 消费 T036B 已准备的应用观测装配结果，在启动前初始化并在 server 退出路径以 deadline flush/shutdown，然后注册受配置保护的 infra-smoke 路由、request middleware 与配置化限流；质量门控：使 T040 GREEN，并运行 health 与路由回归测试，避免重复 provider/middleware，限流状态不得进入 AI 平面。
+- [X] T052 [US1] 在 `internal/cmd/cmd.go` 消费 T036B 已准备的应用观测装配结果，在启动前初始化并在 server 退出路径以 deadline flush/shutdown，然后注册受配置保护的 infra-smoke 路由、request middleware 与配置化限流；质量门控：使 T040 GREEN，并运行 health 与路由回归测试，避免重复 provider/middleware，限流状态不得进入 AI 平面。
 - [ ] T053 [US1] 在 `internal/observability/http_logging.go` 实现 HTTP completion/error 日志 hook；质量门控：使 T041 GREEN，日志写 JSONL 到配置文件且业务响应不等待 Loki。
 - [ ] T054 [US1] 在 `deploy/observability/collector/collector-grafana.yaml` 实现方案 C、metrics/filelog、完整 trace tail sampling 与三套独立持久队列配置；质量门控：使 T042 GREEN，公共 processor 只在 ingress，infra-only 数据不能通过 AI downstream filter，smoke/error/regression 不能被采样丢弃。
 - [ ] T055 [US1] 在 `manifest/config/glog-observability.yaml` 配置结构化 JSON 文件、rotation 与 shared-volume 路径；质量门控：使 T043 GREEN，默认日志不得包含 raw prompt/output，文件权限与保留边界明确。

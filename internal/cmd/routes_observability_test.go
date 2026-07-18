@@ -8,12 +8,14 @@ import (
 	"testing"
 	"time"
 
+	v1observability "github.com/ashjazz/Longtermism/api/v1/observability"
+	controllerobservability "github.com/ashjazz/Longtermism/internal/controller/observability"
+	logicobservability "github.com/ashjazz/Longtermism/internal/logic/observability"
 	"github.com/ashjazz/Longtermism/pkg/ai/ratelimit"
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/os/gsession"
 )
 
-const infraSmokeHTTPPath = "/api/v1/observability/infra-smoke"
 const infraSmokeRouteTestRequestID = "req-t040-route"
 const infraSmokeRouteTestMarker = "run-t040-route"
 
@@ -106,6 +108,55 @@ func TestRegisterObservabilityRoutesIsIdempotent(t *testing.T) {
 	if routes := countInfraSmokeRoutes(server.GetRoutes()); routes != 1 {
 		t.Fatalf("infra-smoke route count = %d, want exactly one", routes)
 	}
+}
+
+// 该测试覆盖真实 HTTP 边界，而非仅检查 Req tag：query 或 body 中伪造同名字段时，
+// smoke marker 仍必须只来自受控 header，避免未验证输入进入 span 与结构化日志。
+func TestDefaultInfraSmokeHandlerReadsRunMarkerFromHeaderOnly(t *testing.T) {
+	server := newObservabilityRouteTestServer(t)
+	usecase := logicobservability.NewInfraSmokeUsecase(logicobservability.InfraSmokeUsecaseDependencies{})
+	controller := controllerobservability.NewV1(controllerobservability.InfraSmokeControllerDependencies{
+		SmokeEnabled:         true,
+		Runner:               usecase,
+		RequestIDFromContext: RequestIDFromContext,
+	})
+	input := newObservabilityRoutesInput(true, newInfraSmokeHTTPHandler(controller), ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}), &observabilityRoutesState{})
+	if err := RegisterObservabilityRoutes(server, input); err != nil {
+		t.Fatalf("RegisterObservabilityRoutes() error = %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, infraSmokeHTTPPath+"?"+v1observability.SmokeRunIDHeader+"=query-marker", strings.NewReader(`{"`+v1observability.SmokeRunIDHeader+`":"body-marker"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(RequestIDHeader, infraSmokeRouteTestRequestID)
+	request.Header.Set(v1observability.SmokeRunIDHeader, infraSmokeRouteTestMarker)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"smoke_run_id":"`+infraSmokeRouteTestMarker+`"`) || strings.Contains(response.Body.String(), "query-marker") || strings.Contains(response.Body.String(), "body-marker") {
+		t.Fatalf("header-only infra smoke response = status:%d body:%s", response.Code, response.Body.String())
+	}
+}
+
+func TestRegisterObservabilityRoutesPreservesGeneratedRequestID(t *testing.T) {
+	server := newObservabilityRouteTestServer(t)
+	handler := &infraSmokeHandlerStub{}
+	input := newObservabilityRoutesInput(true, handler.handle, ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}), &observabilityRoutesState{})
+	if err := RegisterObservabilityRoutes(server, input); err != nil {
+		t.Fatalf("RegisterObservabilityRoutes() error = %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, infraSmokeHTTPPath, nil)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || handler.requestID() == "" || response.Header().Get(RequestIDHeader) != handler.requestID() {
+		t.Fatalf("generated request identity diverged: status=%d handler=%q response=%q", response.Code, handler.requestID(), response.Header().Get(RequestIDHeader))
+	}
+}
+
+// 退出路径必须能安全消费 noop bootstrap：默认离线配置没有 exporter/provider，但仍要
+// 经过同一 deadline-bound flush/shutdown 流程，避免生产与本地拥有两套生命周期语义。
+func TestShutdownObservabilityBootstrapAllowsNoopBootstrap(t *testing.T) {
+	shutdownObservabilityBootstrap(&ObservabilityBootstrap{})
 }
 
 func newObservabilityRouteTestServer(t *testing.T) *ghttp.Server {

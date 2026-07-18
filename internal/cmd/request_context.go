@@ -26,6 +26,13 @@ type ResponseMeta struct {
 // RequestIdentityMiddleware 为每个请求建立不含业务含义的关联身份。客户端可传入
 // 合法 ID 以便跨系统检索；非法或多值 header 不能进入 handler、日志或响应正文。
 func RequestIdentityMiddleware(request *ghttp.Request) {
+	// A route-specific middleware may run before the global fallback in GoFrame's matching
+	// order. Reusing the already-established identity prevents a second random ID from
+	// replacing the value observed by the handler, span, or response envelope.
+	if RequestIDFromContext(request.GetCtx()) != "" {
+		request.Middleware.Next()
+		return
+	}
 	requestID, valid, err := resolveRequestID(request.Header.Values(RequestIDHeader))
 	if err != nil {
 		request.Response.Status = http.StatusInternalServerError
