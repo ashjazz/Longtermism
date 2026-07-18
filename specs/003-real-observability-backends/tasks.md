@@ -95,7 +95,7 @@
 - [X] T045 [P] [US1] 在 `hack/observability/grafana_dashboard_test.go` 编写基础 dashboard JSON RED 测试；质量门控：断言 request/error/latency、export failure、queue、日志到 trace 关联查询均使用 provisioned datasource UID 和低基数 labels。
 - [X] T046 [P] [US1] 在 `hack/observability/grafana_alerts_test.go` 编写基础告警规则 RED 测试；质量门控：覆盖 HTTP error、exporter send/enqueue failure、queue saturation/age、storage pressure 的 firing/resolved 条件和稳定 component ID。
 - [X] T047 [P] [US1] 在 `internal/observability/backend/grafana_query_test.go` 编写 Tempo/Loki/Prometheus/Grafana 查询客户端 RED 测试；质量门控：httptest 覆盖成功、认证/超时/5xx/畸形响应和旧数据，错误只保留 backend+error_class。
-- [ ] T048 [P] [US1] 在 `internal/observability/smoke/infra_runner_test.go` 编写 infra E2E runner RED 测试；质量门控：使用 fake backend 证明基线/增量查询、AI 负向断言、60 秒 deadline、cleanup 和 schema report，禁止只检查容器 healthy。
+- [X] T048 [P] [US1] 在 `internal/observability/smoke/infra_runner_test.go` 编写 infra E2E runner RED 测试；质量门控：使用 fake backend 证明基线/增量查询、AI 负向断言、60 秒 deadline、cleanup 和 schema report，禁止只检查容器 healthy。
 
 ### Implementation - GREEN/REFACTOR
 
