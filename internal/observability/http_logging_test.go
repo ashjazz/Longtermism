@@ -128,6 +128,85 @@ func TestHTTPCompletionLoggingMiddlewareRejectsRawRouteFallback(t *testing.T) {
 	}
 }
 
+// HTTP 的首个 WriteHeader 才是实际发送给客户端的状态码。重复调用时若覆盖该值，
+// 完成日志会与真实响应不一致，排障时会得到错误的失败分类。
+func TestHTTPCompletionLoggingMiddlewareKeepsFirstResponseStatus(t *testing.T) {
+	tests := []struct {
+		name           string
+		writeBodyFirst bool
+		firstStatus    int
+		secondStatus   int
+		wantStatus     int
+	}{
+		{name: "first explicit status remains authoritative", firstStatus: http.StatusAccepted, secondStatus: http.StatusInternalServerError, wantStatus: http.StatusAccepted},
+		{name: "implicit success remains authoritative", writeBodyFirst: true, secondStatus: http.StatusInternalServerError, wantStatus: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writer := &httpCompletionLogWriterStub{}
+			middleware := NewHTTPCompletionLoggingMiddleware(HTTPLoggingDependencies{
+				CompletionLogger: writer,
+				Identify: func(*http.Request) HTTPRequestIdentity {
+					return HTTPRequestIdentity{RequestID: infraSmokeLogRequest, RouteTemplate: infraSmokeLogRoute}
+				},
+			})
+			handler := middleware(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if tt.writeBodyFirst {
+					_, _ = response.Write([]byte("implicit success"))
+					response.WriteHeader(tt.secondStatus)
+					return
+				}
+				response.WriteHeader(tt.firstStatus)
+				response.WriteHeader(tt.secondStatus)
+			}))
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, infraSmokeLogRoute, nil))
+
+			if response.Code != tt.wantStatus || len(writer.entries) != 1 || writer.entries[0].Status != tt.wantStatus {
+				t.Fatalf("completion status = response:%d log:%#v, want authoritative status %d", response.Code, writer.entries, tt.wantStatus)
+			}
+		})
+	}
+}
+
+// /api/v1/chat 将来会使用 SSE；完成日志 hook 必须保留 Flush，不能因为包装
+// ResponseWriter 让业务 handler 的流式能力消失。
+func TestHTTPCompletionLoggingMiddlewarePreservesFlusher(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		{name: "forwards flush to downstream writer"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writer := &httpCompletionLogWriterStub{}
+			middleware := NewHTTPCompletionLoggingMiddleware(HTTPLoggingDependencies{
+				CompletionLogger: writer,
+				Identify: func(*http.Request) HTTPRequestIdentity {
+					return HTTPRequestIdentity{RequestID: infraSmokeLogRequest, RouteTemplate: infraSmokeLogRoute}
+				},
+			})
+			flushingResponse := &httpCompletionFlushingResponseWriter{ResponseWriter: httptest.NewRecorder()}
+			handler := middleware(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				flusher, ok := response.(http.Flusher)
+				if !ok {
+					t.Fatal("completion logging middleware removed http.Flusher")
+				}
+				flusher.Flush()
+			}))
+
+			handler.ServeHTTP(flushingResponse, httptest.NewRequest(http.MethodGet, infraSmokeLogRoute, nil))
+
+			if flushingResponse.flushCalls != 1 {
+				t.Fatalf("downstream flush calls = %d, want 1", flushingResponse.flushCalls)
+			}
+		})
+	}
+}
+
 // 这个断言要求 hook 自己创建真实 span 并在 HTTP 完成后记录其 native identity；
 // 不能接受调用方传入任意 trace/span 字符串，否则日志到 Tempo 的关联不可信。
 func assertInfraSmokeHTTPCompletion(t *testing.T, entries []HTTPCompletionLog, spans []tracetest.SpanStub, wantStatusCode int, wantLevel, wantMessage, wantErrorClass string) {
@@ -249,6 +328,15 @@ type httpCompletionLogWriterStub struct {
 	entries []HTTPCompletionLog
 	err     error
 	calls   int
+}
+
+type httpCompletionFlushingResponseWriter struct {
+	http.ResponseWriter
+	flushCalls int
+}
+
+func (w *httpCompletionFlushingResponseWriter) Flush() {
+	w.flushCalls++
 }
 
 func (w *httpCompletionLogWriterStub) Write(_ context.Context, entry HTTPCompletionLog) error {
