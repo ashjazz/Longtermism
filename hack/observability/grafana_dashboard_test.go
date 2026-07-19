@@ -2,7 +2,6 @@ package observability
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +11,7 @@ import (
 )
 
 const overviewDashboardRelativePath = "../../deploy/observability/grafana/dashboards/observability-overview.json"
+const grafanaDatasourcesRelativePath = "../../deploy/observability/grafana/provisioning/datasources.yaml"
 
 // TestGrafanaOverviewDashboardContract 固定 Grafana 首屏需要回答的运行问题。
 // 这里刻意只接受 provisioned UID；生产排障时依赖展示名或默认数据源会让
@@ -22,11 +22,11 @@ func TestGrafanaOverviewDashboardContract(t *testing.T) {
 	assertTargetedPanelsUseProvisionedDatasourceUIDs(t, panels)
 
 	tests := []struct {
-		name            string
-		title           string
-		datasourceUID   string
-		queryFragments  []string
-		allowsTraceLink bool
+		name                     string
+		title                    string
+		datasourceUID            string
+		queryFragments           []string
+		requiresTraceCorrelation bool
 	}{
 		{
 			name:           "request rate uses Prometheus",
@@ -59,11 +59,14 @@ func TestGrafanaOverviewDashboardContract(t *testing.T) {
 			queryFragments: []string{"otelcol_exporter_queue"},
 		},
 		{
-			name:            "logs link to Tempo trace",
-			title:           "Logs to Trace Correlation",
-			datasourceUID:   "loki",
-			queryFragments:  []string{"trace_id"},
-			allowsTraceLink: true,
+			name:          "logs link to Tempo trace",
+			title:         "Logs to Trace Correlation",
+			datasourceUID: "loki",
+			// trace_id is structured metadata after filelog moves the fixed message into
+			// the log body. line_format deliberately renders it for Grafana's derived
+			// field, which then provides the per-record Tempo data link.
+			queryFragments:           []string{"trace_id", "line_format", "{{.trace_id}}"},
+			requiresTraceCorrelation: true,
 		},
 	}
 
@@ -79,8 +82,8 @@ func TestGrafanaOverviewDashboardContract(t *testing.T) {
 			if tt.title == "Collector Queue Backlog" {
 				assertComponentScopedQueueQueries(t, panel)
 			}
-			if tt.allowsTraceLink {
-				assertTempoTraceLink(t, panel)
+			if tt.requiresTraceCorrelation {
+				assertLokiTempoDerivedField(t, panel)
 			}
 		})
 	}
@@ -234,22 +237,25 @@ func panelDatasourceUID(panel map[string]any) string {
 	return uid
 }
 
-func assertTempoTraceLink(t *testing.T, panel map[string]any) {
+func assertLokiTempoDerivedField(t *testing.T, panel map[string]any) {
 	t.Helper()
-	links, ok := panel["links"].([]any)
-	if !ok || !hasTempoTraceDataLink(links) {
-		t.Fatalf("panel %q must link to provisioned Tempo datasource UID", panel["title"])
+	if _, hasPanelLink := panel["links"]; hasPanelLink {
+		t.Fatalf("panel %q must rely on the per-record Loki derived field, not a panel-level trace link", panel["title"])
 	}
-}
 
-func hasTempoTraceDataLink(links []any) bool {
-	for _, rawLink := range links {
-		link, ok := rawLink.(map[string]any)
-		if ok && link["datasourceUid"] == "tempo" && strings.Contains(fmt.Sprint(link["url"]), "trace_id") {
-			return true
+	_, sourcePath, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate dashboard contract source")
+	}
+	datasources, err := os.ReadFile(filepath.Clean(filepath.Join(filepath.Dir(sourcePath), grafanaDatasourcesRelativePath)))
+	if err != nil {
+		t.Fatalf("read Grafana datasource provisioning: %v", err)
+	}
+	for _, fragment := range []string{"name: TraceID", "matcherRegex: '([a-f0-9]{32})'", "url: '${__value.raw}'", "datasourceUid: tempo"} {
+		if !strings.Contains(string(datasources), fragment) {
+			t.Fatalf("Loki datasource derived field is missing required fragment %q", fragment)
 		}
 	}
-	return false
 }
 
 func assertComponentScopedFailureQueries(t *testing.T, panel map[string]any) {

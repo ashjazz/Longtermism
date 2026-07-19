@@ -19,7 +19,9 @@ datasources:
         # trace_id is structured metadata, not a Loki index label. This link preserves Tempo
         # correlation without moving request-level identity into Prometheus or Loki labels.
         - name: TraceID
-          matcherRegex: '"trace_id":"([a-f0-9]{32})"'
+          # The dashboard renders structured trace_id metadata into the log line with
+          # LogQL line_format, so the derived field can safely extract only that ID.
+          matcherRegex: '([a-f0-9]{32})'
           url: '${__value.raw}'
           datasourceUid: tempo
   - name: Tempo

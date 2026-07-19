@@ -1,0 +1,64 @@
+{
+  "uid": "longtermism-observability-overview",
+  "title": "Longtermism Observability Overview",
+  "schemaVersion": 41,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP Request Rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (http_route, http_request_method) (rate(longtermism_http_server_request_count[5m]))" }],
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "title": "HTTP Error Rate",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(longtermism_http_server_request_count{http_response_status_class=\"5xx\"}[5m])) / clamp_min(sum(rate(longtermism_http_server_request_count[5m])), 1)" }],
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 }
+    },
+    {
+      "id": 3,
+      "title": "HTTP Latency p95",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, http_route, http_request_method) (rate(longtermism_http_server_request_duration_bucket[5m])))" }],
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 }
+    },
+    {
+      "id": 4,
+      "title": "Collector Export Failures",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "otelcol_exporter_send_failed_spans{exporter=~\"otlp/tempo\"} + otelcol_exporter_enqueue_failed_spans{exporter=~\"otlp/tempo\"}" },
+        { "refId": "B", "expr": "otelcol_exporter_send_failed_log_records{exporter=~\"otlphttp/loki\"} + otelcol_exporter_enqueue_failed_log_records{exporter=~\"otlphttp/loki\"}" },
+        { "refId": "C", "expr": "otelcol_exporter_send_failed_spans{exporter=~\"otlphttp/langfuse\"} + otelcol_exporter_enqueue_failed_spans{exporter=~\"otlphttp/langfuse\"}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "id": 5,
+      "title": "Collector Queue Backlog",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "otelcol_exporter_queue_size{exporter=~\"otlp/tempo\"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~\"otlp/tempo\"}, 1)" },
+        { "refId": "B", "expr": "otelcol_exporter_queue_size{exporter=~\"otlphttp/loki\"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~\"otlphttp/loki\"}, 1)" },
+        { "refId": "C", "expr": "otelcol_exporter_queue_size{exporter=~\"otlphttp/langfuse\"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~\"otlphttp/langfuse\"}, 1)" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    },
+    {
+      "id": 6,
+      "title": "Logs to Trace Correlation",
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{ "refId": "A", "expr": "{service_name=\"longtermism\"} | trace_id != \"\" | line_format \"{{.trace_id}}\"" }],
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 }
+    }
+  ]
+}
