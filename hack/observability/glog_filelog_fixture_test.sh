@@ -62,7 +62,7 @@ def attribute_action?(entries, action, attributes)
 end
 
 def keep_keys_statement?(values, fields)
-  expected = "keep_keys(log.attributes,[\"#{fields.join('\",\"')}\"])"
+  expected = "keep_keys(log.attributes,[\"#{fields.join(%q|","|)}\"])"
   values.any? { |value| value.gsub(/\s+/, "") == expected }
 end
 
@@ -81,7 +81,7 @@ begin
 rescue JSON::ParserError
   # 该 fixture 必须保持畸形，才能证明 json_parser 的 on_error 策略隔离坏行。
 end
-sensitive_jsonl = JSON.parse('{"timestamp":"2026-07-17T10:00:01Z","level":"error","message":"http request failed","request_id":"req-t043-private","trace_id":"fedcba9876543210fedcba9876543210","span_id":"fedcba987654321","route":"/api/v1/health/ping","method":"GET","status":502,"duration_ms":15,"nested":{"token":"synthetic-t043-token"},"prompt":"synthetic-t043-prompt"}')
+sensitive_jsonl = JSON.parse(%q|{"timestamp":"2026-07-17T10:00:01Z","level":"error","message":"http request failed","request_id":"req-t043-private","trace_id":"fedcba9876543210fedcba9876543210","span_id":"fedcba987654321","route":"/api/v1/health/ping","method":"GET","status":502,"duration_ms":15,"nested":{"token":"synthetic-t043-token"},"prompt":"synthetic-t043-prompt"}|)
 fail_check("invalid_sensitive_fixture") unless sensitive_jsonl.dig("nested", "token") == "synthetic-t043-token" && sensitive_jsonl["prompt"] == "synthetic-t043-prompt"
 
 glog = require_hash(read_yaml(paths.fetch(0)), "invalid_glog_config")
@@ -100,7 +100,7 @@ filelog = require_hash(receivers["filelog/glog"], "missing_glog_filelog_receiver
 fail_check("invalid_filelog_include") unless Array(filelog["include"]) == ["/var/log/longtermism/application.jsonl"] && filelog["start_at"] == "beginning"
 fail_check("missing_rotation_handling") unless filelog["on_truncate"] == "read_whole_file"
 operators = Array(filelog["operators"])
-require_exact(operators.filter_map { |operator| operator["type"] if operator.is_a?(Hash) }, %w[json_parser move], "unexpected_filelog_operator")
+require_exact(operators.map { |operator| operator["type"] if operator.is_a?(Hash) }.compact, %w[json_parser move], "unexpected_filelog_operator")
 json_parser = operators.find { |operator| operator.is_a?(Hash) && operator["type"] == "json_parser" }
 fail_check("missing_json_parser") unless json_parser.is_a?(Hash)
 fail_check("malformed_line_not_isolated") unless json_parser["on_error"] == "drop_quiet" && json_parser["parse_from"] == "body" && json_parser["parse_to"] == "attributes"

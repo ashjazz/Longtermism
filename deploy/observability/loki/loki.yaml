@@ -1,0 +1,47 @@
+# Single-process local Loki profile. OTLP is received only through the Collector; Compose
+# publishes the query API on loopback and keeps ingestion inside the observability network.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+
+limits_config:
+  retention_period: 168h
+  allow_structured_metadata: true
+  otlp_config:
+    resource_attributes:
+      attributes_config:
+        - action: index_label
+          attributes: [service.name, service.namespace, deployment.environment]
+    log_attributes:
+      attributes_config:
+        # Request/trace identities remain queryable structured metadata, never index labels.
+        - action: structured_metadata
+          attributes: [request_id, trace_id, span_id, route, method, status, duration_ms, error_class, smoke_run_id]
+        - action: drop
+          attributes: [authorization, cookie, api_key, token, password, prompt, query, output, tool_arguments, provider_error_body, raw_query]
