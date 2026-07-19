@@ -1,0 +1,37 @@
+# 该文件是 Grafana profile 的 glog 配置来源。T056 将它作为应用 logger 配置挂载，
+# 让应用仅写共享卷中的 JSONL；Collector filelog 再异步转发 Loki，应用不直连 Loki。
+logger:
+  level: "info"
+  path: "/var/log/longtermism"
+  file: "application.jsonl"
+  stdout: false
+  header: false
+  # JSONL 不能混入 GoFrame 的文本 header；实际 JSON handler 由应用启动装配启用。
+  levelPrint: false
+  writerColorEnable: false
+  rotateSize: "100MB"
+  rotateBackupLimit: 7
+  rotateBackupExpire: "7d"
+  rotateBackupCompress: 0
+  rotateCheckInterval: "1h"
+
+observability:
+  logs:
+    format: "jsonl"
+    shared_volume_path: "/var/log/longtermism"
+    # GoFrame 不提供 file mode 配置项。T056 的容器以非 root 用户和 umask 0027 创建
+    # 文件（目标 0640）；目录挂载、用户与 umask 由 Compose 强制，不能伪造为 glog 配置。
+    retention_boundary: "7d_or_7_rotated_files"
+    allowed_fields:
+      - timestamp
+      - level
+      - message
+      - request_id
+      - trace_id
+      - span_id
+      - route
+      - method
+      - status
+      - duration_ms
+      - error_class
+      - smoke_run_id

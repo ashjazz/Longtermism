@@ -30,11 +30,12 @@ type InfraSmokeRateLimitConfig struct {
 // It deliberately has no backend endpoint or AI identity field: route assembly cannot decide
 // which observability plane receives a fact.
 type ObservabilityRoutesInput struct {
-	Bootstrap         *ObservabilityBootstrap
-	InfraSmokeHandler ghttp.HandlerFunc
-	Limiter           ratelimit.Limiter
-	InfraSmokeLimit   InfraSmokeRateLimitConfig
-	state             *observabilityRoutesState
+	Bootstrap                   *ObservabilityBootstrap
+	CompletionLoggingMiddleware func(http.Handler) http.Handler
+	InfraSmokeHandler           ghttp.HandlerFunc
+	Limiter                     ratelimit.Limiter
+	InfraSmokeLimit             InfraSmokeRateLimitConfig
+	state                       *observabilityRoutesState
 }
 
 type observabilityRoutesState struct {
@@ -79,13 +80,24 @@ func RegisterObservabilityRoutes(server *ghttp.Server, input ObservabilityRoutes
 		configureInfraSmokeLimiter(input.Limiter, input.InfraSmokeLimit)
 		server.BindMiddleware(infraSmokeHTTPPath,
 			RequestIdentityMiddleware,
-			wrapObservabilityHTTPMiddleware(input.Bootstrap.Middleware),
+			wrapObservabilityHTTPMiddleware(chainObservabilityHTTPMiddleware(input.Bootstrap.Middleware, input.CompletionLoggingMiddleware)),
 			infraSmokeRateLimitMiddleware(input.Limiter),
 		)
 		server.BindHandler("GET:"+infraSmokeHTTPPath, input.InfraSmokeHandler)
 	}
 	input.state.registered = true
 	return nil
+}
+
+func chainObservabilityHTTPMiddleware(middlewares ...func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		for index := len(middlewares) - 1; index >= 0; index-- {
+			if middlewares[index] != nil {
+				next = middlewares[index](next)
+			}
+		}
+		return next
+	}
 }
 
 func configureInfraSmokeLimiter(limiter ratelimit.Limiter, config InfraSmokeRateLimitConfig) {

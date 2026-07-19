@@ -10,17 +10,20 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	v1observability "github.com/ashjazz/Longtermism/api/v1/observability"
 	"github.com/ashjazz/Longtermism/internal/controller/health"
 	controllerobservability "github.com/ashjazz/Longtermism/internal/controller/observability"
 	logicobservability "github.com/ashjazz/Longtermism/internal/logic/observability"
+	appobservability "github.com/ashjazz/Longtermism/internal/observability"
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 	"github.com/ashjazz/Longtermism/pkg/ai/ratelimit"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
+	"github.com/gogf/gf/v2/os/gcfg"
 	"github.com/gogf/gf/v2/os/gcmd"
 	"go.opentelemetry.io/otel"
 )
@@ -99,6 +102,10 @@ func buildDefaultObservabilityBootstrap(ctx context.Context) (*ObservabilityBoot
 }
 
 func registerDefaultObservabilityRoutes(ctx context.Context, server *ghttp.Server, bootstrap *ObservabilityBootstrap) error {
+	completionMiddleware, err := newHTTPCompletionLoggingMiddleware(ctx, bootstrap)
+	if err != nil {
+		return err
+	}
 	rateLimitConfig, err := resolveInfraSmokeRateLimitConfig(ctx)
 	if err != nil {
 		return err
@@ -112,12 +119,45 @@ func registerDefaultObservabilityRoutes(ctx context.Context, server *ghttp.Serve
 		RequestIDFromContext: RequestIDFromContext,
 	})
 	return RegisterObservabilityRoutes(server, ObservabilityRoutesInput{
-		Bootstrap:         bootstrap,
-		InfraSmokeHandler: newInfraSmokeHTTPHandler(controller),
-		Limiter:           ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}),
-		InfraSmokeLimit:   rateLimitConfig,
-		state:             &processObservabilityRoutesState,
+		Bootstrap:                   bootstrap,
+		CompletionLoggingMiddleware: completionMiddleware,
+		InfraSmokeHandler:           newInfraSmokeHTTPHandler(controller),
+		Limiter:                     ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}),
+		InfraSmokeLimit:             rateLimitConfig,
+		state:                       &processObservabilityRoutesState,
 	})
+}
+
+func newHTTPCompletionLoggingMiddleware(ctx context.Context, bootstrap *ObservabilityBootstrap) (func(http.Handler) http.Handler, error) {
+	if bootstrap == nil || !bootstrap.InfraSmokeEnabled {
+		return nil, nil
+	}
+	config, err := gcfg.NewAdapterFile("manifest/config/glog-observability.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("load observability glog config: %w", err)
+	}
+	loggerConfig := gcfg.NewWithAdapter(config)
+	path := loggerConfig.MustGet(ctx, "logger.path").String()
+	file := loggerConfig.MustGet(ctx, "logger.file").String()
+	if path == "" || file == "" {
+		return nil, fmt.Errorf("observability glog path and file are required")
+	}
+	output, err := os.OpenFile(filepath.Join(path, file), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
+	if err != nil {
+		return nil, fmt.Errorf("open observability JSONL file: %w", err)
+	}
+	writer, err := appobservability.NewJSONLHTTPCompletionLogWriter(output)
+	if err != nil {
+		_ = output.Close()
+		return nil, err
+	}
+	return appobservability.NewHTTPCompletionLoggingMiddleware(appobservability.HTTPLoggingDependencies{
+		Tracer:           otel.Tracer("github.com/ashjazz/Longtermism/internal/observability/http"),
+		CompletionLogger: writer,
+		Identify: func(request *http.Request) appobservability.HTTPRequestIdentity {
+			return appobservability.HTTPRequestIdentity{RequestID: RequestIDFromContext(request.Context()), RouteTemplate: RouteTemplateFromContext(request.Context())}
+		},
+	}), nil
 }
 
 func resolveInfraSmokeRateLimitConfig(ctx context.Context) (InfraSmokeRateLimitConfig, error) {
