@@ -34,9 +34,9 @@
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "refId": "A", "expr": "otelcol_exporter_send_failed_spans{exporter=~\"otlp/tempo\"} + otelcol_exporter_enqueue_failed_spans{exporter=~\"otlp/tempo\"}" },
-        { "refId": "B", "expr": "otelcol_exporter_send_failed_log_records{exporter=~\"otlphttp/loki\"} + otelcol_exporter_enqueue_failed_log_records{exporter=~\"otlphttp/loki\"}" },
-        { "refId": "C", "expr": "otelcol_exporter_send_failed_spans{exporter=~\"otlphttp/langfuse\"} + otelcol_exporter_enqueue_failed_spans{exporter=~\"otlphttp/langfuse\"}" }
+        { "refId": "A", "expr": "otelcol_exporter_send_failed_spans_total{exporter=~\"otlp/tempo\"} + otelcol_exporter_enqueue_failed_spans_total{exporter=~\"otlp/tempo\"}" },
+        { "refId": "B", "expr": "otelcol_exporter_send_failed_log_records_total{exporter=~\"otlphttp/loki\"} + otelcol_exporter_enqueue_failed_log_records_total{exporter=~\"otlphttp/loki\"}" },
+        { "refId": "C", "expr": "otelcol_exporter_send_failed_spans_total{exporter=~\"otlphttp/langfuse\"} + otelcol_exporter_enqueue_failed_spans_total{exporter=~\"otlphttp/langfuse\"}" }
       ],
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
     },

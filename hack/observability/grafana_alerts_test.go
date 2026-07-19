@@ -404,9 +404,9 @@ func assertComponentMetrics(t *testing.T, rule alertRule, query string) {
 	components := []string{"otlp/tempo", "otlphttp/loki", "otlphttp/langfuse"}
 	if rule.UID == "longtermism-exporter-delivery-failure" {
 		for _, component := range components {
-			metrics := []string{"otelcol_exporter_send_failed_spans", "otelcol_exporter_enqueue_failed_spans"}
+			metrics := []string{"otelcol_exporter_send_failed_spans_total", "otelcol_exporter_enqueue_failed_spans_total"}
 			if component == "otlphttp/loki" {
-				metrics = []string{"otelcol_exporter_send_failed_log_records", "otelcol_exporter_enqueue_failed_log_records"}
+				metrics = []string{"otelcol_exporter_send_failed_log_records_total", "otelcol_exporter_enqueue_failed_log_records_total"}
 			}
 			assertMetricSelectorsForComponent(t, rule, query, component, metrics)
 		}

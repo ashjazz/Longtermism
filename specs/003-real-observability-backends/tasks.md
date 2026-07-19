@@ -113,7 +113,7 @@
 - [X] T059 [P] [US1] 在 `deploy/observability/prometheus/prometheus.yaml` 配置应用指标和 Collector self-telemetry scrape；质量门控：Prometheus scrape 契约通过；15 天 retention 由 T056 service command 实施，不使用 remote write，不按 run/request ID 查询指标。
 - [X] T060 [P] [US1] 在 `deploy/observability/grafana/provisioning/datasources.yaml` provision Prometheus/Loki/Tempo datasource 与 trace/log correlation；质量门控：datasource 契约通过，固定 datasource UID、使用 compose 内部 URL、不写 exporter credential。
 - [X] T061 [US1] 在 `deploy/observability/grafana/dashboards/observability-overview.json` provision 基础 dashboard；质量门控：使 T045 GREEN，面板回答请求量、错误、延迟、出口失败、积压及日志/trace 关联问题，不使用 request ID metric label。
-- [ ] T062 [US1] 在 `deploy/observability/grafana/alerts/observability.rules.yaml` provision 基础告警；质量门控：使 T046 GREEN，四类告警都有可测试 firing/resolved 条件、for/window 和低敏 annotations。
+- [X] T062 [US1] 在 `deploy/observability/grafana/alerts/observability.rules.yaml` provision 基础告警；质量门控：使 T046 GREEN，四类告警都有可测试 firing/resolved 条件、for/window 和低敏 annotations。
 - [ ] T063 [US1] 在 `internal/observability/backend/grafana_query.go` 实现四类后端只读查询端口；质量门控：使 T047 GREEN，所有调用带 context timeout，response body 有大小上限且不进入错误日志。
 - [ ] T064 [US1] 在 `internal/observability/smoke/infra_runner.go` 实现唯一 marker 的 infra runner；质量门控：使 T048 GREEN，自动查询 Tempo/Loki/Prometheus 与 Langfuse negative surface，并输出 schema-valid report。
 - [ ] T065 [US1] 在 `cmd/obs-smoke/main.go` 增加仅负责依赖装配的 `infra` scenario 命令入口；质量门控：行为委托给 T048 已测试 runner，缺配置时 fail-fast、报告写入 ignored 目录、退出码与 report status 一致，运行 `go test ./cmd/obs-smoke` 与 `go build ./cmd/obs-smoke`，stdout 不打印 credential/raw data。

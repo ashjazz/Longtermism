@@ -264,9 +264,9 @@ func assertComponentScopedFailureQueries(t *testing.T, panel map[string]any) {
 		component string
 		fragments []string
 	}{
-		{"otlp/tempo", []string{"otelcol_exporter_send_failed_spans", "otelcol_exporter_enqueue_failed_spans"}},
-		{"otlphttp/loki", []string{"otelcol_exporter_send_failed_log_records", "otelcol_exporter_enqueue_failed_log_records"}},
-		{"otlphttp/langfuse", []string{"otelcol_exporter_send_failed_spans", "otelcol_exporter_enqueue_failed_spans"}},
+		{"otlp/tempo", []string{"otelcol_exporter_send_failed_spans_total", "otelcol_exporter_enqueue_failed_spans_total"}},
+		{"otlphttp/loki", []string{"otelcol_exporter_send_failed_log_records_total", "otelcol_exporter_enqueue_failed_log_records_total"}},
+		{"otlphttp/langfuse", []string{"otelcol_exporter_send_failed_spans_total", "otelcol_exporter_enqueue_failed_spans_total"}},
 	}
 	for _, requirement := range requirements {
 		assertTargetHasComponentMetrics(t, panel, requirement.component, requirement.fragments)

@@ -1,0 +1,184 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: longtermism-observability
+    folder: Longtermism
+    interval: 1m
+    rules:
+      - uid: longtermism-http-error-rate
+        title: HTTP error rate is elevated
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          domain: http
+        annotations:
+          summary: HTTP 5xx ratio exceeded the service threshold.
+          runbook: docs/observability/grafana-alert-response
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: >-
+                sum(rate(longtermism_http_server_request_count{http_response_status_class="5xx"}[5m])) /
+                clamp_min(sum(rate(longtermism_http_server_request_count[5m])), 1) > 0.05
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A > 0
+              refId: B
+              type: math
+
+      - uid: longtermism-exporter-delivery-failure
+        title: Collector exporter delivery failure
+        condition: B
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          domain: exporter
+        annotations:
+          summary: A Collector exporter recorded send or enqueue failures.
+          runbook: docs/observability/grafana-alert-response
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: >-
+                (sum by (exporter) (increase(otelcol_exporter_send_failed_spans_total{exporter=~"otlp/tempo"}[5m])) +
+                sum by (exporter) (increase(otelcol_exporter_enqueue_failed_spans_total{exporter=~"otlp/tempo"}[5m]))) or
+                (sum by (exporter) (increase(otelcol_exporter_send_failed_log_records_total{exporter=~"otlphttp/loki"}[5m])) +
+                sum by (exporter) (increase(otelcol_exporter_enqueue_failed_log_records_total{exporter=~"otlphttp/loki"}[5m]))) or
+                (sum by (exporter) (increase(otelcol_exporter_send_failed_spans_total{exporter=~"otlphttp/langfuse"}[5m])) +
+                sum by (exporter) (increase(otelcol_exporter_enqueue_failed_spans_total{exporter=~"otlphttp/langfuse"}[5m]))) > 0
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A > 0
+              refId: B
+              type: math
+
+      - uid: longtermism-exporter-queue-saturation
+        title: Collector exporter queue saturation
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          domain: queue
+        annotations:
+          summary: A Collector exporter queue exceeded 80 percent capacity.
+          runbook: docs/observability/grafana-alert-response
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: >-
+                max by (exporter) (otelcol_exporter_queue_size{exporter=~"otlp/tempo"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~"otlp/tempo"}, 1) or
+                otelcol_exporter_queue_size{exporter=~"otlphttp/loki"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~"otlphttp/loki"}, 1) or
+                otelcol_exporter_queue_size{exporter=~"otlphttp/langfuse"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~"otlphttp/langfuse"}, 1)) > 0.8
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A > 0
+              refId: B
+              type: math
+
+      - uid: longtermism-exporter-queue-age
+        title: Collector exporter queue age is elevated
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          domain: queue
+        annotations:
+          summary: A Collector exporter queue has remained backlogged for five minutes.
+          runbook: docs/observability/grafana-alert-response
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: >-
+                max by (exporter) (otelcol_exporter_queue_age_seconds{exporter=~"otlp/tempo"} or
+                otelcol_exporter_queue_age_seconds{exporter=~"otlphttp/loki"} or
+                otelcol_exporter_queue_age_seconds{exporter=~"otlphttp/langfuse"}) > 300
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A > 0
+              refId: B
+              type: math
+
+      - uid: longtermism-collector-storage-pressure
+        title: Collector persistent storage pressure
+        condition: B
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          domain: storage
+        annotations:
+          summary: Collector persistent storage exceeded 80 percent utilization.
+          runbook: docs/observability/grafana-alert-response
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              datasource: { type: prometheus, uid: prometheus }
+              editorMode: code
+              expr: >-
+                max by (storage) (longtermism_collector_storage_utilization_ratio{storage=~"file_storage/tempo"} or
+                longtermism_collector_storage_utilization_ratio{storage=~"file_storage/loki"} or
+                longtermism_collector_storage_utilization_ratio{storage=~"file_storage/langfuse"}) > 0.8
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: $A > 0
+              refId: B
+              type: math
