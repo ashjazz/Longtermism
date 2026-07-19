@@ -104,7 +104,7 @@
 - [X] T051 [US1] 在 `internal/controller/observability/infra_smoke.go` 实现薄 controller；质量门控：使 T039 GREEN，只做校验/调用/错误映射，不包含 backend 查询或业务观测拼装。
 - [X] T052 [US1] 在 `internal/cmd/cmd.go` 消费 T036B 已准备的应用观测装配结果，在启动前初始化并在 server 退出路径以 deadline flush/shutdown，然后注册受配置保护的 infra-smoke 路由、request middleware 与配置化限流；质量门控：使 T040 GREEN，并运行 health 与路由回归测试，避免重复 provider/middleware，限流状态不得进入 AI 平面。
 - [X] T053 [US1] 在 `internal/observability/http_logging.go` 实现 HTTP completion/error 日志 hook；质量门控：使 T041 GREEN，日志写 JSONL 到配置文件且业务响应不等待 Loki。
-- [ ] T054 [US1] 在 `deploy/observability/collector/collector-grafana.yaml` 实现方案 C、metrics/filelog、完整 trace tail sampling 与三套独立持久队列配置；质量门控：使 T042 GREEN，公共 processor 只在 ingress，infra-only 数据不能通过 AI downstream filter，smoke/error/regression 不能被采样丢弃。
+- [X] T054 [US1] 在 `deploy/observability/collector/collector-grafana.yaml` 实现方案 C、metrics/filelog、完整 trace tail sampling 与三套独立持久队列配置；质量门控：使 T042 GREEN，公共 processor 只在 ingress，infra-only 数据不能通过 AI downstream filter，smoke/error/regression 不能被采样丢弃。
 - [ ] T055 [US1] 在 `manifest/config/glog-observability.yaml` 配置结构化 JSON 文件、rotation 与 shared-volume 路径；质量门控：使 T043 GREEN，默认日志不得包含 raw prompt/output，文件权限与保留边界明确。
 - [ ] T056 [US1] 在 `deploy/observability/compose.grafana.yaml` 实现 Collector+Prometheus+Loki+Tempo+Grafana+Langfuse 的主线 profile；质量门控：使 T044 GREEN，应用只连接 Collector，所有持久 volume 与应用数据库隔离，服务 healthcheck 不含 secret。
 - [ ] T057 [P] [US1] 在 `deploy/observability/tempo/tempo.yaml` 配置 OTLP 接收、7 天 retention 与本地 volume；质量门控：满足 T044 的 Tempo 先行断言并被固定版本 Tempo 校验，禁止匿名暴露非必要写入端口。

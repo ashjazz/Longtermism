@@ -1,0 +1,268 @@
+# Grafana 主线 Collector：应用只向此处发送 OTLP；后端连接与重试在此边界收敛。
+# 方案 C 先在 ingress 做一次确定性脱敏，再分别投影 infra 与 AI 两个平面。
+extensions:
+  file_storage/tempo:
+    directory: /var/lib/otelcol/queue/tempo
+    timeout: 1s
+    compaction:
+      on_start: true
+  file_storage/loki:
+    directory: /var/lib/otelcol/queue/loki
+    timeout: 1s
+    compaction:
+      on_start: true
+  file_storage/langfuse:
+    directory: /var/lib/otelcol/queue/langfuse
+    timeout: 1s
+    compaction:
+      on_start: true
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  # T055 固定 glog JSONL 路径；坏行只丢弃当前行，不能停止其余日志采集。
+  filelog/glog:
+    include:
+      - /var/log/longtermism/application.jsonl
+    start_at: beginning
+    on_truncate: read_whole_file
+    operators:
+      - type: json_parser
+        parse_from: body
+        parse_to: attributes
+        on_error: drop_quiet
+        trace:
+          trace_id:
+            parse_from: attributes.trace_id
+          span_id:
+            parse_from: attributes.span_id
+      - type: move
+        from: attributes.message
+        to: body
+
+processors:
+  # ingress 是进入任一 persistent queue 前的第一道保护，避免敏感字段先落盘。
+  transform/redact-ingress:
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(attributes, "authorization")
+          - delete_key(attributes, "cookie")
+          - delete_key(attributes, "api_key")
+          - delete_key(attributes, "token")
+          - delete_key(attributes, "password")
+          - delete_key(attributes, "prompt")
+          - delete_key(attributes, "query")
+          - delete_key(attributes, "output")
+          - delete_key(attributes, "tool_arguments")
+          - delete_key(attributes, "provider_error_body")
+          - delete_key(resource.attributes, "authorization")
+          - delete_key(resource.attributes, "cookie")
+          - delete_key(resource.attributes, "api_key")
+          - delete_key(resource.attributes, "token")
+          - delete_key(resource.attributes, "password")
+          - delete_key(resource.attributes, "prompt")
+          - delete_key(resource.attributes, "query")
+          - delete_key(resource.attributes, "output")
+          - delete_key(resource.attributes, "tool_arguments")
+          - delete_key(resource.attributes, "provider_error_body")
+          # 覆盖语义化 OTLP 键（如 http.request.header.authorization、url.query、
+          # gen_ai.input.messages），避免攻击者仅通过改字段拼写绕过 queue 前清理。
+          - delete_matching_keys(attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+          - delete_matching_keys(resource.attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+  # 下游再次执行同样的删除。它防御未来 receiver/connector 增加旁路，而不是替代 ingress。
+  transform/redact-downstream:
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(attributes, "authorization")
+          - delete_key(attributes, "cookie")
+          - delete_key(attributes, "api_key")
+          - delete_key(attributes, "token")
+          - delete_key(attributes, "password")
+          - delete_key(attributes, "prompt")
+          - delete_key(attributes, "query")
+          - delete_key(attributes, "output")
+          - delete_key(attributes, "tool_arguments")
+          - delete_key(attributes, "provider_error_body")
+          - delete_key(resource.attributes, "authorization")
+          - delete_key(resource.attributes, "cookie")
+          - delete_key(resource.attributes, "api_key")
+          - delete_key(resource.attributes, "token")
+          - delete_key(resource.attributes, "password")
+          - delete_key(resource.attributes, "prompt")
+          - delete_key(resource.attributes, "query")
+          - delete_key(resource.attributes, "output")
+          - delete_key(resource.attributes, "tool_arguments")
+          - delete_key(resource.attributes, "provider_error_body")
+          - delete_matching_keys(attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+          - delete_matching_keys(resource.attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+  # event attributes 也会进入 trace 和持久队列；不能只清理 span/resource attributes。
+  transform/redact-span-events:
+    trace_statements:
+      - context: spanevent
+        statements:
+          - delete_key(attributes, "authorization")
+          - delete_key(attributes, "cookie")
+          - delete_key(attributes, "api_key")
+          - delete_key(attributes, "token")
+          - delete_key(attributes, "password")
+          - delete_key(attributes, "prompt")
+          - delete_key(attributes, "query")
+          - delete_key(attributes, "output")
+          - delete_key(attributes, "tool_arguments")
+          - delete_key(attributes, "provider_error_body")
+          - delete_matching_keys(attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+  # filelog 的 JSON attributes 也需要在写入 Loki 前收紧，避免未来应用字段扩展绕过
+  # HTTP completion log 的结构 allowlist。
+  transform/redact-logs:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - delete_key(log.attributes, "authorization")
+          - delete_key(log.attributes, "cookie")
+          - delete_key(log.attributes, "api_key")
+          - delete_key(log.attributes, "token")
+          - delete_key(log.attributes, "password")
+          - delete_key(log.attributes, "prompt")
+          - delete_key(log.attributes, "query")
+          - delete_key(log.attributes, "output")
+          - delete_key(log.attributes, "tool_arguments")
+          - delete_key(log.attributes, "provider_error_body")
+          - delete_key(log.attributes, "raw_query")
+          - keep_keys(log.attributes, ["timestamp", "level", "message", "request_id", "trace_id", "span_id", "route", "method", "status", "duration_ms", "error_class", "smoke_run_id"])
+  # 只有显式 AI marker 才能到 Langfuse；绝不由 route 或 span 名推断 AI 语义。
+  filter/ai:
+    error_mode: ignore
+    traces:
+      span:
+        - attributes["longtermism.observability.plane"] != "ai"
+  # 此文件只承载 T053 的 completion JSONL。先丢弃普通 glog 记录，确保 move 后的
+  # Loki body 仍是固定消息，而不是未知调用方写入的任意文本。
+  filter/http-completion-logs:
+    error_mode: ignore
+    logs:
+      log_record:
+        - body != "http request completed" and body != "http request failed"
+  # tail sampling 的保留规则优先于常规成功比例，避免 smoke/故障/回归证据被抽走。
+  tail_sampling/retain:
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 100
+    policies:
+      - name: smoke
+        type: string_attribute
+        string_attribute:
+          key: longtermism.smoke.run_id
+          enabled_regex_matching: true
+          values: [".+"]
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      # GoFrame HTTP handler 可能只设置 HTTP status attribute 而未显式标记 span ERROR；
+      # 因此单独保留 4xx/5xx，避免业务失败落入 ordinary-success 的概率采样。
+      - name: http-failures
+        type: numeric_attribute
+        numeric_attribute:
+          key: http.response.status_code
+          min_value: 400
+      - name: degraded
+        type: string_attribute
+        string_attribute:
+          key: longtermism.degraded
+          values: ["true"]
+      - name: eval-regression
+        type: string_attribute
+        string_attribute:
+          key: longtermism.eval.regression
+          values: ["true"]
+      - name: designated-ai
+        type: and
+        and:
+          and_sub_policy:
+            - name: ai-plane
+              type: string_attribute
+              string_attribute:
+                key: longtermism.observability.plane
+                values: ["ai"]
+            - name: designated
+              type: string_attribute
+              string_attribute:
+                key: longtermism.ai.designated
+                values: ["true"]
+      - name: ordinary-success
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+connectors:
+  forward/infra: {}
+  forward/ai: {}
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      queue_size: 10000
+      storage: file_storage/tempo
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      queue_size: 10000
+      storage: file_storage/loki
+  otlphttp/langfuse:
+    endpoint: http://langfuse-web:3000/api/public/otel
+    headers:
+      Authorization: ${env:LANGFUSE_OTLP_AUTHORIZATION}
+      x-langfuse-otel-version: ${env:LANGFUSE_OTEL_INGESTION_VERSION}
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      queue_size: 10000
+      storage: file_storage/langfuse
+  prometheus/app:
+    endpoint: 0.0.0.0:8889
+
+service:
+  extensions:
+    - file_storage/tempo
+    - file_storage/loki
+    - file_storage/langfuse
+  pipelines:
+    traces/ingress:
+      receivers: [otlp]
+      processors: [transform/redact-ingress]
+      exporters: [forward/infra, forward/ai]
+    traces/infra:
+      receivers: [forward/infra]
+      processors: [transform/redact-downstream, transform/redact-span-events, tail_sampling/retain]
+      exporters: [otlp/tempo]
+    traces/ai:
+      receivers: [forward/ai]
+      processors: [filter/ai, transform/redact-downstream, transform/redact-span-events, tail_sampling/retain]
+      exporters: [otlp/tempo, otlphttp/langfuse]
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus/app]
+    logs:
+      receivers: [filelog/glog]
+      processors: [filter/http-completion-logs, transform/redact-logs]
+      exporters: [otlphttp/loki]
