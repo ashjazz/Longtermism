@@ -110,7 +110,7 @@
 - [ ] T056 [US1] 在 `deploy/observability/compose.grafana.yaml` 实现 Collector+Prometheus+Loki+Tempo+Grafana+Langfuse 的主线 profile；质量门控：使 T044 GREEN，应用只连接 Collector，所有持久 volume 与应用数据库隔离，服务 healthcheck 不含 secret。
 - [X] T057 [P] [US1] 在 `deploy/observability/tempo/tempo.yaml` 配置 OTLP 接收、7 天 retention 与本地 volume；质量门控：Tempo 配置独立校验通过；T044 Compose 侧验收待 T056 汇合。
 - [X] T058 [P] [US1] 在 `deploy/observability/loki/loki.yaml` 配置 native OTLP、structured metadata 与 7 天 retention；质量门控：T043 GREEN，与 filelog attributes 一致，拒绝把高基数 request/trace ID 设为 index label。
-- [ ] T059 [P] [US1] 在 `deploy/observability/prometheus/prometheus.yaml` 配置应用指标和 Collector self-telemetry scrape；质量门控：满足 T044 的 Prometheus 先行断言，包含 target `up` 证据和 7 天 retention，不使用 remote write，不按 run/request ID 查询指标。
+- [X] T059 [P] [US1] 在 `deploy/observability/prometheus/prometheus.yaml` 配置应用指标和 Collector self-telemetry scrape；质量门控：Prometheus scrape 契约通过；15 天 retention 由 T056 service command 实施，不使用 remote write，不按 run/request ID 查询指标。
 - [ ] T060 [P] [US1] 在 `deploy/observability/grafana/provisioning/datasources.yaml` provision Prometheus/Loki/Tempo datasource 与 trace/log correlation；质量门控：满足 T044 的 datasource 先行断言，固定 datasource UID、使用 compose 内部 URL、不写 exporter credential。
 - [ ] T061 [US1] 在 `deploy/observability/grafana/dashboards/observability-overview.json` provision 基础 dashboard；质量门控：使 T045 GREEN，面板回答请求量、错误、延迟、出口失败、积压及日志/trace 关联问题，不使用 request ID metric label。
 - [ ] T062 [US1] 在 `deploy/observability/grafana/alerts/observability.rules.yaml` provision 基础告警；质量门控：使 T046 GREEN，四类告警都有可测试 firing/resolved 条件、for/window 和低敏 annotations。
