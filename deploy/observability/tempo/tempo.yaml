@@ -1,0 +1,26 @@
+# Tempo only receives OTLP from the Collector on the internal Compose network. T056 publishes
+# its read-only HTTP query/ready endpoint on loopback; it never publishes OTLP ingestion ports.
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+        http:
+
+compactor:
+  compaction:
+    # Seven days is the first Grafana-profile trace-retention boundary.
+    block_retention: 168h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
