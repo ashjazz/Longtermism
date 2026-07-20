@@ -2,9 +2,11 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -128,5 +130,81 @@ func TestGrafanaQueryClientRejectsOldResultWindow(t *testing.T) {
 	_, err := client.QueryPrometheusSince(context.Background(), "up", time.Now().Add(-2*time.Minute), time.Now().Add(-time.Minute))
 	if !errors.Is(err, ErrStaleQueryWindow) {
 		t.Fatalf("QueryPrometheusSince() error = %v, want ErrStaleQueryWindow", err)
+	}
+}
+
+func TestGrafanaQueryClientSafetyGuards(t *testing.T) {
+	t.Run("does not follow backend redirects", func(t *testing.T) {
+		redirected := false
+		target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { redirected = true }))
+		defer target.Close()
+		source := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			http.Redirect(writer, request, target.URL, http.StatusFound)
+		}))
+		defer source.Close()
+		client := NewGrafanaQueryClient(GrafanaQueryConfig{PrometheusURL: source.URL, Timeout: time.Second})
+		if _, err := client.QueryPrometheus(context.Background(), "up"); err == nil || err.Error() != "prometheus:backend_unavailable" || redirected {
+			t.Fatalf("redirect result = %v, redirected = %v", err, redirected)
+		}
+	})
+
+	t.Run("bounds configuration inputs and output", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			_, _ = writer.Write([]byte(`{"status":"success","data":{}}`))
+		}))
+		defer server.Close()
+		client := NewGrafanaQueryClient(GrafanaQueryConfig{PrometheusURL: server.URL, GrafanaURL: server.URL, Timeout: time.Hour})
+		if client.timeout != maximumBackendQueryTimeout {
+			t.Fatalf("timeout = %s, want %s", client.timeout, maximumBackendQueryTimeout)
+		}
+		if _, err := client.QueryPrometheus(context.Background(), strings.Repeat("x", maximumQueryLength+1)); err == nil || err.Error() != "prometheus:invalid_query" {
+			t.Fatalf("oversize query error = %v", err)
+		}
+		if _, err := client.QueryGrafanaDatasourceHealth(context.Background(), "bad/uid"); err == nil || err.Error() != "grafana:invalid_query" {
+			t.Fatalf("unsafe datasource UID error = %v", err)
+		}
+		for _, backendURL := range []string{"ftp://127.0.0.1", "http://user:password@127.0.0.1"} {
+			unsafeClient := NewGrafanaQueryClient(GrafanaQueryConfig{PrometheusURL: backendURL, Timeout: time.Second})
+			if _, err := unsafeClient.QueryPrometheus(context.Background(), "up"); err == nil || err.Error() != "prometheus:backend_unavailable" {
+				t.Fatalf("unsafe backend URL %q error = %v", backendURL, err)
+			}
+		}
+		result, err := client.QueryPrometheus(context.Background(), "up")
+		if err != nil {
+			t.Fatalf("safe query error = %v", err)
+		}
+		if _, err := json.Marshal(result); err == nil {
+			t.Fatal("BackendQueryResult must not be JSON serializable")
+		}
+	})
+}
+
+func TestGrafanaQueryClientBoundsRangeQueries(t *testing.T) {
+	startedAt := time.Now().UTC().Add(-30 * time.Second)
+	endedAt := time.Now().UTC()
+	requests := make(map[string]url.Values)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests[request.URL.Path] = request.URL.Query()
+		_, _ = writer.Write([]byte(`{"status":"success","data":{}}`))
+	}))
+	defer server.Close()
+	client := NewGrafanaQueryClient(GrafanaQueryConfig{PrometheusURL: server.URL, LokiURL: server.URL, TempoURL: server.URL, Timeout: time.Second})
+	if _, err := client.QueryPrometheusSince(context.Background(), "up", startedAt, endedAt); err != nil {
+		t.Fatalf("QueryPrometheusSince() error = %v", err)
+	}
+	if _, err := client.QueryLokiSince(context.Background(), `{service_name="longtermism"}`, startedAt, endedAt); err != nil {
+		t.Fatalf("QueryLokiSince() error = %v", err)
+	}
+	if _, err := client.QueryTempoSince(context.Background(), `{ resource.service.name = "longtermism" }`, startedAt, endedAt); err != nil {
+		t.Fatalf("QueryTempoSince() error = %v", err)
+	}
+	if got := requests["/api/v1/query_range"].Get("step"); got != backendQueryStep {
+		t.Fatalf("Prometheus range step = %q, want %q", got, backendQueryStep)
+	}
+	for _, path := range []string{"/loki/api/v1/query_range", "/api/search"} {
+		query := requests[path]
+		if query.Get("start") == "" || query.Get("end") == "" || query.Get("limit") != backendQueryLimit {
+			t.Fatalf("%s query = %v, want bounded start/end/limit", path, query)
+		}
 	}
 }
