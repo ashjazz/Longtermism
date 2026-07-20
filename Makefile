@@ -1,4 +1,4 @@
-.PHONY: test test-race vet eval-smoke obs-smoke obs-platform-smoke verify obs-contract obs-smoke-offline obs-config-check obs-foundation-test obs-foundation-race obs-coverage
+.PHONY: test test-race vet eval-smoke obs-smoke obs-platform-smoke verify obs-contract obs-smoke-offline obs-config-check obs-foundation-test obs-foundation-race obs-coverage obs-grafana-up obs-grafana-down obs-stack-health obs-infra-smoke obs-grafana-e2e
 
 # Level 0 默认离线门禁：只运行本地 Go 检查，既不启动 Docker，也不要求 LLM/Langfuse 凭据。
 verify: vet test
@@ -57,3 +57,29 @@ obs-coverage:
 # 它不连接真实 Collector 或后端；真实平台查询由后续 obs-*-e2e 命令承担。
 obs-platform-smoke:
 	go test ./internal/eval/smoke -run 'TestResolvePlatformSmokeConfig|TestPlatformSmoke' -count=1
+
+# Level 1 是明确 opt-in 的本地 Grafana profile。默认 `verify` 绝不依赖 Docker 或
+# Langfuse 凭据；这些命令也不删除 named volumes，避免把诊断证据当作清理副作用丢失。
+obs-grafana-up:
+	docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml up -d --wait --wait-timeout 180
+
+obs-grafana-down:
+	docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml down
+
+# T066 当前只支持 Grafana profile。状态输出仅辅助诊断，正式通过必须依赖后续的
+# 查询式 infra smoke 报告，不能把 container healthy 当成 E2E 成功。
+obs-stack-health:
+	@test "$(OBS_PROFILE)" = "grafana" || { echo "OBS_PROFILE must be grafana" >&2; exit 2; }
+	docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml ps
+
+obs-infra-smoke:
+	go run ./cmd/obs-smoke infra
+
+# 无论 health 或查询 smoke 失败都停止当前 Compose profile；down 不带 -v，因此
+# smoke 已写出的低敏报告和 named-volume 中的故障证据保持可诊断。
+obs-grafana-e2e:
+	@set -eu; \
+		trap 'docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml down' EXIT; \
+		$(MAKE) obs-grafana-up; \
+		$(MAKE) obs-stack-health OBS_PROFILE=grafana; \
+		$(MAKE) obs-infra-smoke

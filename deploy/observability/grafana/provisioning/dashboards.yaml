@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: longtermism-observability
+    orgId: 1
+    folder: Longtermism
+    type: file
+    disableDeletion: true
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

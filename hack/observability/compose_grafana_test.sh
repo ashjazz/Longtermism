@@ -29,7 +29,7 @@ rescue Psych::Exception
   fail_check("invalid_yaml:#{File.basename(path)}")
 end
 
-def hash(value, category)
+def required_hash(value, category)
   fail_check(category) unless value.is_a?(Hash)
   value
 end
@@ -43,11 +43,11 @@ def scalar_strings(value)
 end
 
 def parse_versions(path)
-  File.readlines(path, chomp: true).filter_map do |line|
+  File.readlines(path, chomp: true).each_with_object({}) do |line, values|
     next if line.start_with?("#") || line.strip.empty?
     key, value = line.split("=", 2)
-    [key, value] if key && value
-  end.to_h
+    values[key] = value if key && value
+  end
 end
 
 def memory_bytes(value)
@@ -109,19 +109,19 @@ def trusted_health_probe?(service, test)
     "langfuse-web" => ["curl --fail --silent --show-error http://127.0.0.1:3000/api/health"],
     "langfuse-worker" => ["node /app/worker-healthcheck.js"],
     "langfuse-db" => ["pg_isready -U langfuse -d langfuse"],
-    "langfuse-clickhouse" => ["clickhouse-client --query 'SELECT 1'", "clickhouse-client --query \"SELECT 1\""],
+    "langfuse-clickhouse" => ["clickhouse-client --query \"SELECT 1\""],
     "langfuse-redis" => ["redis-cli ping"]
   }
   allowed.fetch(service).include?(command)
 end
 
-compose = hash(yaml(compose_path), "invalid_compose")
+compose = required_hash(yaml(compose_path), "invalid_compose")
 versions = parse_versions(versions_path)
-services = hash(compose["services"], "missing_compose_services")
+services = required_hash(compose["services"], "missing_compose_services")
 fail_check("custom_compose_network_forbidden") if compose.key?("networks") || services.values.any? { |service| service.key?("networks") }
 required_services = %w[collector prometheus loki tempo grafana langfuse-web langfuse-worker langfuse-db langfuse-clickhouse langfuse-redis]
 fail_check("invalid_grafana_profile_services") unless services.keys.sort == required_services.sort
-budget = hash(compose["x-observability-budget"], "missing_observability_budget")
+budget = required_hash(compose["x-observability-budget"], "missing_observability_budget")
 fail_check("invalid_observability_budget") unless budget == {"cpus" => "8", "memory" => "12GiB", "volumes" => "20GiB"}
 
 image_variables = {
@@ -129,7 +129,7 @@ image_variables = {
   "langfuse-web" => "LANGFUSE_IMAGE", "langfuse-worker" => "LANGFUSE_WORKER_IMAGE", "langfuse-db" => "LANGFUSE_POSTGRES_IMAGE", "langfuse-clickhouse" => "LANGFUSE_CLICKHOUSE_IMAGE", "langfuse-redis" => "LANGFUSE_REDIS_IMAGE"
 }
 image_variables.each do |service_name, variable|
-  service = hash(services[service_name], "invalid_service:#{service_name}")
+  service = required_hash(services[service_name], "invalid_service:#{service_name}")
   fail_check("invalid_fixed_image:#{service_name}") unless service["image"] == "${#{variable}}" && versions.fetch(variable, "").include?(":") && !versions.fetch(variable, "").include?(":latest")
   limits = service.dig("deploy", "resources", "limits")
   fail_check("missing_resource_limit:#{service_name}") unless limits.is_a?(Hash) && limits.key?("cpus") && limits.key?("memory")
@@ -140,26 +140,38 @@ end
 
 image_variables.keys.each { |service_name| fail_check("untrusted_healthcheck:#{service_name}") unless trusted_health_probe?(service_name, services.fetch(service_name).dig("healthcheck", "test")) }
 
+# Grafana UI 即使只绑定 loopback，也不能依赖公开已知的默认 admin/admin。
+# 这两个值必须由运行环境提供，profile 中只保留变量名与 fail-fast 语义。
+grafana_environment = required_hash(services.fetch("grafana")["environment"], "missing_grafana_admin_configuration")
+{
+  "GF_SECURITY_ADMIN_USER" => "GRAFANA_ADMIN_USER",
+  "GF_SECURITY_ADMIN_PASSWORD" => "GRAFANA_ADMIN_PASSWORD"
+}.each do |key, variable|
+  value = grafana_environment[key]
+  fail_check("missing_grafana_admin_configuration") unless value.is_a?(String) && value.match?(/\A\$\{#{Regexp.escape(variable)}:\?[^}]+\}\z/)
+end
+
 total_cpus = image_variables.keys.sum { |name| cpu_cores(services.fetch(name).dig("deploy", "resources", "limits", "cpus")) }
 total_memory = image_variables.keys.sum { |name| memory_bytes(services.fetch(name).dig("deploy", "resources", "limits", "memory")) }
 fail_check("resource_budget_exceeded") unless total_cpus <= 8 && total_memory <= 12 * 1024 * 1024 * 1024
 
 allowed_ports = {
-  "grafana" => [3000], "langfuse-web" => [3001], "prometheus" => [9090], "loki" => [3100],
-  "tempo" => [3200], "collector" => [13133, 8888]
+  "grafana" => [3000], "langfuse-web" => [3000], "prometheus" => [9090], "loki" => [3100],
+  "tempo" => [3200], "collector" => [4317, 4318, 13133, 8888]
 }
 services.each do |name, service|
   fail_check("unsafe_network_mode:#{name}") if service.key?("network_mode")
   fail_check("unsafe_container_privilege:#{name}") if service["privileged"] == true || %w[host service container].any? { |value| service["pid"] == value || service["ipc"] == value } || service.key?("devices") || service.key?("volumes_from") || service.key?("cap_add") || service.key?("security_opt") || service.key?("userns_mode") || service.key?("cgroup") || service.key?("device_cgroup_rules")
   fail_check("short_volume_syntax:#{name}") if Array(service["volumes"]).any? { |mount| !mount.is_a?(Hash) }
   Array(service["ports"]).each do |port|
-    fail_check("invalid_published_port:#{name}") unless port.is_a?(Hash) && port["host_ip"] == "127.0.0.1" && Array(allowed_ports[name]).include?(port["target"]) && port["published"].to_i == port["target"]
+    is_langfuse_ui_mapping = name == "langfuse-web" && port["target"] == 3000 && port["published"].to_i == 3001
+    fail_check("invalid_published_port:#{name}") unless port.is_a?(Hash) && port["host_ip"] == "127.0.0.1" && Array(allowed_ports[name]).include?(port["target"]) && (port["published"].to_i == port["target"] || is_langfuse_ui_mapping)
   end
   fail_check("unexpected_published_port:#{name}") if service.key?("ports") && !allowed_ports.key?(name)
 end
 allowed_ports.each { |name, ports| fail_check("missing_loopback_port:#{name}") unless Array(services.fetch(name)["ports"]).map { |port| port.is_a?(Hash) ? port["target"] : nil }.sort == ports.sort }
 
-volumes = hash(compose["volumes"], "missing_observability_volumes")
+volumes = required_hash(compose["volumes"], "missing_observability_volumes")
 required_volumes = %w[collector-data tempo-data loki-data prometheus-data grafana-data langfuse-postgres-data langfuse-clickhouse-data langfuse-redis-data]
 fail_check("invalid_observability_volumes") unless volumes.keys.sort == required_volumes.sort
 fail_check("external_or_overridden_volume") unless volumes.values.all? { |definition| definition == {} }
@@ -186,13 +198,19 @@ collector_mounts = Array(services.fetch("collector")["volumes"])
 fail_check("missing_collector_config_mount") unless has_mount?(collector_mounts, type: "bind", source: "./collector/collector-grafana.yaml", target: "/etc/otelcol-contrib/config.yaml", read_only: true)
 tempo_mounts = Array(services.fetch("tempo")["volumes"])
 prometheus_mounts = Array(services.fetch("prometheus")["volumes"])
+loki_mounts = Array(services.fetch("loki")["volumes"])
 grafana_mounts = Array(services.fetch("grafana")["volumes"])
 fail_check("missing_tempo_config_mount") unless has_mount?(tempo_mounts, type: "bind", source: "./tempo/tempo.yaml", target: "/etc/tempo/tempo.yaml", read_only: true)
 fail_check("missing_prometheus_config_mount") unless has_mount?(prometheus_mounts, type: "bind", source: "./prometheus/prometheus.yaml", target: "/etc/prometheus/prometheus.yml", read_only: true)
+fail_check("missing_loki_config_mount") unless has_mount?(loki_mounts, type: "bind", source: "./loki/loki.yaml", target: "/etc/loki/loki.yaml", read_only: true)
 fail_check("missing_datasource_mount") unless has_mount?(grafana_mounts, type: "bind", source: "./grafana/provisioning/datasources.yaml", target: "/etc/grafana/provisioning/datasources/datasources.yaml", read_only: true)
+fail_check("missing_dashboard_provider_mount") unless has_mount?(grafana_mounts, type: "bind", source: "./grafana/provisioning/dashboards.yaml", target: "/etc/grafana/provisioning/dashboards/dashboards.yaml", read_only: true)
+fail_check("missing_dashboard_mount") unless has_mount?(grafana_mounts, type: "bind", source: "./grafana/dashboards/observability-overview.json", target: "/var/lib/grafana/dashboards/observability-overview.json", read_only: true)
+fail_check("missing_alert_mount") unless has_mount?(grafana_mounts, type: "bind", source: "./grafana/alerts/observability.rules.yaml", target: "/etc/grafana/provisioning/alerting/observability.rules.yaml", read_only: true)
 allowed_binds = {
   "collector" => [["./collector/collector-grafana.yaml", "/etc/otelcol-contrib/config.yaml"]], "tempo" => [["./tempo/tempo.yaml", "/etc/tempo/tempo.yaml"]],
-  "prometheus" => [["./prometheus/prometheus.yaml", "/etc/prometheus/prometheus.yml"]], "grafana" => [["./grafana/provisioning/datasources.yaml", "/etc/grafana/provisioning/datasources/datasources.yaml"]]
+  "prometheus" => [["./prometheus/prometheus.yaml", "/etc/prometheus/prometheus.yml"]], "loki" => [["./loki/loki.yaml", "/etc/loki/loki.yaml"]],
+  "grafana" => [["./grafana/provisioning/datasources.yaml", "/etc/grafana/provisioning/datasources/datasources.yaml"], ["./grafana/provisioning/dashboards.yaml", "/etc/grafana/provisioning/dashboards/dashboards.yaml"], ["./grafana/dashboards/observability-overview.json", "/var/lib/grafana/dashboards/observability-overview.json"], ["./grafana/alerts/observability.rules.yaml", "/etc/grafana/provisioning/alerting/observability.rules.yaml"]]
 }
 services.each do |name, service|
   Array(service["volumes"]).select { |mount| mount.is_a?(Hash) && mount["type"] == "bind" }.each do |mount|
@@ -205,13 +223,15 @@ end
   fail_check("unhealthy_langfuse_dependency:#{dependency}") unless services.fetch("langfuse-web").dig("depends_on", dependency, "condition") == "service_healthy" && services.fetch("langfuse-worker").dig("depends_on", dependency, "condition") == "service_healthy"
 end
 
-tempo = hash(yaml(tempo_path), "invalid_tempo_config")
-prometheus = hash(yaml(prometheus_path), "invalid_prometheus_config")
+tempo = required_hash(yaml(tempo_path), "invalid_tempo_config")
+prometheus = required_hash(yaml(prometheus_path), "invalid_prometheus_config")
 fail_check("invalid_tempo_retention") unless tempo.dig("compactor", "compaction", "block_retention") == "168h"
 fail_check("invalid_prometheus_retention") unless Array(services.fetch("prometheus")["command"]).include?("--storage.tsdb.retention.time=15d") && !prometheus.key?("remote_write")
-datasources = hash(yaml(datasources_path), "invalid_datasources_config")
+datasources = required_hash(yaml(datasources_path), "invalid_datasources_config")
 expected_datasources = {"prometheus" => "http://prometheus:9090", "loki" => "http://loki:3100", "tempo" => "http://tempo:3200"}
-actual_datasources = Array(datasources["datasources"]).filter_map { |entry| [entry["uid"], entry["url"]] if entry.is_a?(Hash) }.to_h
+actual_datasources = Array(datasources["datasources"]).each_with_object({}) do |entry, values|
+  values[entry["uid"]] = entry["url"] if entry.is_a?(Hash)
+end
 fail_check("invalid_datasource_uid") unless actual_datasources == expected_datasources
 
 makefile = File.join(repo_root, "Makefile")
@@ -231,7 +251,9 @@ secret_markers = /authorization|api.?key|secret|password|token/i
 [compose, datasources].each do |document|
   sensitive_values(document).each do |path, value|
     next unless path.match?(secret_markers)
-    fail_check("literal_credential_in_profile") unless value.match?(/\A\$\{[A-Z][A-Z0-9_]*\}\z/)
+    # Compose 的 `:?` 形式让缺少凭据在容器创建前失败；仍只允许提交变量名，
+    # 不能把 credential value 或带凭据的 URI 写进 profile。
+    fail_check("literal_credential_in_profile") unless value.match?(/\A\$\{[A-Z][A-Z0-9_]*(?::\?[^}]*)?\}\z/)
   end
 end
 fail_check("unsafe_environment_syntax") if services.values.any? { |service| service.key?("environment") && !service["environment"].is_a?(Hash) }

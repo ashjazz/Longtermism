@@ -107,7 +107,7 @@
 - [X] T054 [US1] 在 `deploy/observability/collector/collector-grafana.yaml` 实现方案 C、metrics/filelog、完整 trace tail sampling 与三套独立持久队列配置；质量门控：使 T042 GREEN，公共 processor 只在 ingress，infra-only 数据不能通过 AI downstream filter，smoke/error/regression 不能被采样丢弃。
 - [X] T055 [US1] 在 `manifest/config/glog-observability.yaml` 配置结构化 JSON 文件、rotation 与 shared-volume 路径；质量门控：应用侧 JSONL 契约完成；T043 的 Loki 侧断言待 T058 关闭。
 - [X] T055A [US1] 在 composition root 显式加载 glog JSONL 配置，创建受控 completion writer 并接入 infra-smoke HTTP middleware；质量门控：只写 allowlist completion 字段，不直接连接 Loki。
-- [ ] T056 [US1] 在 `deploy/observability/compose.grafana.yaml` 实现 Collector+Prometheus+Loki+Tempo+Grafana+Langfuse 的主线 profile；质量门控：使 T044 GREEN，应用只连接 Collector，所有持久 volume 与应用数据库隔离，服务 healthcheck 不含 secret。
+- [X] T056 [US1] 在 `deploy/observability/compose.grafana.yaml` 实现 Collector+Prometheus+Loki+Tempo+Grafana+Langfuse 的主线 profile；质量门控：使 T044 GREEN，应用只连接 Collector，所有持久 volume 与应用数据库隔离，服务 healthcheck 不含 secret。
 - [X] T057 [P] [US1] 在 `deploy/observability/tempo/tempo.yaml` 配置 OTLP 接收、7 天 retention 与本地 volume；质量门控：Tempo 配置独立校验通过；T044 Compose 侧验收待 T056 汇合。
 - [X] T058 [P] [US1] 在 `deploy/observability/loki/loki.yaml` 配置 native OTLP、structured metadata 与 7 天 retention；质量门控：T043 GREEN，与 filelog attributes 一致，拒绝把高基数 request/trace ID 设为 index label。
 - [X] T059 [P] [US1] 在 `deploy/observability/prometheus/prometheus.yaml` 配置应用指标和 Collector self-telemetry scrape；质量门控：Prometheus scrape 契约通过；15 天 retention 由 T056 service command 实施，不使用 remote write，不按 run/request ID 查询指标。
@@ -126,7 +126,7 @@
 - [X] T065D [US1] 在 `cmd/obs-smoke/main_test.go` 扩展默认装配与 protected HTTP trigger RED 契约；质量门控：固定 GET `/api/v1/observability/infra-smoke` 与 API 定义的 marker header、60 秒 bounded deadline、配置校验先于任何 client/请求、固定 ignored 报告目录及 path/symlink escape 拒绝。
 - [X] T065 [US1] 在 `cmd/obs-smoke/main.go` 增加仅负责依赖装配的 `infra` scenario 命令入口；质量门控：使 T064E/T065D GREEN，行为委托给 T048 已测试 runner，缺配置时 fail-fast、报告写入 ignored 目录、退出码与 report status 一致，运行 `go test ./cmd/obs-smoke` 与 `go build ./cmd/obs-smoke`，stdout 不打印 credential/raw data。
 - [X] T064 [US1] 汇合 T064A–T064E 与 T065A–T065D 的 infra smoke 闭环；质量门控：T048、T064A、T064B、T064E 与 T065D 全部 GREEN，runner 只消费 adapter 的低敏 evidence、所有失败都有 schema-valid report，随后才允许开发 T066。
-- [ ] T066 [US1] 在 `Makefile` 增加 `obs-grafana-up/down`、`obs-stack-health`、`obs-infra-smoke`、`obs-grafana-e2e`；质量门控：满足 T044 的 Make wiring 先行断言，up/down 幂等，E2E 不接受仅 healthy 为通过，失败时仍执行 cleanup 并保留低敏报告。
+- [X] T066 [US1] 在 `Makefile` 增加 `obs-grafana-up/down`、`obs-stack-health`、`obs-infra-smoke`、`obs-grafana-e2e`；质量门控：满足 T044 的 Make wiring 先行断言，up/down 幂等，E2E 不接受仅 healthy 为通过，失败时仍执行 cleanup 并保留低敏报告。
 - [ ] T067 [US1] 在 `specs/003-real-observability-backends/checklists/grafana-infra.md` 编写主线基础设施验收清单；质量门控：本阶段只关闭 SC-001，SC-006 告警项明确标记为“已 provision、待 US3 firing/resolved 验证”，所有通过结论都要求机器可读证据，不以手工 UI 截图单独通过。
 
 ## Phase 4：User Story 2 - 追溯一次真实 AI 对话（P1）
