@@ -29,10 +29,10 @@ func TestGrafanaSmokeEvidenceAdapterQueriesCurrentMarkers(t *testing.T) {
 		}
 		switch request.URL.Path {
 		case "/api/search":
-			assertExactMarkerPredicate(t, "Tempo", query.Get("q"), target.Marker)
+			assertExactMarkerPredicate(t, "Tempo", query.Get("q"), "longtermism.smoke.run_id", target.Marker)
 			_, _ = fmt.Fprintf(writer, `{"traces":[{"startTimeUnixNano":"%d","rootTraceName":"GET /api/v1/observability/infra-smoke","rootServiceName":"raw-t064b-tempo-secret"},{"startTimeUnixNano":"%d","rootTraceName":"GET /api/v1/observability/infra-smoke","rootServiceName":"raw-t064b-tempo-secret"}]}`, startedAt.UnixNano(), deadline.UnixNano())
 		case "/loki/api/v1/query_range":
-			assertExactMarkerPredicate(t, "Loki", query.Get("query"), target.Marker)
+			assertExactMarkerPredicate(t, "Loki", query.Get("query"), "smoke_run_id", target.Marker)
 			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"values":[["%d","raw-t064b-loki-secret"],["%d","raw-t064b-loki-secret"]]}]}}`, startedAt.UnixNano(), deadline.UnixNano())
 		default:
 			t.Errorf("path = %q, want Tempo or Loki query", request.URL.Path)
@@ -64,10 +64,34 @@ func TestGrafanaSmokeEvidenceAdapterQueriesCurrentMarkers(t *testing.T) {
 	}
 }
 
-func assertExactMarkerPredicate(t *testing.T, backend, query, marker string) {
+func TestGrafanaSmokeEvidenceAdapterRejectsUnsafeOrUnboundedTargets(t *testing.T) {
+	now := time.Now().UTC()
+	adapter := NewGrafanaSmokeEvidenceAdapter(nil)
+	tests := []struct {
+		name   string
+		target smoke.PollMarkerTarget
+	}{
+		{name: "sensitive marker", target: smoke.PollMarkerTarget{Marker: "secret-marker", StartedAt: now, Deadline: now.Add(time.Minute)}},
+		{name: "window longer than one minute", target: smoke.PollMarkerTarget{Marker: "infra-t064c-marker", StartedAt: now, Deadline: now.Add(2 * time.Minute)}},
+		{name: "future window", target: smoke.PollMarkerTarget{Marker: "infra-t064c-marker", StartedAt: now.Add(2 * time.Minute), Deadline: now.Add(3 * time.Minute)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := adapter.QueryTempoMarker(context.Background(), tt.target)
+			if !errors.Is(err, errInvalidSmokeQueryTarget) {
+				t.Fatalf("QueryTempoMarker() error = %v, want invalid smoke target", err)
+			}
+			if strings.Contains(err.Error(), tt.target.Marker) {
+				t.Fatal("invalid target error leaked a caller-controlled marker")
+			}
+		})
+	}
+}
+
+func assertExactMarkerPredicate(t *testing.T, backend, query, field, marker string) {
 	t.Helper()
-	if !strings.Contains(query, marker) || !strings.Contains(query, "smoke.marker") {
-		t.Errorf("%s marker query = %q, want exact smoke.marker predicate for %q", backend, query, marker)
+	if !strings.Contains(query, marker) || !strings.Contains(query, field) {
+		t.Errorf("%s marker query = %q, want exact %s predicate for %q", backend, query, field, marker)
 	}
 }
 
@@ -76,7 +100,7 @@ func assertExactMarkerPredicate(t *testing.T, backend, query, marker string) {
 // smoke identity labels into a query result or a report DTO.
 func TestGrafanaSmokeEvidenceAdapterDecodesLowCardinalityCounts(t *testing.T) {
 	adapter := NewGrafanaSmokeEvidenceAdapter(nil)
-	selector := SmokeHTTPCountSelector{Route: "/api/v1/observability/infra-smoke", Status: "200"}
+	selector := SmokeHTTPCountSelector{Route: "/api/v1/observability/infra-smoke", Method: "GET", StatusClass: "2xx"}
 
 	tests := []struct {
 		name    string
@@ -87,29 +111,36 @@ func TestGrafanaSmokeEvidenceAdapterDecodesLowCardinalityCounts(t *testing.T) {
 		{
 			name: "baseline count",
 			result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"vector","result":[
-                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_response_status_code":"200"},"value":[1784541600,"41"]},
-                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_response_status_code":"200","request_id":"raw-t064b-request-id"},"value":[1784541600,"999"]}
+                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_request_method":"GET","http_response_status_class":"2xx"},"value":[1784541600,"41"]},
+                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_request_method":"GET","http_response_status_class":"2xx","request_id":"raw-t064b-request-id"},"value":[1784541600,"999"]}
             ]}}`),
 			want: 41,
 		},
 		{
 			name: "after count",
 			result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"vector","result":[
-                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_response_status_code":"200"},"value":[1784541601,"42"]}
+                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_request_method":"GET","http_response_status_class":"2xx"},"value":[1784541601,"42"]}
             ]}}`),
 			want: 42,
 		},
 		{
 			name: "rejects ambiguous exact series",
 			result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"vector","result":[
-                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_response_status_code":"200"},"value":[1784541601,"42"]},
-                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_response_status_code":"200"},"value":[1784541601,"43"]}
+                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_request_method":"GET","http_response_status_class":"2xx"},"value":[1784541601,"42"]},
+                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_request_method":"GET","http_response_status_class":"2xx"},"value":[1784541601,"43"]}
             ]}}`),
 			wantErr: true,
 		},
 		{
 			name:    "rejects a non-vector response",
 			result:  backendQueryResultForTest(`{"status":"success","data":{"resultType":"matrix","result":[]}}`),
+			wantErr: true,
+		},
+		{
+			name: "rejects an identity label instead of projecting it",
+			result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"vector","result":[
+                {"metric":{"http_route":"/api/v1/observability/infra-smoke","http_request_method":"GET","http_response_status_class":"2xx","trace_id":"raw-t064c-trace-id"},"value":[1784541601,"42"]}
+            ]}}`),
 			wantErr: true,
 		},
 	}
@@ -130,6 +161,26 @@ func TestGrafanaSmokeEvidenceAdapterDecodesLowCardinalityCounts(t *testing.T) {
 				t.Fatalf("count = %d, want %d", evidence.Count, tt.want)
 			}
 			assertNoRawBackendDataProjected(t, evidence)
+		})
+	}
+}
+
+func TestGrafanaSmokeEvidenceAdapterRejectsMalformedMarkerDocuments(t *testing.T) {
+	target := smoke.PollMarkerTarget{Marker: "infra-t064c-marker", StartedAt: time.Now().UTC(), Deadline: time.Now().UTC().Add(time.Minute)}
+	tests := []struct {
+		name   string
+		decode func(BackendQueryResult, smoke.PollMarkerTarget) ([]smoke.MarkerObservation, error)
+		result BackendQueryResult
+	}{
+		{name: "Tempo missing traces", decode: decodeTempoMarkerObservations, result: backendQueryResultForTest(`{}`)},
+		{name: "Tempo null traces", decode: decodeTempoMarkerObservations, result: backendQueryResultForTest(`{"traces":null}`)},
+		{name: "Loki non-string line", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["1784541600000000000",1]]}]}}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.decode(tt.result, target); !errors.Is(err, errMalformedSmokeEvidence) {
+				t.Fatalf("decode() error = %v, want malformed smoke evidence", err)
+			}
 		})
 	}
 }
