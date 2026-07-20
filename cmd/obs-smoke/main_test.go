@@ -534,3 +534,209 @@ func TestInfrastructureReportWriterRechecksBeforeWrite(t *testing.T) {
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+// TestDefaultInfrastructureAssemblyGuards keeps the production composition root honest without
+// starting Docker or querying a backend. The default command is allowed to construct clients only
+// after every required reference is present and every Grafana-facing endpoint is loopback-only.
+func TestDefaultInfrastructureAssemblyGuards(t *testing.T) {
+	tests := []struct {
+		name       string
+		overrides  map[string]string
+		wantConfig bool
+		wantRunner bool
+	}{
+		{
+			name:       "missing query reference fails before client construction",
+			overrides:  map[string]string{},
+			wantConfig: false,
+		},
+		{
+			name: "remote application endpoint is rejected before client construction",
+			overrides: map[string]string{
+				"LONGTERMISM_SMOKE_APP_BASE_URL":              "https://example.invalid",
+				"LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL": "http://127.0.0.1:9090",
+				"LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL":       "http://127.0.0.1:3100",
+				"LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL":      "http://127.0.0.1:3200",
+				"LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL":   "http://127.0.0.1:3001",
+				"LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL": "test-langfuse-credential",
+				"LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL":   "http://127.0.0.1:8000",
+				"LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL": "test-ai-plane-credential",
+			},
+			wantConfig: false,
+		},
+		{
+			name: "complete loopback references construct the runner without network IO",
+			overrides: map[string]string{
+				"LONGTERMISM_SMOKE_APP_BASE_URL":              "http://127.0.0.1:8000",
+				"LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL": "http://127.0.0.1:9090",
+				"LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL":       "http://127.0.0.1:3100",
+				"LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL":      "http://127.0.0.1:3200",
+				"LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL":   "http://127.0.0.1:3001",
+				"LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL": "test-langfuse-credential",
+				"LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL":   "http://127.0.0.1:8000",
+				"LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL": "test-ai-plane-credential",
+			},
+			wantConfig: true,
+			wantRunner: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setDefaultInfrastructureEnvironment(t, tt.overrides)
+			config, err := resolveDefaultInfrastructureCommandConfig(context.Background())
+			if (err == nil) != tt.wantConfig {
+				t.Fatalf("resolveDefaultInfrastructureCommandConfig() error = %v, want config=%v", err, tt.wantConfig)
+			}
+			if !tt.wantConfig {
+				if !errors.Is(err, errMissingInfrastructureCommandConfig) {
+					t.Fatalf("configuration error = %v, want stable missing-config error", err)
+				}
+				return
+			}
+			if config.Profile != "grafana" || config.ReportDirectory != infrastructureSmokeReportDirectory {
+				t.Fatalf("config = %#v, want fixed grafana profile and report directory", config)
+			}
+			if remaining := time.Until(config.Deadline); remaining <= 0 || remaining > infrastructureSmokeTimeout {
+				t.Fatalf("config deadline remaining = %s, want bounded future deadline", remaining)
+			}
+			runner, runnerErr := newDefaultInfrastructureCommandRunner(config)
+			if (runnerErr == nil) != tt.wantRunner || (runnerErr == nil && runner == nil) {
+				t.Fatalf("newDefaultInfrastructureCommandRunner() runner=%T error=%v, want runner=%v", runner, runnerErr, tt.wantRunner)
+			}
+		})
+	}
+}
+
+func setDefaultInfrastructureEnvironment(t *testing.T, overrides map[string]string) {
+	t.Helper()
+	keys := []string{
+		"LONGTERMISM_SMOKE_APP_BASE_URL",
+		"LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL",
+		"LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL",
+		"LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL",
+		"LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL",
+		"LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL",
+		"LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL",
+		"LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL",
+	}
+	for _, key := range keys {
+		t.Setenv(key, overrides[key])
+	}
+}
+
+func TestLocalSmokeURLAndTransportGuards(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		wantErr  bool
+	}{
+		{name: "loopback IPv4 is accepted", endpoint: "http://127.0.0.1:8000"},
+		{name: "localhost is resolved and accepted", endpoint: "http://localhost:8000"},
+		{name: "remote host is rejected", endpoint: "https://example.invalid", wantErr: true},
+		{name: "non HTTP scheme is rejected", endpoint: "ftp://127.0.0.1:8000", wantErr: true},
+		{name: "non loopback IP is rejected", endpoint: "http://127.0.0.2:8000", wantErr: true},
+		{name: "credentials are rejected", endpoint: "http://user:secret@127.0.0.1:8000", wantErr: true},
+		{name: "path override is rejected", endpoint: "http://127.0.0.1:8000/private", wantErr: true},
+		{name: "query override is rejected", endpoint: "http://127.0.0.1:8000?target=private", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateLocalSmokeBaseURL(tt.endpoint)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateLocalSmokeBaseURL(%q) error = %v, wantErr %v", tt.endpoint, err, tt.wantErr)
+			}
+		})
+	}
+
+	transport := newLocalSmokeTransport()
+	if transport.Proxy != nil {
+		t.Fatal("local smoke transport must not inherit an ambient proxy")
+	}
+	if _, err := transport.DialContext(context.Background(), "tcp", "example.invalid:443"); err == nil || !strings.Contains(err.Error(), "non-loopback") {
+		t.Fatalf("remote dial error = %v, want non-loopback rejection", err)
+	}
+	if _, err := transport.DialContext(context.Background(), "tcp", "127.0.0.1:not-a-port"); err == nil {
+		t.Fatal("malformed loopback dial error = nil, want address rejection")
+	}
+	if _, err := transport.DialContext(context.Background(), "tcp", "localhost:1"); err == nil {
+		t.Fatal("closed localhost port dial error = nil, want connection failure after loopback resolution")
+	}
+}
+
+func TestDefaultCommandHelpersRejectMissingReportsAndCanceledWaits(t *testing.T) {
+	if _, err := newContainedInfrastructureReportWriter(""); !errors.Is(err, errMissingInfrastructureCommandConfig) {
+		t.Fatalf("empty workspace error = %v, want missing configuration", err)
+	}
+	writer, err := newContainedInfrastructureReportWriter(t.TempDir())
+	if err != nil {
+		t.Fatalf("newContainedInfrastructureReportWriter() error = %v", err)
+	}
+	if _, err := writer.Write(nil); err == nil {
+		t.Fatal("Write(nil) error = nil, want missing report rejection")
+	}
+
+	clock := systemPollerClock{}
+	if clock.Now().IsZero() {
+		t.Fatal("systemPollerClock.Now() returned zero time")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := clock.Wait(ctx, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("systemPollerClock.Wait() error = %v, want context cancellation", err)
+	}
+
+	dependencies := defaultInfraCommandDependencies()
+	if dependencies.ResolveConfig == nil || dependencies.NewRunner == nil || dependencies.WriteReport == nil {
+		t.Fatal("default infra command dependencies must provide every composition port")
+	}
+
+	workspace := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workspace); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	dependencies = defaultInfraCommandDependencies()
+	path, err := dependencies.WriteReport(infrastructureSmokeReportDirectory, newInfrastructureCommandReport(t, "passed"))
+	if err != nil {
+		t.Fatalf("default report writer error = %v", err)
+	}
+	if !isTrustedInfrastructureReportPath(infrastructureSmokeReportDirectory, path) {
+		t.Fatalf("default report path = %q, want contained relative artifact", path)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, path)); err != nil {
+		t.Fatalf("default report artifact stat error = %v", err)
+	}
+}
+
+func TestProtectedInfrastructureSmokeTriggerFailsClosedBeforeNetwork(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		identity smoke.InfrastructureSmokeIdentity
+	}{
+		{name: "invalid base URL", baseURL: "http://127.0.0.1:8000/unsafe"},
+		{name: "runner identity is incomplete", baseURL: "http://127.0.0.1:8000", identity: smoke.InfrastructureSmokeIdentity{RunID: "run"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			trigger, err := newProtectedInfrastructureSmokeTrigger(tt.baseURL, nil)
+			if tt.name == "invalid base URL" {
+				if !errors.Is(err, errProtectedInfrastructureTrigger) || trigger != nil {
+					t.Fatalf("invalid base URL trigger=%v error=%v, want stable rejection", trigger, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("newProtectedInfrastructureSmokeTrigger() error = %v", err)
+			}
+			if err := trigger(context.Background(), tt.identity); !errors.Is(err, errProtectedInfrastructureTrigger) {
+				t.Fatalf("trigger error = %v, want stable preflight rejection", err)
+			}
+		})
+	}
+}
