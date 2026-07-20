@@ -50,7 +50,8 @@ func TestLangfuseSmokeQueryBindsTheExactMarker(t *testing.T) {
 }
 
 func TestNegativeSmokeQueryFailsClosed(t *testing.T) {
-	target := smoke.PollMarkerTarget{Marker: "infra-t065b-marker", StartedAt: time.Now().UTC(), Deadline: time.Now().UTC().Add(time.Minute)}
+	now := time.Now().UTC()
+	target := smoke.PollMarkerTarget{Marker: "infra-t065b-marker", StartedAt: now, Deadline: now.Add(time.Minute)}
 	tests := []struct {
 		name      string
 		port      string
@@ -143,6 +144,10 @@ func TestNegativeSmokeQueryRejectsUnsafeEndpointsBeforeNetwork(t *testing.T) {
 		{name: "query override", baseURL: "http://127.0.0.1:3100?marker=raw-t065b", resolver: loopback},
 		{name: "fragment override", baseURL: "http://127.0.0.1:3100#raw-t065b", resolver: loopback},
 		{name: "path override", baseURL: "http://127.0.0.1:3100/other", resolver: loopback},
+		{name: "empty query override", baseURL: "http://127.0.0.1:3100?", resolver: loopback},
+		{name: "missing port", baseURL: "http://127.0.0.1", resolver: loopback},
+		{name: "zero port", baseURL: "http://127.0.0.1:0", resolver: loopback},
+		{name: "oversized port", baseURL: "http://127.0.0.1:65536", resolver: loopback},
 		{name: "unsupported scheme", baseURL: "ftp://127.0.0.1:3100", resolver: loopback},
 	}
 	for _, port := range []string{"langfuse", "ai-plane"} {

@@ -127,7 +127,7 @@ func markerCheck(backend string, err error, key string) BackendCheckInput {
 }
 func negativeCheck(backend string, count int, err error, key string) BackendCheckInput {
 	if err != nil {
-		return outcomeCheck(backend, false, "query", "query_failed", map[string]any{key: int64(0)})
+		return outcomeCheck(backend, false, "query", markerErrorClass(err), map[string]any{key: int64(0)})
 	}
 	return outcomeCheck(backend, count == 0, "query", "unexpected_evidence", map[string]any{key: int64(count)})
 }
@@ -135,7 +135,8 @@ func markerErrorClass(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "backend_timeout"
 	}
-	if classified, ok := err.(interface{ Class() string }); ok && contains(allowedErrorClasses, classified.Class()) {
+	var classified interface{ Class() string }
+	if errors.As(err, &classified) && contains(allowedErrorClasses, classified.Class()) {
 		return classified.Class()
 	}
 	return "query_failed"

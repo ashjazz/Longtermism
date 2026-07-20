@@ -111,7 +111,8 @@ func TestGrafanaInfrastructureSmokeBackendFailsClosed(t *testing.T) {
 }
 
 func TestGrafanaInfrastructureSmokeBackendPreservesNegativeCounterFailures(t *testing.T) {
-	target := smoke.PollMarkerTarget{Marker: "infra-t065b-marker", StartedAt: time.Now().UTC(), Deadline: time.Now().UTC().Add(time.Minute)}
+	now := time.Now().UTC()
+	target := smoke.PollMarkerTarget{Marker: "infra-t065b-marker", StartedAt: now, Deadline: now.Add(time.Minute)}
 	backend, err := NewGrafanaInfrastructureSmokeBackend(GrafanaInfrastructureSmokeBackendConfig{
 		Grafana:  loopbackGrafanaQueryClient(),
 		Langfuse: fakeNegativeMarkerCounter{err: fmt.Errorf("wrapped: %w", newBackendQueryError("langfuse", "authentication_failed"))},
@@ -213,7 +214,8 @@ func TestInfrastructureSmokeRunnerPreservesNegativeQueryClass(t *testing.T) {
 
 type fixedRunnerClock struct{ now time.Time }
 
-func (c fixedRunnerClock) Now() time.Time { return c.now }
+func (c fixedRunnerClock) Now() time.Time                          { return c.now }
+func (fixedRunnerClock) Wait(context.Context, time.Duration) error { return nil }
 
 type runnerClassBackend struct{ negativeErr error }
 
