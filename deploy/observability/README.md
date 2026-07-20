@@ -51,6 +51,47 @@ shell 或被忽略的本地环境文件中提供 Langfuse 运行配置、`GRAFAN
 端口发布到 loopback；Tempo、Loki、Prometheus、Grafana 与 Langfuse 的服务 DNS 仍只
 存在于 profile 内。
 
-`make obs-grafana-e2e` 假定应用已启动、已启用 infra-smoke 路由，并已指向上述
-Collector endpoint；同时需要 `LONGTERMISM_SMOKE_*` 的本地只读查询 URL/credential
-引用。它打印 `ps` 仅用于诊断，唯一的通过结论来自 `obs-infra-smoke` 写出的低敏查询报告。
+### 本地 infra smoke 启动顺序
+
+`make obs-infra-smoke` 是一次**查询式验收**：它不会启动 Docker Compose，也不会启动应用。
+先完成下列顺序，再执行它：
+
+1. 在当前 shell 或被忽略的本地环境文件中准备上一节列出的 Compose 运行配置，然后执行
+   `make obs-grafana-up`。
+2. 复制 `manifest/config/config.grafana-smoke.example.yaml` 为已忽略的
+   `config.grafana-smoke.local.yaml`。这是**独立配置文件**，不会与 `config.yaml` 或
+   `config.local.yaml` 自动合并；它会将应用绑定为 `127.0.0.1:8000`，改为 `collector` mode、
+   指向 `127.0.0.1:4317`，并显式启用 trace、metrics 和 smoke 路由。不要在共享网络上以
+   全网卡监听的方式启用该无认证探测路由。
+3. 在另一个终端以显式配置启动应用：
+
+   ```bash
+   GF_GCFG_FILE=manifest/config/config.grafana-smoke.local.yaml go run .
+   ```
+
+   若应用不在默认的 `http://127.0.0.1:8000`，额外设置 `LONGTERMISM_SMOKE_APP_BASE_URL`，
+   并仍将该应用入口限制在 loopback。GoFrame 同样支持等价的
+   `go run . --gf.gcfg.file=manifest/config/config.grafana-smoke.local.yaml` 形式。
+4. 仅在本地 shell、secret 文件或密钥管理器中设置下列查询引用；不要把 credential 值写入
+   可提交的 YAML、Makefile 或文档：
+
+   ```bash
+   export LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL=http://127.0.0.1:9090
+   export LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL=http://127.0.0.1:3100
+   export LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL=http://127.0.0.1:3200
+   export LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL=http://127.0.0.1:3001
+   export LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL='<local read-only credential>'
+   export LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL=http://127.0.0.1:8000
+   export LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL='<local read-only credential>'
+   make obs-infra-smoke
+   ```
+
+   Prometheus、Loki、Tempo 和 Langfuse 地址是 Grafana profile 发布到 loopback 的本地查询
+   入口；AI-plane 地址是第 3 步启动的应用入口。credential 的格式由对应的 query client
+   契约决定。Make target 会先检查全部七项必填引用，缺失时只打印变量名和本文档位置，绝不
+   打印值。
+
+`make obs-grafana-e2e` 会代为执行第 1 步，并在结束时关闭当前 Compose profile；它仍假定
+第 2、3、4 步已经完成。它打印 `ps` 仅用于诊断，唯一的通过结论来自 `obs-infra-smoke` 写出的
+低敏查询报告。手动调试完成后使用 `make obs-grafana-down` 停止 profile；该命令不删除 named
+volumes，以保留故障诊断证据。

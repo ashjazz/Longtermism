@@ -38,11 +38,41 @@ assert_contains_in_order() {
   done
 }
 
+set_synthetic_smoke_environment() {
+  export LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL="http://127.0.0.1:9090"
+  export LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL="http://127.0.0.1:3100"
+  export LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL="http://127.0.0.1:3200"
+  export LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL="http://127.0.0.1:3001"
+  export LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL="test-langfuse-credential"
+  export LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL="http://127.0.0.1:8000"
+  export LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL="test-ai-plane-credential"
+}
+
+test_infra_smoke_preflight_explains_missing_local_configuration() {
+  local temporary log output status
+  temporary="$(mktemp -d)"
+  log="${temporary}/commands.log"
+  setup_fake_tools "${temporary}"
+
+  set +e
+  output="$(cd "${REPO_ROOT}" && unset LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL; PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make obs-infra-smoke 2>&1)"
+  status=$?
+  set -e
+  [[ "${status}" -eq 2 ]] || { printf 'missing smoke configuration exit = %s, want 2\n%s\n' "${status}" "${output}" >&2; exit 1; }
+  for variable in LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL; do
+    [[ "${output}" == *"${variable}"* ]] || { printf 'preflight did not report required variable %s\n%s\n' "${variable}" "${output}" >&2; exit 1; }
+  done
+  [[ "${output}" == *"deploy/observability/README.md"* ]] || { printf 'missing preflight guidance\n%s\n' "${output}" >&2; exit 1; }
+  [[ ! -s "${log}" ]] || { printf 'preflight invoked smoke CLI before validation\n%s\n' "$(cat "${log}")" >&2; exit 1; }
+  rm -rf "${temporary}"
+}
+
 test_e2e_success_and_idempotent_lifecycle() {
   local temporary log output status
   temporary="$(mktemp -d)"
   log="${temporary}/commands.log"
   setup_fake_tools "${temporary}"
+  set_synthetic_smoke_environment
   mkdir -p "${temporary}/reports"
 
   set +e
@@ -74,6 +104,7 @@ test_e2e_failure_still_cleans_up_and_preserves_reports() {
   log="${temporary}/commands.log"
   report="${REPO_ROOT}/build/observability/smoke-reports/t066-retained-test-report.json"
   setup_fake_tools "${temporary}"
+  set_synthetic_smoke_environment
   mkdir -p "$(dirname "${report}")"
   printf '{}\n' >"${report}"
 
@@ -90,6 +121,7 @@ test_e2e_failure_still_cleans_up_and_preserves_reports() {
   rm -rf "${temporary}"
 }
 
+test_infra_smoke_preflight_explains_missing_local_configuration
 test_e2e_success_and_idempotent_lifecycle
 test_e2e_failure_still_cleans_up_and_preserves_reports
 printf '%s\n' 'make_grafana_e2e_test: pass'

@@ -1,0 +1,22 @@
+# Grafana profile 的独立本地 smoke 配置。使用 GF_GCFG_FILE 或 --gf.gcfg.file 显式选择它，
+# 它不会与 config.yaml/config.local.yaml 自动合并，因而必须自行包含所有验收关键值。
+# 该文件不包含 backend endpoint、credential、header 或其他敏感值。
+
+# infra-smoke 路由无认证，仅允许本机触发探测，避免局域网请求污染验收数据或消耗本地配额。
+server:
+  address: "127.0.0.1:8000"
+
+observability:
+  # 应用只连接本机 Collector；不得在应用配置中填入 Tempo/Loki/Prometheus/Grafana/Langfuse 地址。
+  enabled: true
+  mode: "collector"
+  collector:
+    protocol: "grpc"
+    endpoint: "127.0.0.1:4317"
+    insecure: true
+  signals:
+    traces_enabled: true
+    metrics_enabled: true
+  smoke:
+    # 仅为本地验收显式启用；生产环境保持关闭，避免意外生成探测流量。
+    enabled: true

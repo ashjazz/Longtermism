@@ -73,6 +73,16 @@ obs-stack-health:
 	docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml ps
 
 obs-infra-smoke:
+	@missing=''; \
+		for variable in LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL; do \
+			if [ -z "$$(printenv "$$variable")" ]; then missing="$$missing $$variable"; fi; \
+		done; \
+		if [ -n "$$missing" ]; then \
+			printf '%s\n' "obs-infra-smoke preflight failed: missing required environment variables:$$missing" >&2; \
+			printf '%s\n' "Start the local Grafana profile and application first; see deploy/observability/README.md." >&2; \
+			exit 2; \
+		fi
+	@printf '%s\n' "obs-infra-smoke: querying the already-running local application and profile; it will not start services." >&2
 	go run ./cmd/obs-smoke infra
 
 # 无论 health 或查询 smoke 失败都停止当前 Compose profile；down 不带 -v，因此
