@@ -196,6 +196,9 @@ end
 
 collector_mounts = Array(services.fetch("collector")["volumes"])
 fail_check("missing_collector_config_mount") unless has_mount?(collector_mounts, type: "bind", source: "./collector/collector-grafana.yaml", target: "/etc/otelcol-contrib/config.yaml", read_only: true)
+# 宿主机运行应用时，JSONL 落在被忽略的项目运行目录；Collector 只读同一个 bind mount，
+# 因而仍由 filelog 异步送往 Loki，应用不直接连接后端。
+fail_check("missing_local_application_log_mount") unless has_mount?(collector_mounts, type: "bind", source: "../../resource/log/observability", target: "/var/log/longtermism", read_only: true)
 tempo_mounts = Array(services.fetch("tempo")["volumes"])
 prometheus_mounts = Array(services.fetch("prometheus")["volumes"])
 loki_mounts = Array(services.fetch("loki")["volumes"])
@@ -208,7 +211,7 @@ fail_check("missing_dashboard_provider_mount") unless has_mount?(grafana_mounts,
 fail_check("missing_dashboard_mount") unless has_mount?(grafana_mounts, type: "bind", source: "./grafana/dashboards/observability-overview.json", target: "/var/lib/grafana/dashboards/observability-overview.json", read_only: true)
 fail_check("missing_alert_mount") unless has_mount?(grafana_mounts, type: "bind", source: "./grafana/alerts/observability.rules.yaml", target: "/etc/grafana/provisioning/alerting/observability.rules.yaml", read_only: true)
 allowed_binds = {
-  "collector" => [["./collector/collector-grafana.yaml", "/etc/otelcol-contrib/config.yaml"]], "tempo" => [["./tempo/tempo.yaml", "/etc/tempo/tempo.yaml"]],
+  "collector" => [["./collector/collector-grafana.yaml", "/etc/otelcol-contrib/config.yaml"], ["../../resource/log/observability", "/var/log/longtermism"]], "tempo" => [["./tempo/tempo.yaml", "/etc/tempo/tempo.yaml"]],
   "prometheus" => [["./prometheus/prometheus.yaml", "/etc/prometheus/prometheus.yml"]], "loki" => [["./loki/loki.yaml", "/etc/loki/loki.yaml"]],
   "grafana" => [["./grafana/provisioning/datasources.yaml", "/etc/grafana/provisioning/datasources/datasources.yaml"], ["./grafana/provisioning/dashboards.yaml", "/etc/grafana/provisioning/dashboards/dashboards.yaml"], ["./grafana/dashboards/observability-overview.json", "/var/lib/grafana/dashboards/observability-overview.json"], ["./grafana/alerts/observability.rules.yaml", "/etc/grafana/provisioning/alerting/observability.rules.yaml"]]
 }
@@ -242,6 +245,9 @@ infra_recipe = target_recipe(makefile, "obs-infra-smoke").join("\n")
 e2e_recipe = target_recipe(makefile, "obs-grafana-e2e").join("\n")
 compose_command = "docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml"
 fail_check("invalid_grafana_up_target") unless up_recipe.include?(compose_command) && up_recipe.include?("up -d")
+fail_check("missing_local_log_symlink_guard") unless up_recipe.include?("-L") && up_recipe.include?("resource/log/observability")
+collector_user = services.fetch("collector")["user"]
+fail_check("missing_local_log_group") unless collector_user == "10001:${OBSERVABILITY_LOG_GID:?set OBSERVABILITY_LOG_GID}"
 fail_check("invalid_grafana_down_target") unless down_recipe.include?(compose_command) && down_recipe.match?(/\bdown\b/) && !down_recipe.match?(/(?:^|\s)-v(?:\s|$)/)
 fail_check("invalid_stack_health_target") unless health_recipe.include?(compose_command) && health_recipe.match?(/\bps\b/)
 fail_check("invalid_infra_smoke_target") unless infra_recipe.include?("obs-smoke") && infra_recipe.include?("infra")

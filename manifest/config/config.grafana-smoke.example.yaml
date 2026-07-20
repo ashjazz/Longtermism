@@ -14,6 +14,9 @@ observability:
     protocol: "grpc"
     endpoint: "127.0.0.1:4317"
     insecure: true
+  logs:
+    # 本地应用写入被 .gitignore 排除的目录；Collector 通过 compose bind mount 异步读取。
+    path: "resource/log/observability"
   signals:
     traces_enabled: true
     metrics_enabled: true

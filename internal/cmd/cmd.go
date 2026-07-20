@@ -26,9 +26,15 @@ import (
 	"github.com/gogf/gf/v2/os/gcfg"
 	"github.com/gogf/gf/v2/os/gcmd"
 	"go.opentelemetry.io/otel"
+	"golang.org/x/sys/unix"
 )
 
-const observabilityShutdownTimeout = 5 * time.Second
+const (
+	observabilityShutdownTimeout = 5 * time.Second
+	collectorJSONLLogPath        = "/var/log/longtermism"
+	hostJSONLLogPath             = "resource/log/observability"
+	completionJSONLLogFile       = "application.jsonl"
+)
 
 var (
 	// Main 是默认主命令。未来可扩展为多命令（gcmd.CommandWithOpts），
@@ -137,12 +143,21 @@ func newHTTPCompletionLoggingMiddleware(ctx context.Context, bootstrap *Observab
 		return nil, fmt.Errorf("load observability glog config: %w", err)
 	}
 	loggerConfig := gcfg.NewWithAdapter(config)
-	path := loggerConfig.MustGet(ctx, "logger.path").String()
-	file := loggerConfig.MustGet(ctx, "logger.file").String()
-	if path == "" || file == "" {
-		return nil, fmt.Errorf("observability glog path and file are required")
+	// Compose keeps the profile default under /var/log, while a host-run application must use a
+	// project-local ignored directory that the Collector bind-mounts. The application config can
+	// override only this boundary; it still never learns a backend endpoint.
+	path, err := resolveHTTPCompletionLogPath(
+		g.Cfg().MustGet(ctx, "observability.logs.path", loggerConfig.MustGet(ctx, "logger.path").String()).String(),
+		loggerConfig.MustGet(ctx, "logger.path").String(),
+	)
+	if err != nil {
+		return nil, err
 	}
-	output, err := os.OpenFile(filepath.Join(path, file), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640)
+	file, err := resolveHTTPCompletionLogFile(loggerConfig.MustGet(ctx, "logger.file").String())
+	if err != nil {
+		return nil, err
+	}
+	output, err := openHTTPCompletionLog(path, file)
 	if err != nil {
 		return nil, fmt.Errorf("open observability JSONL file: %w", err)
 	}
@@ -158,6 +173,64 @@ func newHTTPCompletionLoggingMiddleware(ctx context.Context, bootstrap *Observab
 			return appobservability.HTTPRequestIdentity{RequestID: RequestIDFromContext(request.Context()), RouteTemplate: RouteTemplateFromContext(request.Context())}
 		},
 	}), nil
+}
+
+// resolveHTTPCompletionLogPath keeps the filesystem boundary closed: the local Grafana profile
+// can write only its ignored project directory, and the container profile only its shared-volume
+// path. Arbitrary config or environment overrides must not turn smoke into an arbitrary writer.
+func resolveHTTPCompletionLogPath(path string, fallback string) (string, error) {
+	if path == "" {
+		path = fallback
+	}
+	switch path {
+	case hostJSONLLogPath, collectorJSONLLogPath:
+		return path, nil
+	default:
+		return "", fmt.Errorf("unsupported observability JSONL path: %q", path)
+	}
+}
+
+// resolveHTTPCompletionLogFile prevents the independently loaded glog profile from escaping the
+// approved directory through a relative or absolute filename. Completion logging owns one file.
+func resolveHTTPCompletionLogFile(file string) (string, error) {
+	if file != completionJSONLLogFile {
+		return "", fmt.Errorf("unsupported observability JSONL file: %q", file)
+	}
+	return file, nil
+}
+
+// openHTTPCompletionLog owns the small filesystem boundary for the allowlisted JSONL stream.
+// os.OpenFile creates a file but not its parent; creating the configured local directory here
+// keeps host-run smoke deterministic without requiring developers to write under /var/log.
+func openHTTPCompletionLog(path string, file string) (*os.File, error) {
+	if path == "" || file == "" {
+		return nil, fmt.Errorf("observability glog path and file are required")
+	}
+	if err := os.MkdirAll(path, 0750); err != nil {
+		return nil, fmt.Errorf("create observability glog directory: %w", err)
+	}
+	// O_NOFOLLOW closes the check-to-open gap for an existing application.jsonl symlink.
+	// The collector must never be induced to observe a file outside the two approved directories.
+	descriptor, err := unix.Open(filepath.Join(path, file), unix.O_APPEND|unix.O_CREAT|unix.O_WRONLY|unix.O_NOFOLLOW, 0640)
+	if err != nil {
+		return nil, err
+	}
+	output := os.NewFile(uintptr(descriptor), filepath.Join(path, file))
+	if output == nil {
+		_ = unix.Close(descriptor)
+		return nil, fmt.Errorf("wrap observability JSONL file descriptor")
+	}
+	if err := output.Chown(-1, os.Getgid()); err != nil {
+		_ = output.Close()
+		return nil, fmt.Errorf("set observability JSONL group: %w", err)
+	}
+	// The host app and non-root Collector share the host user's primary group. Apply the intended
+	// mode after opening so a restrictive umask or an old 0600 file cannot silently break filelog.
+	if err := output.Chmod(0640); err != nil {
+		_ = output.Close()
+		return nil, fmt.Errorf("set observability JSONL permissions: %w", err)
+	}
+	return output, nil
 }
 
 func resolveInfraSmokeRateLimitConfig(ctx context.Context) (InfraSmokeRateLimitConfig, error) {

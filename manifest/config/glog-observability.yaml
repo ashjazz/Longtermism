@@ -1,5 +1,6 @@
-# 该文件是 Grafana profile 的 glog 配置来源。T056 将它作为应用 logger 配置挂载，
-# 让应用仅写共享卷中的 JSONL；Collector filelog 再异步转发 Loki，应用不直连 Loki。
+# 该文件是 Grafana profile 的 glog 默认配置来源。容器部署使用 /var/log shared volume；
+# 宿主机本地 smoke 可通过 observability.logs.path 覆盖到 ignored 项目目录。两种场景均由
+# Collector filelog 异步转发 Loki，应用不直连 Loki。允许路径仅限这两个固定 profile 边界。
 logger:
   level: "info"
   path: "/var/log/longtermism"

@@ -61,7 +61,14 @@ obs-platform-smoke:
 # Level 1 是明确 opt-in 的本地 Grafana profile。默认 `verify` 绝不依赖 Docker 或
 # Langfuse 凭据；这些命令也不删除 named volumes，避免把诊断证据当作清理副作用丢失。
 obs-grafana-up:
-	docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml up -d --wait --wait-timeout 180
+	@set -eu; \
+		for directory in resource resource/log resource/log/observability; do \
+			if [ -L "$$directory" ]; then echo "refusing symlinked local log directory: $$directory" >&2; exit 2; fi; \
+		done; \
+		mkdir -p resource/log/observability; \
+		chgrp "$$(id -g)" resource/log/observability; \
+		chmod 0750 resource/log/observability
+	OBSERVABILITY_LOG_GID="$$(id -g)" docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml up -d --wait --wait-timeout 180
 
 obs-grafana-down:
 	docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml down

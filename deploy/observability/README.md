@@ -57,12 +57,19 @@ shell 或被忽略的本地环境文件中提供 Langfuse 运行配置、`GRAFAN
 先完成下列顺序，再执行它：
 
 1. 在当前 shell 或被忽略的本地环境文件中准备上一节列出的 Compose 运行配置，然后执行
-   `make obs-grafana-up`。
+   `make obs-grafana-up`。该 target 会先创建被忽略的
+   `resource/log/observability`，将目录设为当前用户主组可读，并将同一 GID 传给非 root
+   Collector；Collector 仅以只读 bind mount 读取该 JSONL 目录。应用必须由执行此命令的
+   同一普通用户启动；不要用 `sudo` 启动应用，也不要将该目录替换为符号链接。
 2. 复制 `manifest/config/config.grafana-smoke.example.yaml` 为已忽略的
    `config.grafana-smoke.local.yaml`。这是**独立配置文件**，不会与 `config.yaml` 或
    `config.local.yaml` 自动合并；它会将应用绑定为 `127.0.0.1:8000`，改为 `collector` mode、
-   指向 `127.0.0.1:4317`，并显式启用 trace、metrics 和 smoke 路由。不要在共享网络上以
-   全网卡监听的方式启用该无认证探测路由。
+   指向 `127.0.0.1:4317`，并显式启用 trace、metrics、项目内 JSONL 日志目录和 smoke 路由。
+   不要在共享网络上以全网卡监听的方式启用该无认证探测路由。
+
+   如果你此前已创建过该 `.local.yaml`，请合并示例新增的
+   `observability.logs.path: resource/log/observability`，或重新复制示例后再恢复自己的非敏感设置；
+   否则旧文件仍会沿用容器专用的 `/var/log/longtermism` 默认路径。
 3. 在另一个终端以显式配置启动应用：
 
    ```bash
