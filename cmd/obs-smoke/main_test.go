@@ -5,10 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	v1observability "github.com/ashjazz/Longtermism/api/v1/observability"
 	"github.com/ashjazz/Longtermism/internal/observability/smoke"
 )
 
@@ -352,3 +358,179 @@ func assertNoSensitiveCommandOutput(t *testing.T, output string, forbidden []str
 		}
 	}
 }
+
+// TestProtectedInfrastructureSmokeTriggerContract fixes the only HTTP effect the command may
+// perform. The runner owns the marker; the CLI merely forwards it through the versioned API
+// contract under the same bounded context, never through a query parameter or request body.
+func TestProtectedInfrastructureSmokeTriggerContract(t *testing.T) {
+	deadline := time.Now().UTC().Add(time.Minute)
+	identity := smoke.InfrastructureSmokeIdentity{RunID: "run-t065d-contract", Marker: "marker-t065d-contract"}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		if request.Method != http.MethodGet || request.URL.Path != "/api/v1/observability/infra-smoke" || request.URL.RawQuery != "" || request.ContentLength != 0 || len(body) != 0 {
+			t.Errorf("request = method:%s path:%s query:%q, want bounded GET contract", request.Method, request.URL.Path, request.URL.RawQuery)
+		}
+		if marker := request.Header.Get(v1observability.SmokeRunIDHeader); marker != identity.Marker {
+			t.Errorf("marker header = %q, want runner-owned marker %q", marker, identity.Marker)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		if _, err := writer.Write([]byte(`{"code":0,"message":"ok","data":{"status":"ok"},"meta":{"request_id":"req-t065d"}}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	baseClient := server.Client()
+	client := *baseClient
+	client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if got, ok := request.Context().Deadline(); !ok || !got.Equal(deadline) {
+			t.Errorf("client request deadline = %s present:%v, want %s", got, ok, deadline)
+		}
+		return baseClient.Transport.RoundTrip(request)
+	})
+	trigger, err := newProtectedInfrastructureSmokeTrigger(server.URL, &client)
+	if err != nil {
+		t.Fatalf("newProtectedInfrastructureSmokeTrigger() error = %v", err)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	if err := trigger(ctx, identity); err != nil {
+		t.Fatalf("protected trigger error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("protected trigger requests = %d, want 1", requests)
+	}
+}
+
+func TestProtectedInfrastructureSmokeTriggerRejectsInvalidResponses(t *testing.T) {
+	identity := smoke.InfrastructureSmokeIdentity{RunID: "run-t065d-contract", Marker: "marker-t065d-contract"}
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "disabled route", status: http.StatusNotFound, body: `{"code":404}`},
+		{name: "rate limited route", status: http.StatusTooManyRequests, body: `{"code":429}`},
+		{name: "server failure", status: http.StatusBadGateway, body: `{"code":502}`},
+		{name: "malformed response", status: http.StatusOK, body: `{`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(tt.status)
+				_, _ = writer.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+			trigger, err := newProtectedInfrastructureSmokeTrigger(server.URL, server.Client())
+			if err != nil {
+				t.Fatalf("newProtectedInfrastructureSmokeTrigger() error = %v", err)
+			}
+			if err := trigger(context.Background(), identity); err == nil || strings.Contains(err.Error(), "{") {
+				t.Fatalf("trigger error = %v, want a stable non-sensitive failure", err)
+			}
+		})
+	}
+}
+
+// TestInfrastructureReportWriterRejectsEscapes protects ignored smoke artifacts from becoming a
+// generic file-write primitive. The writer must reject lexical and symlink escapes before any
+// external file can be created or overwritten.
+func TestInfrastructureReportWriterRejectsEscapes(t *testing.T) {
+	outside := t.TempDir()
+	sentinel := filepath.Join(outside, "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("unchanged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	report := newInfrastructureCommandReport(t, "passed")
+
+	tests := []struct {
+		name      string
+		prepare   func(t *testing.T, workspace, outside string)
+		wantError bool
+	}{
+		{name: "normal report stays below fixed root", prepare: func(_ *testing.T, _, _ string) {}},
+		{name: "fixed root symlink", prepare: func(t *testing.T, workspace, outside string) {
+			if err := os.MkdirAll(filepath.Join(workspace, "build", "observability"), 0750); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(workspace, "build", "observability", "smoke-reports")
+			if err := os.Symlink(outside, link); err != nil {
+				t.Fatal(err)
+			}
+		}, wantError: true},
+		{name: "intermediate symlink", prepare: func(t *testing.T, workspace, outside string) {
+			link := filepath.Join(workspace, "build")
+			if err := os.Symlink(outside, link); err != nil {
+				t.Fatal(err)
+			}
+		}, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			tt.prepare(t, workspace, outside)
+			writer, err := newContainedInfrastructureReportWriter(workspace)
+			if err != nil {
+				t.Fatalf("newContainedInfrastructureReportWriter() error = %v", err)
+			}
+			path, err := writer.Write(report)
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("Write() error = nil, want containment rejection")
+				}
+				contents, readErr := os.ReadFile(sentinel)
+				if readErr != nil || string(contents) != "unchanged" {
+					t.Fatalf("outside sentinel was changed: %q error:%v", contents, readErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Write() error = %v", err)
+			}
+			root := filepath.Join(workspace, infrastructureSmokeReportDirectory)
+			relative, err := filepath.Rel(root, path)
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				t.Fatalf("report path = %q, escaped directory %q", path, root)
+			}
+		})
+	}
+}
+
+// TestInfrastructureReportWriterRechecksBeforeWrite guards the time between composition and
+// persistence: an attacker must not be able to replace a previously safe component with a
+// symlink and turn the ignored report directory into an external write target.
+func TestInfrastructureReportWriterRechecksBeforeWrite(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	writer, err := newContainedInfrastructureReportWriter(workspace)
+	if err != nil {
+		t.Fatalf("newContainedInfrastructureReportWriter() error = %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(workspace, "build")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(newInfrastructureCommandReport(t, "passed")); err == nil {
+		t.Fatal("Write() error = nil, want write-time symlink rejection")
+	}
+	after, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("outside directory entries = %v, want unchanged %v", after, before)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
