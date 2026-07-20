@@ -166,6 +166,10 @@ func (r SmokeReport) MarshalJSON() ([]byte, error) {
 
 func (r SmokeReport) Checks() []BackendCheck { return cloneSafeChecks(r.checks) }
 
+// Status returns the already-validated aggregate outcome without exposing the report's internal
+// representation. Command composition roots need this one low-sensitivity fact for exit codes.
+func (r SmokeReport) Status() string { return r.status }
+
 func (r SmokeReport) Cleanup() SmokeCleanup { return cloneSafeCleanup(r.cleanup) }
 
 func (r SmokeReport) Versions() map[string]string { return cloneVersions(r.versions) }

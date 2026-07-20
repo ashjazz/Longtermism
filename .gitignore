@@ -2,6 +2,7 @@
 /bin/
 /*.exe
 /ashjazz-aiagent
+/obs-smoke
 *.test
 *.out
 
