@@ -9,7 +9,7 @@
 | Backend profile | service images, ports, volumes, retention, health checks | application business config |
 | Grafana provisioning | datasource internal URLs, dashboards, alerts | telemetry exporter credentials |
 | Langfuse score adapter | base URL and public/secret key references | prompt/query/output raw values in failure logs |
-| Smoke runner | local query URLs and credential references | committed secrets or default paid-service endpoints |
+| Smoke runner | local query base-URL and credential environment-variable references | committed secrets, credential values, default paid-service endpoints, or business payload |
 
 ## 2. Application shape
 
@@ -83,7 +83,77 @@ This is a shape contract, not a ready-to-use secret file. Checked-in defaults ke
 - No command prints the value of `OPENAI_API_KEY`, Langfuse secret/public key pair, OTLP Authorization header or SigNoz ingestion key.
 - A smoke command may create a short-lived credential only when it owns that credential lifecycle. It must revoke it at the issuing service when revocation is supported, delete all local secret files and run-scoped temporary data before writing its final report, and record cleanup status. Caller-supplied long-lived credentials are never deleted or revoked by smoke.
 
-## 5. Collector component IDs
+## 5. Infra smoke negative-query ports
+
+`infra` smoke is a diagnostic client rather than an application dependency. Only its command
+composition root may resolve the following environment-variable references; `pkg/ai`, HTTP
+controllers, usecases, reports and normal application configuration must not hold their values.
+
+```yaml
+observability:
+  smoke:
+    infra_negative_query:
+      langfuse:
+        base_url_env: LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL
+        credential_env: LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL
+      ai_plane:
+        base_url_env: LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL
+        credential_env: LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL
+```
+
+This is a reference-only shape: checked-in files contain neither a URL nor a credential. A
+configuration snapshot or diagnostic may expose an environment-variable name and
+`credential_present` only. It must never expose an endpoint value, Authorization header, query,
+marker, response body or platform error text.
+
+The two ports have separate lifecycle and least-privilege requirements:
+
+| Port | Required capability | Prohibited capability |
+| --- | --- | --- |
+| `langfuse` | Read/count the current project's trace or observation evidence for one exact smoke marker | ingest/write, score write, token/project/user administration, export or unbounded trace reads |
+| `ai_plane` | Read/count low-sensitive Collector or AI-plane routing evidence for one exact smoke marker | pipeline mutation, exporter mutation, queue deletion, credential management or arbitrary metric/query execution |
+
+The concrete Langfuse and AI-plane protocol is intentionally owned by the backend adapter and
+will be fixed by T065B's contract tests. The command cannot infer it from an OTLP ingest URL,
+Grafana URL, `ai_trace_id`, project identifier or a caller-provided flag.
+
+Both ports follow these non-negotiable bounds:
+
+- Query only the runner-generated exact marker and the current `[started_at, deadline]` window;
+  the full smoke window is at most 60 seconds. No CLI flag may provide a marker, query, project,
+  pagination, time range or output path.
+- Each request is read-only, uses the caller deadline plus a maximum 30-second sub-timeout,
+  forbids redirects, and accepts at most 1 MiB of response data. Raw documents are discarded
+  before crossing the backend adapter boundary.
+- The adapter returns only a non-negative count or a stable error class. A zero count is evidence
+  only after a successful bounded query; missing configuration, a missing credential, or a query
+  failure must never be converted to zero, `skipped`, or `passed`.
+- T065B's first `grafana` profile is host-local only: the base URL host must be `127.0.0.1`, or
+  `localhost` after resolution confirms that every address is loopback. Its port may use the
+  explicit local override from the profile-and-port contract. Any other hostname, IP literal,
+  container DNS name, private-network address or remote address is rejected. A Compose-network or
+  remote profile requires a later ADR plus an explicit compiled hostname/port allowlist; it may
+  not be introduced through an environment value.
+- Query URL validation rejects userinfo, query strings, fragments and arbitrary path overrides;
+  it forbids redirects before network I/O. The adapter must re-check a `localhost` resolution at
+  connection time so DNS rebinding cannot move the request outside the loopback-only boundary.
+
+| Condition | Required class / behavior |
+| --- | --- |
+| missing base-URL or credential reference, or credential not resolved | preflight failure before client construction; `authentication_failed` when represented in a report |
+| 401 or 403 | `authentication_failed` |
+| invalid marker/window or prohibited query construction | `invalid_query` |
+| caller or sub-query deadline | `backend_timeout` |
+| 429, 5xx, connection failure or unsupported protocol | `backend_unavailable` |
+| oversized, non-JSON or count-unreadable response | `malformed_response` |
+| other adapter failure | `query_failed` |
+| successful count greater than zero | `unexpected_evidence` |
+
+`langfuse_trace` reports only `matched_traces`; `collector` reports only `marker_received`.
+Neither evidence DTO, error, report, log nor CLI output may carry platform IDs, endpoint values,
+credentials, headers, raw response data or non-marker payload.
+
+## 6. Collector component IDs
 
 Stable component IDs are part of the dashboard/alert/smoke contract:
 
@@ -99,7 +169,7 @@ file_storage/langfuse
 
 The final config may use one `file_storage` extension with separate queue namespaces if supported by the pinned Collector; evidence must still distinguish all three exporters.
 
-## 6. Profile and port contract
+## 7. Profile and port contract
 
 Only loopback-facing development ports are published. Internal OTLP/database ports remain on the Compose network unless required by a diagnostic command.
 
@@ -118,7 +188,7 @@ Only loopback-facing development ports are published. Internal OTLP/database por
 
 Port overrides must be supported through local environment values. Config validation reports conflicts before E2E.
 
-## 7. Version contract
+## 8. Version contract
 
 - `deploy/observability/versions.env` is the single readable tag matrix.
 - Compose resolves immutable digests in release/CI evidence.
@@ -126,6 +196,6 @@ Port overrides must be supported through local environment values. Config valida
 - Every service has a health check and declared CPU/memory limit.
 - Full local profile target budget: at most 8 vCPU, 12 GiB RAM and 20 GiB observability volumes.
 
-## 8. Retention contract
+## 9. Retention contract
 
 Defaults use the retention baseline in the decision workbench and are mirrored in `data-model.md`: Prometheus metrics 15 days; Loki and Tempo 7 days; Langfuse metadata/redacted traces 14 days; low-sensitive eval evidence/report 90 days; persistent queue only while backlogged. `content_raw` is a local/test-only, non-serializable debug artifact rather than an observability payload, so no backend raw-content retention unit is permitted.

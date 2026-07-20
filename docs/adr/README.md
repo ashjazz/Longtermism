@@ -23,6 +23,7 @@
 | [0006](0006-observability-adapter-boundary.md) | 可观测平台 Adapter 边界 | accepted | `obs.Tracer` 是 AI 内核唯一依赖，LangFuse、OTEL、本地日志都只能作为 adapter 映射同一 Trace 契约。 |
 | [0007](0007-dual-plane-observability-evaluation-v1.md) | 双平面观测与评估体系 v1 | accepted | OpenTelemetry 负责基础设施链路与上下文传播，Langfuse 负责 AI 语义观测与后续评估，二者通过 `obs.Trace` 和关联层串联。 |
 | [0008](0008-real-observability-backends-and-minimal-http-loop.md) | 真实可观测后端接入与最小 HTTP 观测闭环 | accepted | 应用统一接入 Collector；Grafana 栈为基础设施主线、SigNoz 为备选、Langfuse 为 AI 平面，并通过分层 smoke/E2E 验收。 |
+| [0009](0009-infra-smoke-negative-query-boundary.md) | Infra Smoke 的 AI 平面负向查询边界 | accepted | runner 仅消费低敏 count；查询协议、只读凭据与原始响应均隔离在 backend adapter。 |
 
 ## 维护规则
 
@@ -33,3 +34,4 @@
 - 2026-06-30：T090 收口审查确认当前新增 ADR `0001`-`0006` 均已出现在索引中；状态覆盖 `deferred` 与 `accepted`，暂无 `proposed` 或 `superseded` 条目。
 - 2026-07-03：新增 ADR `0007`，记录 Observability v1 双平面观测与评估体系决策。
 - 2026-07-10：新增 ADR `0008`，记录真实可观测后端、最小 HTTP API 与分层验证契约。
+- 2026-07-20：新增 ADR `0009`，记录 infra-only 请求的 Langfuse/AI-plane 负向查询、最小权限与 count-only adapter 边界。
