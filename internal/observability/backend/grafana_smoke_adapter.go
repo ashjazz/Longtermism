@@ -291,7 +291,7 @@ func isSafeSmokeQueryTarget(target smoke.PollMarkerTarget) bool {
 
 func isReportErrorClass(class string) bool {
 	switch class {
-	case "authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "invalid_query", "malformed_response", "query_failed", "storage_unavailable", "queue_full", "alert_not_firing":
+	case "authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "invalid_query", "malformed_response", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing":
 		return true
 	default:
 		return false

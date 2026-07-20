@@ -139,18 +139,31 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.backend
-			report, err := RunInfrastructureSmoke(context.Background(), InfrastructureSmokeRequest{
-				RunID:     "infra-t064a-run",
-				Marker:    backend.marker,
-				StartedAt: startedAt,
-				Deadline:  deadline,
-				Profile:   "grafana",
-			}, &backend)
+			clock := newPollerTestClock(startedAt)
+			identity := InfrastructureSmokeIdentity{RunID: backend.marker, Marker: backend.marker}
+			triggerCalls := 0
+			report, err := RunInfrastructureSmoke(context.Background(), InfrastructureSmokeRequest{Deadline: deadline, Profile: "grafana"}, InfrastructureSmokeRunnerDependencies{
+				Backend: &backend, Clock: clock, PollInterval: time.Second,
+				IdentityFactory: func(context.Context) (InfrastructureSmokeIdentity, error) { return identity, nil },
+				Trigger: func(ctx context.Context, got InfrastructureSmokeIdentity) error {
+					triggerCalls++
+					if got != identity {
+						t.Fatal("trigger did not receive runner-owned identity")
+					}
+					if gotDeadline, ok := ctx.Deadline(); !ok || !gotDeadline.Equal(deadline) {
+						t.Fatal("trigger did not receive smoke deadline")
+					}
+					return nil
+				},
+			})
 			if err != nil {
 				t.Fatalf("RunInfrastructureSmoke() error = %v, want a report-owned verification result", err)
 			}
 			if report == nil {
 				t.Fatal("RunInfrastructureSmoke() report = nil, want schema-valid failure evidence")
+			}
+			if triggerCalls != 1 {
+				t.Fatalf("protected request calls = %d, want 1", triggerCalls)
 			}
 
 			document := validateInfrastructureSmokeReport(t, report)
@@ -339,8 +352,8 @@ func assertSharedSmokeWindow(t *testing.T, targets []PollMarkerTarget, deadlines
 		if !target.StartedAt.Equal(startedAt) || !target.Deadline.Equal(deadline) {
 			t.Fatalf("query target %d = %#v, want shared smoke window", index, target)
 		}
-		if !deadlines[index].Equal(deadline) {
-			t.Fatalf("query context deadline %d = %s, want %s", index, deadlines[index], deadline)
+		if deadlines[index].IsZero() || deadlines[index].After(deadline) {
+			t.Fatalf("query context deadline %d = %s, want a deadline no later than %s", index, deadlines[index], deadline)
 		}
 	}
 }

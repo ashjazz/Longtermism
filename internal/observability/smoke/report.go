@@ -32,7 +32,7 @@ var (
 	allowedCleanupStatuses             = stringSet("not_required", "completed", "failed")
 	allowedTemporaryCredentialStatuses = stringSet("not_created", "revoked", "deleted", "failed")
 	allowedTemporaryDataStatuses       = stringSet("not_created", "deleted", "failed")
-	allowedErrorClasses                = stringSet("authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "invalid_query", "malformed_response", "query_failed", "storage_unavailable", "queue_full", "alert_not_firing")
+	allowedErrorClasses                = stringSet("authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "invalid_query", "malformed_response", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing")
 	allowedVersionKeys                 = stringSet("api", "collector", "grafana", "langfuse", "loki", "prometheus", "schema", "signoz", "smoke_runner", "tempo")
 	allowedResidualResources           = stringSet("run-directory", "temporary-debug-data", "temporary-queue-data")
 	allowedEvidenceKeysByBackend       = map[string]map[string]struct{}{
