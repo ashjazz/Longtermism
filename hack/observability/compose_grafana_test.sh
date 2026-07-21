@@ -108,8 +108,7 @@ def trusted_health_probe?(service, test)
     "loki" => ["curl --fail --silent --show-error http://127.0.0.1:3100/ready"],
     "tempo" => ["curl --fail --silent --show-error http://127.0.0.1:3200/ready"],
     "grafana" => ["curl --fail --silent --show-error http://127.0.0.1:3000/api/health"],
-    "langfuse-web" => ["curl --fail --silent --show-error http://127.0.0.1:3000/api/health"],
-    "langfuse-worker" => ["node /app/worker-healthcheck.js"],
+    "langfuse-web" => ["wget --spider --no-verbose \"http://$$(hostname):3000/api/public/health\""],
     "langfuse-db" => ["pg_isready -U langfuse -d langfuse"],
     "langfuse-clickhouse" => ["wget --spider --no-verbose http://127.0.0.1:8123/ping"],
     "langfuse-redis" => ["redis-cli ping"],
@@ -156,6 +155,9 @@ end
   fail_check("invalid_langfuse_s3_endpoint:#{service_name}") unless environment["LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT"] == "http://langfuse-minio:9000"
   fail_check("invalid_langfuse_s3_path_style:#{service_name}") unless environment["LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE"] == "true"
 end
+langfuse_web = services.fetch("langfuse-web")
+fail_check("missing_langfuse_web_heap_limit") unless langfuse_web.dig("environment", "NODE_OPTIONS") == "--max-old-space-size=1536"
+fail_check("invalid_langfuse_web_memory_limit") unless langfuse_web.dig("deploy", "resources", "limits", "memory") == "2GiB"
 budget = required_hash(compose["x-observability-budget"], "missing_observability_budget")
 fail_check("invalid_observability_budget") unless budget == {"cpus" => "8", "memory" => "12GiB", "volumes" => "20GiB"}
 
@@ -168,12 +170,15 @@ image_variables.each do |service_name, variable|
   fail_check("invalid_fixed_image:#{service_name}") unless service["image"] == "${#{variable}}" && versions.fetch(variable, "").include?(":") && !versions.fetch(variable, "").include?(":latest")
   limits = service.dig("deploy", "resources", "limits")
   fail_check("missing_resource_limit:#{service_name}") unless limits.is_a?(Hash) && limits.key?("cpus") && limits.key?("memory")
+  next if service_name == "langfuse-worker"
+
   healthcheck = service["healthcheck"]
   fail_check("missing_healthcheck:#{service_name}") unless healthcheck.is_a?(Hash) && healthcheck["test"].is_a?(Array) && healthcheck["test"].length > 1 && healthcheck["interval"].to_s.match?(/\A[1-9][0-9]*s\z/) && healthcheck["timeout"].to_s.match?(/\A[1-9][0-9]*s\z/) && healthcheck["retries"].is_a?(Integer) && healthcheck["retries"].positive?
   fail_check("unsafe_healthcheck:#{service_name}") if scalar_strings(healthcheck["test"]).any? { |value| value.match?(/\b(?:true|echo|exit 0)\b/i) }
 end
 
-image_variables.keys.each { |service_name| fail_check("untrusted_healthcheck:#{service_name}") unless trusted_health_probe?(service_name, services.fetch(service_name).dig("healthcheck", "test")) }
+fail_check("unexpected_langfuse_worker_healthcheck") if services.fetch("langfuse-worker").key?("healthcheck")
+(image_variables.keys - ["langfuse-worker"]).each { |service_name| fail_check("untrusted_healthcheck:#{service_name}") unless trusted_health_probe?(service_name, services.fetch(service_name).dig("healthcheck", "test")) }
 {
   "langfuse-minio-init" => "LANGFUSE_MINIO_MC_IMAGE",
   "langfuse-clickhouse-init" => "LANGFUSE_CLICKHOUSE_IMAGE"

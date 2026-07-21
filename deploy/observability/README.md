@@ -98,7 +98,13 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
    `LANGFUSE_ENCRYPTION_KEY` 必须用 `openssl rand -hex 32` 生成一次并长期保留；它同时注入
    Langfuse web 与 worker，用于解密既有数据中的加密字段，不能在已有数据卷上随意更换。
 2. 执行 `make obs-langfuse-bootstrap-up`。它只启动 Langfuse web/worker 与它们依赖的
-   Postgres、ClickHouse、Redis、MinIO 及一次性建桶任务，并等待健康检查完成。
+   Postgres、ClickHouse、Redis、MinIO 及一次性建桶任务，并等待可验证的健康检查完成。
+   Langfuse `3.185.0` 的 worker 镜像未提供稳定 HTTP 或脚本 health endpoint，因此不为它
+   伪造存活探针；worker 的启动依赖由 Compose 的已完成初始化任务保证，web `/api/health`
+   才是该 bootstrap 的服务就绪依据。
+   web 容器预留 `2GiB` 内存，并将 Node 堆限制为 `1536MiB`；这是为了容纳首次 model catalogue
+   与 migration，避免 Node 在默认 cgroup heap 上限触发 `JavaScript heap out of memory`。因此本机
+   Docker 可用内存需要覆盖整个 profile 声明的 `12GiB` 上限。
 3. 打开 `http://127.0.0.1:3001`，完成自托管实例的首个用户/组织/项目初始化，并在该项目的
    **Settings → API Keys** 创建 public/secret key 对。
 4. 在被忽略的 `.env.local`（或当前 shell）中填写 `GRAFANA_ADMIN_USER`、

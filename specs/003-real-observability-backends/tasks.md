@@ -131,6 +131,8 @@
 - [X] T066B [US1] 在 Langfuse self-hosted Compose 与本地环境模板补齐稳定的 `ENCRYPTION_KEY`；质量门控：web/worker 共享同一个 fail-fast 环境变量，模板只说明本地生成方式，文档禁止在既有数据卷上随意轮换该密钥。
 - [X] T066C [US1] 补齐 Langfuse v3 冷启动的 ClickHouse 身份与必需事件对象存储；质量门控：web/worker 显式配置 ClickHouse user/password、单节点 migration 模式与 MinIO S3 event upload，one-shot 初始化任务幂等建桶，MinIO 不发布宿主机端口，且不删除既有 Langfuse named volumes。
 - [X] T066D [US1] 兼容已存在的失败冷启动 ClickHouse 卷；质量门控：在 web/worker 启动前以幂等 one-shot task 创建并授权专用 `langfuse` 用户，避免把删除 named volume 作为修复手段。
+- [X] T066E [US1] 修复 Langfuse web 冷启动的 Node heap 耗尽；质量门控：web 容器分配 `2GiB`，Node old-space 限制为 `1536MiB` 并保留 native memory headroom，合并 profile 仍不超过 `12GiB` 声明上限。
+- [X] T066F [US1] 移除 Langfuse worker 的伪 healthcheck；质量门控：不假设 `3.185.0` 镜像内存在未发布的脚本或 endpoint，worker 只依赖已完成初始化任务，web health 仍为冷启动服务就绪证据。
 - [X] T067 [US1] 在 `specs/003-real-observability-backends/checklists/grafana-infra.md` 编写主线基础设施验收清单；质量门控：本阶段只关闭 SC-001，SC-006 告警项明确标记为“已 provision、待 US3 firing/resolved 验证”，所有通过结论都要求机器可读证据，不以手工 UI 截图单独通过。
 
 ## Phase 4：User Story 2 - 追溯一次真实 AI 对话（P1）

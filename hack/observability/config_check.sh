@@ -168,8 +168,11 @@ compose_paths.sort.each do |compose_path|
     # Bucket initialization is deliberately a one-shot dependency: treating it
     # as a long-running healthy service would conceal a failed cold bootstrap.
     is_one_shot_initializer = %w[langfuse-minio-init langfuse-clickhouse-init].include?(service_name)
+    is_langfuse_worker_without_health_endpoint = service_name == "langfuse-worker"
     if is_one_shot_initializer
       fail_check(compose_path, "invalid_one_shot_initializer") unless service["restart"] == "no" && !service.key?("healthcheck")
+    elsif is_langfuse_worker_without_health_endpoint
+      fail_check(compose_path, "unexpected_langfuse_worker_healthcheck") if service.key?("healthcheck")
     else
       fail_check(compose_path, "missing_healthcheck") unless service["healthcheck"].is_a?(Hash)
     end

@@ -169,6 +169,9 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+      # Langfuse's initial model catalogue and migrations exceed Node's default
+      # cgroup-derived heap under a 1GiB limit. Leave native-memory headroom.
+      NODE_OPTIONS: --max-old-space-size=1536
     depends_on:
       langfuse-db:
         condition: service_healthy
@@ -185,7 +188,7 @@ services:
         target: 3000
         published: 3001
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:3000/api/health"]
+      test: ["CMD-SHELL", "wget --spider --no-verbose \"http://$$(hostname):3000/api/public/health\""]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -193,7 +196,7 @@ services:
       resources:
         limits:
           cpus: "1.00"
-          memory: 1GiB
+          memory: 2GiB
 
   langfuse-worker:
     image: ${LANGFUSE_WORKER_IMAGE}
@@ -227,11 +230,6 @@ services:
         condition: service_healthy
       langfuse-minio-init:
         condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD-SHELL", "node /app/worker-healthcheck.js"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
     deploy:
       resources:
         limits:
