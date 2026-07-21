@@ -250,6 +250,12 @@ func TestGrafanaSmokeEvidenceAdapterMapsErrorsToReportClasses(t *testing.T) {
 	}
 }
 
+func TestTraceQLMarkerQueryQuotesDottedSpanAttribute(t *testing.T) {
+	if got, want := traceQLMarkerQuery("run-t066-marker"), `{ span."longtermism.smoke.run_id" = "run-t066-marker" }`; got != want {
+		t.Fatalf("TraceQL marker query = %q, want %q", got, want)
+	}
+}
+
 func backendQueryResultForTest(document string) BackendQueryResult {
 	return BackendQueryResult{payload: json.RawMessage(document)}
 }

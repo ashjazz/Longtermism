@@ -3,9 +3,19 @@ package observability
 
 import (
 	"net/http"
+	"regexp"
 
 	"github.com/gogf/gf/v2/frame/g"
 )
+
+var smokeRunIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{8,128}$`)
+
+// IsValidSmokeRunID is the shared boundary rule for the optional correlation marker. Keeping
+// this beside the transport contract prevents HTTP middleware from projecting a value that the
+// controller would later reject into JSONL or trace attributes.
+func IsValidSmokeRunID(value string) bool {
+	return value == "" || smokeRunIDPattern.MatchString(value)
+}
 
 const (
 	SmokeRunIDHeader             = "X-Observability-Smoke-Run-ID"

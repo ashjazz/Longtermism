@@ -80,11 +80,38 @@ func RunInfrastructureSmoke(ctx context.Context, request InfrastructureSmokeRequ
 	triggerErr := deps.Trigger(bounded, identity)
 	checks = append(checks, outcomeCheck("api", triggerErr == nil, "api", "backend_unavailable", map[string]any{"response_status": int64(0)}))
 	poller := NewBoundedMarkerPoller(deps.Clock, deps.PollInterval)
-	_, tempoErr := poller.WaitForMarker(bounded, target, deps.Backend.QueryTempo)
-	checks = append(checks, markerCheck("tempo", tempoErr, "matched_spans"))
-	_, lokiErr := poller.WaitForMarker(bounded, target, deps.Backend.QueryLoki)
-	checks = append(checks, markerCheck("loki", lokiErr, "matched_logs"))
-	after, afterErr := deps.Backend.HTTPRequestCount(bounded)
+	// Backend delivery is asynchronous and independent. Run the positive evidence queries under
+	// one deadline so a delayed log cannot consume the whole window before trace or metrics run.
+	type markerResult struct {
+		backend, key string
+		err          error
+	}
+	type countResult struct {
+		count int64
+		err   error
+	}
+	markerResults := make(chan markerResult, 2)
+	countResults := make(chan countResult, 1)
+	go func() {
+		_, err := poller.WaitForMarker(bounded, target, deps.Backend.QueryTempo)
+		markerResults <- markerResult{backend: "tempo", key: "matched_spans", err: err}
+	}()
+	go func() {
+		_, err := poller.WaitForMarker(bounded, target, deps.Backend.QueryLoki)
+		markerResults <- markerResult{backend: "loki", key: "matched_logs", err: err}
+	}()
+	go func() {
+		count, err := waitForHTTPRequestIncrease(bounded, deps.Backend, baseline, target.Deadline, deps.Clock, deps.PollInterval)
+		countResults <- countResult{count: count, err: err}
+	}()
+	markerChecks := make(map[string]BackendCheckInput, 2)
+	for range 2 {
+		result := <-markerResults
+		markerChecks[result.backend] = markerCheck(result.backend, result.err, result.key)
+	}
+	checks = append(checks, markerChecks["tempo"], markerChecks["loki"])
+	afterResult := <-countResults
+	after, afterErr := afterResult.count, afterResult.err
 	promOK := baselineErr == nil && afterErr == nil && after > baseline
 	promClass := "query_failed"
 	if baselineErr == nil && afterErr == nil && after <= baseline {
@@ -95,11 +122,58 @@ func RunInfrastructureSmoke(ctx context.Context, request InfrastructureSmokeRequ
 		delta = after - baseline
 	}
 	checks = append(checks, outcomeCheck("prometheus", promOK, "query", promClass, map[string]any{"metric_delta": delta}))
-	langfuse, langfuseErr := deps.Backend.QueryLangfuse(bounded, target)
-	checks = append(checks, negativeCheck("langfuse_trace", langfuse, langfuseErr, "matched_traces"))
-	ai, aiErr := deps.Backend.QueryAIPlane(bounded, target)
-	checks = append(checks, negativeCheck("collector", ai, aiErr, "marker_received"))
+	// A negative query is only meaningful after both infrastructure projections have appeared.
+	// Otherwise an async exporter could make a one-shot zero look like proof that an AI-plane
+	// leak never happened. Keep observing a short, deadline-bounded stable window instead.
+	if markerChecks["tempo"].Status == "passed" && markerChecks["loki"].Status == "passed" {
+		langfuseCount, langfuseErr := waitForNegativeEvidence(bounded, target, deps.Backend.QueryLangfuse, deps.Clock, deps.PollInterval)
+		collectorCount, collectorErr := waitForNegativeEvidence(bounded, target, deps.Backend.QueryAIPlane, deps.Clock, deps.PollInterval)
+		checks = append(checks,
+			negativeCheck("langfuse_trace", langfuseCount, langfuseErr, "matched_traces"),
+			negativeCheck("collector", collectorCount, collectorErr, "marker_received"),
+		)
+	} else {
+		checks = append(checks,
+			BackendCheckInput{Backend: "langfuse_trace", Status: "skipped", FailureStage: "none", Evidence: map[string]any{"matched_traces": int64(0)}},
+			BackendCheckInput{Backend: "collector", Status: "skipped", FailureStage: "none", Evidence: map[string]any{"marker_received": int64(0)}},
+		)
+	}
 	return buildInfrastructureSmokeReport(identity, request, startedAt, deps.Clock.Now().UTC(), checks)
+}
+
+func waitForHTTPRequestIncrease(ctx context.Context, backend InfrastructureSmokeBackend, baseline int64, deadline time.Time, clock PollerClock, interval time.Duration) (int64, error) {
+	for {
+		if !clock.Now().Before(deadline) {
+			return baseline, nil
+		}
+		count, err := backend.HTTPRequestCount(ctx)
+		if err != nil || count > baseline {
+			return count, err
+		}
+		if err := clock.Wait(ctx, interval); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return count, nil
+			}
+			return count, err
+		}
+	}
+}
+
+// waitForNegativeEvidence checks twice after positive delivery is visible. It deliberately does
+// not wait until the full smoke deadline on a clean run, but it makes exporter scheduling visible
+// for one complete poll interval and fails immediately when forbidden evidence appears.
+func waitForNegativeEvidence(ctx context.Context, target PollMarkerTarget, query func(context.Context, PollMarkerTarget) (int, error), clock PollerClock, interval time.Duration) (int, error) {
+	count, err := query(ctx, target)
+	if err != nil || count != 0 {
+		return count, err
+	}
+	if !clock.Now().Add(interval).Before(target.Deadline) {
+		return count, context.DeadlineExceeded
+	}
+	if err := clock.Wait(ctx, interval); err != nil {
+		return count, err
+	}
+	return query(ctx, target)
 }
 
 func buildInfrastructureSmokeReport(identity InfrastructureSmokeIdentity, request InfrastructureSmokeRequest, startedAt, finishedAt time.Time, checks []BackendCheckInput) (*SmokeReport, error) {

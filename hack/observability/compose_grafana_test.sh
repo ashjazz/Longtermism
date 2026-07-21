@@ -316,6 +316,8 @@ end
 tempo = required_hash(yaml(tempo_path), "invalid_tempo_config")
 prometheus = required_hash(yaml(prometheus_path), "invalid_prometheus_config")
 fail_check("invalid_tempo_retention") unless tempo.dig("compactor", "compaction", "block_retention") == "168h"
+fail_check("tempo_otlp_grpc_not_compose_reachable") unless tempo.dig("distributor", "receivers", "otlp", "protocols", "grpc", "endpoint") == "0.0.0.0:4317"
+fail_check("tempo_otlp_http_not_compose_reachable") unless tempo.dig("distributor", "receivers", "otlp", "protocols", "http", "endpoint") == "0.0.0.0:4318"
 fail_check("invalid_prometheus_retention") unless Array(services.fetch("prometheus")["command"]).include?("--storage.tsdb.retention.time=15d") && !prometheus.key?("remote_write")
 datasources = required_hash(yaml(datasources_path), "invalid_datasources_config")
 expected_datasources = {"prometheus" => "http://prometheus:9090", "loki" => "http://loki:3100", "tempo" => "http://tempo:3200"}

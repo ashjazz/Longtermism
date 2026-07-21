@@ -151,7 +151,7 @@ func (f fakeNegativeMarkerCounter) Query(context.Context, smoke.PollMarkerTarget
 
 func assertInfraHTTPCountQuery(t *testing.T, query string) {
 	t.Helper()
-	for _, required := range []string{"longtermism_http_server_request_count", `http_route="/api/v1/observability/infra-smoke"`, `http_request_method="GET"`, `http_response_status_class="2xx"`} {
+	for _, required := range []string{"longtermism_http_server_request_count_total", `http_route="/api/v1/observability/infra-smoke"`, `http_request_method="GET"`, `http_response_status_class="2xx"`} {
 		if !strings.Contains(query, required) {
 			t.Errorf("Prometheus query = %q, want low-cardinality selector %q", query, required)
 		}

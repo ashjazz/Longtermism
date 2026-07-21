@@ -265,7 +265,9 @@ func parsePrometheusSampleValue(value []json.RawMessage) (int64, error) {
 }
 
 func traceQLMarkerQuery(marker string) string {
-	return fmt.Sprintf(`{ .longtermism.smoke.run_id = %q }`, marker)
+	// Tempo treats dots as TraceQL path separators. Quote the complete OTel attribute key and
+	// scope it to spans so the smoke cannot silently query a different resource attribute.
+	return fmt.Sprintf(`{ span."longtermism.smoke.run_id" = %q }`, marker)
 }
 
 func lokiMarkerQuery(marker string) string {

@@ -116,8 +116,14 @@ func registerDefaultObservabilityRoutes(ctx context.Context, server *ghttp.Serve
 	if err != nil {
 		return err
 	}
+	metrics, err := newInfraSmokeMetrics()
+	if err != nil {
+		return fmt.Errorf("create infra smoke metrics: %w", err)
+	}
 	usecase := logicobservability.NewInfraSmokeUsecase(logicobservability.InfraSmokeUsecaseDependencies{
-		Tracer: otel.Tracer("github.com/ashjazz/Longtermism/internal/logic/observability"),
+		Tracer:        otel.Tracer("github.com/ashjazz/Longtermism/internal/logic/observability"),
+		Metrics:       metrics,
+		MetricFlusher: bootstrap,
 	})
 	controller := controllerobservability.NewV1(controllerobservability.InfraSmokeControllerDependencies{
 		SmokeEnabled:         bootstrap.InfraSmokeEnabled,
@@ -170,9 +176,33 @@ func newHTTPCompletionLoggingMiddleware(ctx context.Context, bootstrap *Observab
 		Tracer:           otel.Tracer("github.com/ashjazz/Longtermism/internal/observability/http"),
 		CompletionLogger: writer,
 		Identify: func(request *http.Request) appobservability.HTTPRequestIdentity {
-			return appobservability.HTTPRequestIdentity{RequestID: RequestIDFromContext(request.Context()), RouteTemplate: RouteTemplateFromContext(request.Context())}
+			return httpCompletionIdentity(request)
 		},
 	}), nil
+}
+
+// httpCompletionIdentity is intentionally derived at the HTTP boundary. The marker is accepted
+// only for the one trusted smoke route, so ordinary requests cannot create a new log identity.
+func httpCompletionIdentity(request *http.Request) appobservability.HTTPRequestIdentity {
+	route := RouteTemplateFromContext(request.Context())
+	identity := appobservability.HTTPRequestIdentity{RequestID: RequestIDFromContext(request.Context()), RouteTemplate: route}
+	marker := request.Header.Get(v1observability.SmokeRunIDHeader)
+	if route == "/api/v1/observability/infra-smoke" && marker != "" && v1observability.IsValidSmokeRunID(marker) {
+		identity.IsSmokeRun = true
+		identity.SmokeRunID = marker
+	}
+	return identity
+}
+
+func newInfraSmokeMetrics() (*appobservability.Metrics, error) {
+	metrics, err := appobservability.NewMetrics(
+		otel.Meter("github.com/ashjazz/Longtermism/internal/logic/observability"),
+		appobservability.WithMetricLabelPolicy(appobservability.MetricLabelPolicy{AllowedRoutes: []string{"/api/v1/observability/infra-smoke"}}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return metrics, nil
 }
 
 // resolveHTTPCompletionLogPath keeps the filesystem boundary closed: the local Grafana profile

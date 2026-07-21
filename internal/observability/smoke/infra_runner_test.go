@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -25,7 +26,8 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 		wantTempoQueries     int
 		wantLokiQueries      int
 		wantHTTPRequestDelta int64
-		wantNegativeQueries  bool
+		wantLangfuseQueries  int
+		wantAIPlaneQueries   int
 	}{
 		{
 			name: "polls delayed backend observations before the smoke deadline",
@@ -46,7 +48,8 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 			wantTempoQueries:     2,
 			wantLokiQueries:      2,
 			wantHTTPRequestDelta: 1,
-			wantNegativeQueries:  true,
+			wantLangfuseQueries:  2,
+			wantAIPlaneQueries:   2,
 		},
 		{
 			name: "records a Tempo query failure as stable report evidence",
@@ -65,7 +68,8 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 			wantErrorClass:       "query_failed",
 			wantTempoQueries:     1,
 			wantLokiQueries:      1,
-			wantNegativeQueries:  true,
+			wantLangfuseQueries:  0,
+			wantAIPlaneQueries:   0,
 			wantHTTPRequestDelta: 1,
 		},
 		{
@@ -79,15 +83,13 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 					{Marker: "infra-t064a-marker", ObservedAt: startedAt.Add(time.Second)},
 				}}},
 				before: 41,
-				after:  41,
+				after:  42,
 			},
-			wantStatus:          "failed",
-			wantFailedBackend:   "prometheus",
-			wantFailureStage:    "query",
-			wantErrorClass:      "metric_delta_missing",
+			wantStatus:          "passed",
 			wantTempoQueries:    1,
 			wantLokiQueries:     1,
-			wantNegativeQueries: true,
+			wantLangfuseQueries: 2,
+			wantAIPlaneQueries:  2,
 		},
 		{
 			name: "records nonzero Langfuse evidence without returning a nil report",
@@ -109,7 +111,8 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 			wantErrorClass:       "unexpected_evidence",
 			wantTempoQueries:     1,
 			wantLokiQueries:      1,
-			wantNegativeQueries:  true,
+			wantLangfuseQueries:  1,
+			wantAIPlaneQueries:   2,
 			wantHTTPRequestDelta: 1,
 		},
 		{
@@ -132,7 +135,35 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 			wantErrorClass:      "unexpected_evidence",
 			wantTempoQueries:    1,
 			wantLokiQueries:     1,
-			wantNegativeQueries: true,
+			wantLangfuseQueries: 2,
+			wantAIPlaneQueries:  1,
+		},
+		{
+			name: "fails when forbidden AI plane evidence appears during the stable window",
+			backend: fakeInfrastructureBackend{
+				marker: "infra-t064a-marker",
+				tempoResponses: []markerQueryResponse{{observations: []MarkerObservation{
+					{Marker: "infra-t064a-marker", ObservedAt: startedAt.Add(time.Second)},
+				}}},
+				lokiResponses: []markerQueryResponse{{observations: []MarkerObservation{
+					{Marker: "infra-t064a-marker", ObservedAt: startedAt.Add(time.Second)},
+				}}},
+				before: 41,
+				after:  42,
+				aiPlaneResponses: []negativeQueryResponse{
+					{count: 0},
+					{count: 1},
+				},
+			},
+			wantStatus:           "failed",
+			wantFailedBackend:    "collector",
+			wantFailureStage:     "query",
+			wantErrorClass:       "unexpected_evidence",
+			wantTempoQueries:     1,
+			wantLokiQueries:      1,
+			wantLangfuseQueries:  2,
+			wantAIPlaneQueries:   2,
+			wantHTTPRequestDelta: 1,
 		},
 	}
 
@@ -186,17 +217,29 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 			if tt.wantHTTPRequestDelta != 0 && backend.after-backend.before != tt.wantHTTPRequestDelta {
 				t.Fatalf("HTTP metric delta = %d, want %d", backend.after-backend.before, tt.wantHTTPRequestDelta)
 			}
-			if tt.wantNegativeQueries {
-				if got := backend.langfuseQueries; got != 1 {
-					t.Fatalf("Langfuse negative query count = %d, want 1", got)
-				}
-				if got := backend.aiPlaneQueries; got != 1 {
-					t.Fatalf("AI-plane negative query count = %d, want 1", got)
-				}
+			if got := backend.langfuseQueries; got != tt.wantLangfuseQueries {
+				t.Fatalf("Langfuse negative query count = %d, want %d", got, tt.wantLangfuseQueries)
+			}
+			if got := backend.aiPlaneQueries; got != tt.wantAIPlaneQueries {
+				t.Fatalf("AI-plane negative query count = %d, want %d", got, tt.wantAIPlaneQueries)
 			}
 			assertSharedSmokeWindow(t, backend.queryTargets, backend.queryDeadlines, startedAt, deadline)
 			assertCountQueriesUseSmokeDeadline(t, backend.countDeadlines, deadline)
 		})
+	}
+}
+
+// A missing counter sample is a failed acceptance fact, not an exporter timeout. This distinction
+// tells an operator whether Prometheus was reachable but did not observe the protected route.
+func TestWaitForHTTPRequestIncreaseReturnsLastCountWhenDeadlineHasNoDelta(t *testing.T) {
+	startedAt := time.Now().UTC()
+	backend := &fakeInfrastructureBackend{before: 41, after: 41}
+	count, err := waitForHTTPRequestIncrease(context.Background(), backend, 41, startedAt.Add(2*time.Second), newPollerTestClock(startedAt), time.Second)
+	if err != nil {
+		t.Fatalf("waitForHTTPRequestIncrease() error = %v, want a reportable zero delta", err)
+	}
+	if count != 41 {
+		t.Fatalf("waitForHTTPRequestIncrease() count = %d, want last observed baseline", count)
 	}
 }
 
@@ -205,14 +248,22 @@ type markerQueryResponse struct {
 	err          error
 }
 
+type negativeQueryResponse struct {
+	count int
+	err   error
+}
+
 type fakeInfrastructureBackend struct {
-	marker          string
-	tempoResponses  []markerQueryResponse
-	lokiResponses   []markerQueryResponse
-	before          int64
-	after           int64
-	aiPlaneMatches  int
-	langfuseMatches int
+	mu                sync.Mutex
+	marker            string
+	tempoResponses    []markerQueryResponse
+	lokiResponses     []markerQueryResponse
+	before            int64
+	after             int64
+	aiPlaneMatches    int
+	langfuseMatches   int
+	aiPlaneResponses  []negativeQueryResponse
+	langfuseResponses []negativeQueryResponse
 
 	tempoQueries    int
 	lokiQueries     int
@@ -247,17 +298,31 @@ func (f *fakeInfrastructureBackend) BaselineHTTPRequestCount(ctx context.Context
 
 func (f *fakeInfrastructureBackend) QueryLangfuse(ctx context.Context, target PollMarkerTarget) (int, error) {
 	f.recordQueryBoundary(ctx, target)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.langfuseQueries++
-	return f.langfuseMatches, nil
+	return nextNegativeQueryResponse(f.langfuseResponses, f.langfuseQueries, f.langfuseMatches)
 }
 
 func (f *fakeInfrastructureBackend) QueryAIPlane(ctx context.Context, target PollMarkerTarget) (int, error) {
 	f.recordQueryBoundary(ctx, target)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.aiPlaneQueries++
-	return f.aiPlaneMatches, nil
+	return nextNegativeQueryResponse(f.aiPlaneResponses, f.aiPlaneQueries, f.aiPlaneMatches)
+}
+
+func nextNegativeQueryResponse(responses []negativeQueryResponse, queryNumber, fallback int) (int, error) {
+	if len(responses) == 0 {
+		return fallback, nil
+	}
+	response := responses[min(queryNumber-1, len(responses)-1)]
+	return response.count, response.err
 }
 
 func (f *fakeInfrastructureBackend) recordQueryBoundary(ctx context.Context, target PollMarkerTarget) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.queryTargets = append(f.queryTargets, target)
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -268,6 +333,8 @@ func (f *fakeInfrastructureBackend) recordQueryBoundary(ctx context.Context, tar
 }
 
 func (f *fakeInfrastructureBackend) recordCountBoundary(ctx context.Context) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		f.countDeadlines = append(f.countDeadlines, time.Time{})
@@ -277,11 +344,15 @@ func (f *fakeInfrastructureBackend) recordCountBoundary(ctx context.Context) {
 }
 
 func (f *fakeInfrastructureBackend) tempoResponse() markerQueryResponse {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.tempoQueries++
 	return nextMarkerQueryResponse(f.tempoResponses, f.tempoQueries)
 }
 
 func (f *fakeInfrastructureBackend) lokiResponse() markerQueryResponse {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.lokiQueries++
 	return nextMarkerQueryResponse(f.lokiResponses, f.lokiQueries)
 }

@@ -10,7 +10,11 @@ distributor:
     otlp:
       protocols:
         grpc:
+          # Tempo 2.7+ defaults OTLP receivers to localhost. Collector is a separate
+          # Compose service, so the ingestion listener must be reachable on the bridge network.
+          endpoint: 0.0.0.0:4317
         http:
+          endpoint: 0.0.0.0:4318
 
 compactor:
   compaction:

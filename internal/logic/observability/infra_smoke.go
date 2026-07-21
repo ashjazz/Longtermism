@@ -58,6 +58,7 @@ type InfraSmokeTelemetryDiagnostics interface {
 type InfraSmokeUsecaseDependencies struct {
 	Tracer           traceapi.Tracer
 	Metrics          HTTPMetrics
+	MetricFlusher    interface{ Flush(context.Context) error }
 	CompletionLogger HTTPCompletionLogWriter
 	Diagnostics      InfraSmokeTelemetryDiagnostics
 	Now              func() time.Time
@@ -66,6 +67,7 @@ type InfraSmokeUsecaseDependencies struct {
 type InfraSmokeUsecase struct {
 	tracer           traceapi.Tracer
 	metrics          HTTPMetrics
+	metricFlusher    interface{ Flush(context.Context) error }
 	completionLogger HTTPCompletionLogWriter
 	diagnostics      InfraSmokeTelemetryDiagnostics
 	now              func() time.Time
@@ -79,6 +81,7 @@ func NewInfraSmokeUsecase(dependencies InfraSmokeUsecaseDependencies) *InfraSmok
 	return &InfraSmokeUsecase{
 		tracer:           dependencies.Tracer,
 		metrics:          dependencies.Metrics,
+		metricFlusher:    dependencies.MetricFlusher,
 		completionLogger: dependencies.CompletionLogger,
 		diagnostics:      dependencies.Diagnostics,
 		now:              now,
@@ -108,8 +111,21 @@ func (u *InfraSmokeUsecase) Run(ctx context.Context, input InfraSmokeInput) (Inf
 	}
 
 	u.recordMetric(ctx, input, duration, traceID, spanID)
+	u.flushMetrics(ctx)
 	u.recordCompletionLog(ctx, input, startedAt, duration, traceID, spanID)
 	return InfraSmokeResult{Status: InfraSmokeStatusOK}, nil
+}
+
+// flushMetrics bounds the smoke-only export latency. Regular application metrics retain their
+// periodic batching; this explicit probe must make its one counter visible before its bounded
+// Prometheus query window closes.
+func (u *InfraSmokeUsecase) flushMetrics(ctx context.Context) {
+	if u.metricFlusher == nil {
+		return
+	}
+	if err := u.metricFlusher.Flush(ctx); err != nil {
+		u.recordFailure(ctx, "metrics_flush")
+	}
 }
 
 func infraSmokeSpanAttributes(input InfraSmokeInput) []attribute.KeyValue {

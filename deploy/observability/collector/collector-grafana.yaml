@@ -164,6 +164,13 @@ processors:
     logs:
       log_record:
         - body != "http request completed" and body != "http request failed"
+  # filelog records originate outside the application OTLP resource. Set the one fixed service
+  # identity here so Loki's controlled service_name label matches the dashboard and smoke query.
+  resource/http-completion-log-service:
+    attributes:
+      - key: service.name
+        value: longtermism
+        action: upsert
   # tail sampling 的保留规则优先于常规成功比例，避免 smoke/故障/回归证据被抽走。
   tail_sampling/retain:
     decision_wait: 10s
@@ -280,5 +287,5 @@ service:
       exporters: [prometheus/app]
     logs:
       receivers: [filelog/glog]
-      processors: [filter/http-completion-logs, transform/redact-logs]
+      processors: [filter/http-completion-logs, resource/http-completion-log-service, transform/redact-logs]
       exporters: [otlphttp/loki]

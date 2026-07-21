@@ -7,7 +7,9 @@ import (
 	"github.com/ashjazz/Longtermism/internal/observability/smoke"
 )
 
-const infraHTTPCountQuery = `sum(longtermism_http_server_request_count{http_route="/api/v1/observability/infra-smoke",http_request_method="GET",http_response_status_class="2xx"})`
+// The Prometheus exporter follows the Prometheus counter convention and appends `_total` to the
+// OTel counter name. Query the exported contract, not the pre-export OTel instrument name.
+const infraHTTPCountQuery = `sum(longtermism_http_server_request_count_total{http_route="/api/v1/observability/infra-smoke",http_request_method="GET",http_response_status_class="2xx"})`
 
 var defaultInfraHTTPCountSelector = SmokeHTTPCountSelector{
 	Route:       "/api/v1/observability/infra-smoke",

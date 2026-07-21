@@ -2,12 +2,44 @@ package cmd
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	v1observability "github.com/ashjazz/Longtermism/api/v1/observability"
 	"github.com/gogf/gf/v2/os/gcfg"
 )
+
+// The middleware is the sole JSONL producer in the live server. A smoke marker must be
+// projected from its header here; otherwise Loki cannot prove that a log belongs to this run.
+func TestHTTPCompletionIdentityProjectsOnlyValidatedInfraSmokeMarkers(t *testing.T) {
+	tests := []struct {
+		name           string
+		marker         string
+		wantSmokeRunID string
+	}{
+		{name: "projects valid marker", marker: "run-smoke-marker", wantSmokeRunID: "run-smoke-marker"},
+		{name: "rejects short marker", marker: "short"},
+		{name: "rejects unsafe marker", marker: "run marker"},
+		{name: "rejects oversized marker", marker: "run-" + strings.Repeat("a", 125)},
+		{name: "does not mark an omitted optional marker"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8000/api/v1/observability/infra-smoke", nil)
+			request.Header.Set(v1observability.SmokeRunIDHeader, tt.marker)
+			request = request.WithContext(context.WithValue(request.Context(), routeTemplateContextKey{}, "/api/v1/observability/infra-smoke"))
+			identity := httpCompletionIdentity(request)
+			if identity.IsSmokeRun != (tt.wantSmokeRunID != "") || identity.SmokeRunID != tt.wantSmokeRunID {
+				t.Fatalf("smoke identity = %#v, want marker %q", identity, tt.wantSmokeRunID)
+			}
+		})
+	}
+}
 
 // TestGrafanaSmokeConfigExampleIsStandaloneAndLoopbackBound prevents the local runbook from
 // drifting into a partial override that GoFrame would never load. The selected file must contain

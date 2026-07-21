@@ -98,6 +98,28 @@ func TestInfraSmokeUsecaseKeepsBusinessOKWhenTelemetryFails(t *testing.T) {
 	assertInfraSmokeTelemetryDiagnostics(t, diagnostics.failures)
 }
 
+// The smoke probe is exceptional: its Prometheus assertion runs immediately after the request.
+// ForceFlush makes the just-recorded counter eligible for the Collector before that query starts.
+func TestInfraSmokeUsecaseFlushesMetricsAndRecordsFlushFailure(t *testing.T) {
+	flusher := &failingInfraSmokeFlusher{err: errors.New("synthetic metric flush failure")}
+	diagnostics := &inMemoryInfraSmokeDiagnostics{}
+	usecase := NewInfraSmokeUsecase(InfraSmokeUsecaseDependencies{
+		MetricFlusher: flusher,
+		Diagnostics:   diagnostics,
+	})
+
+	result, err := usecase.Run(context.Background(), InfraSmokeInput{RequestID: "req-t066-flush", SmokeRunID: "run-t066-flush"})
+	if err != nil || result.Status != InfraSmokeStatusOK {
+		t.Fatalf("Run() = (%#v, %v), want successful business result despite flush failure", result, err)
+	}
+	if flusher.calls != 1 {
+		t.Fatalf("metric flush calls = %d, want one", flusher.calls)
+	}
+	if len(diagnostics.failures) != 1 || diagnostics.failures[0] != (InfraSmokeTelemetryFailure{Component: "metrics_flush", ErrorClass: infraSmokeTelemetryFailureClass}) {
+		t.Fatalf("metric flush diagnostics = %#v, want one low-sensitive flush failure", diagnostics.failures)
+	}
+}
+
 // 该断言把 infra-only 与 AI 平面的边界固定在 usecase 层：未来即使 chat 增加更多
 // AI 属性，基础设施探针也不能借用或伪造任何 AI identity。
 func assertInfraSmokeSpan(t *testing.T, span tracetest.SpanStub, requestID, smokeRunID string) {
@@ -265,6 +287,16 @@ func (m *failingInfraSmokeMetrics) RecordHTTP(_ context.Context, _ appobservabil
 type failingInfraSmokeLogWriter struct {
 	calls int
 	err   error
+}
+
+type failingInfraSmokeFlusher struct {
+	calls int
+	err   error
+}
+
+func (f *failingInfraSmokeFlusher) Flush(_ context.Context) error {
+	f.calls++
+	return f.err
 }
 
 func (w *failingInfraSmokeLogWriter) Write(_ context.Context, _ appobservability.HTTPCompletionLog) error {
