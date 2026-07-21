@@ -72,6 +72,7 @@ func (p BoundedMarkerPoller) WaitForMarker(ctx context.Context, target PollMarke
 	}
 	boundedContext, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
+	var lastQueryErr error
 
 	for {
 		if err := boundedContext.Err(); err != nil {
@@ -88,14 +89,19 @@ func (p BoundedMarkerPoller) WaitForMarker(ctx context.Context, target PollMarke
 			if boundedContext.Err() != nil {
 				return MarkerObservation{}, boundedContext.Err()
 			}
-			return MarkerObservation{}, errSmokeMarkerQuery
-		}
-		if observation, found := currentRunObservation(observations, target); found {
+			// Backend indexes can briefly reject a just-arrived query while the same marker is
+			// already on its way through an asynchronous exporter. Preserve the failure only if
+			// the bounded window expires; do not let one transient response end the smoke early.
+			lastQueryErr = errSmokeMarkerQuery
+		} else if observation, found := currentRunObservation(observations, target); found {
 			return observation, nil
 		}
 
 		remaining = target.Deadline.Sub(p.clock.Now())
 		if remaining <= 0 {
+			if lastQueryErr != nil {
+				return MarkerObservation{}, lastQueryErr
+			}
 			return MarkerObservation{}, context.DeadlineExceeded
 		}
 		if err := p.clock.Wait(boundedContext, minimumDuration(p.pollInterval, remaining)); err != nil {
