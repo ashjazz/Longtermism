@@ -131,11 +131,13 @@ fail_check("invalid_loki_native_otlp_exporter") unless collector.dig("exporters"
 
 limits = require_hash(loki["limits_config"], "missing_loki_limits")
 fail_check("structured_metadata_disabled") unless limits["allow_structured_metadata"] == true
+fail_check("missing_loki_delete_request_store") unless loki.dig("compactor", "delete_request_store") == "filesystem"
 otlp = require_hash(limits["otlp_config"], "missing_loki_native_otlp")
 resource_attributes = require_hash(otlp["resource_attributes"], "missing_loki_resource_attributes")
-log_attributes = require_hash(otlp["log_attributes"], "missing_loki_log_attributes")
+log_attributes = otlp["log_attributes"]
+fail_check("missing_loki_log_attributes") unless log_attributes.is_a?(Array)
 resource_entries = Array(resource_attributes["attributes_config"])
-log_entries = Array(log_attributes["attributes_config"])
+log_entries = log_attributes
 low_cardinality_labels = %w[service.name service.namespace deployment.environment]
 fail_check("invalid_loki_index_labels") unless attribute_action?(resource_entries, "index_label", low_cardinality_labels)
 index_entries = resource_entries.select { |entry| entry.is_a?(Hash) && entry["action"] == "index_label" }

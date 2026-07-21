@@ -134,6 +134,7 @@
 - [X] T066E [US1] 修复 Langfuse web 冷启动的 Node heap 耗尽；质量门控：web 容器分配 `2GiB`，Node old-space 限制为 `1536MiB` 并保留 native memory headroom，合并 profile 仍不超过 `12GiB` 声明上限。
 - [X] T066F [US1] 移除 Langfuse worker 的伪 healthcheck；质量门控：不假设 `3.185.0` 镜像内存在未发布的脚本或 endpoint，worker 只依赖已完成初始化任务，web health 仍为冷启动服务就绪证据。
 - [X] T066G [US1] 修复 Grafana profile 的 Collector 首次队列卷启动；质量门控：三套 `file_storage` 显式创建子目录，受限的一次性 root 初始化器仅为队列目录移交 `10001:<宿主机 GID>`，Collector 保持 non-root，不要求手工 chown 或删除 named volume。
+- [X] T066H [US1] 修复 Grafana profile 的真实服务就绪检查；质量门控：Loki retention 配置有效，Prometheus 使用镜像内置探针，Collector/Loki/Tempo 由最小权限 sidecar 请求真实 HTTP readiness endpoint，`make obs-grafana-up` 在保留 named volumes 的 cold/warm restart 下通过。
 - [X] T067 [US1] 在 `specs/003-real-observability-backends/checklists/grafana-infra.md` 编写主线基础设施验收清单；质量门控：本阶段只关闭 SC-001，SC-006 告警项明确标记为“已 provision、待 US3 firing/resolved 验证”，所有通过结论都要求机器可读证据，不以手工 UI 截图单独通过。
 
 ## Phase 4：User Story 2 - 追溯一次真实 AI 对话（P1）

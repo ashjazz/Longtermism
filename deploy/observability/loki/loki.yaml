@@ -29,6 +29,8 @@ schema_config:
 compactor:
   working_directory: /loki/compactor
   retention_enabled: true
+  # Local single-process profile stores delete requests beside the filesystem-backed data.
+  delete_request_store: filesystem
 
 limits_config:
   retention_period: 168h
@@ -39,9 +41,8 @@ limits_config:
         - action: index_label
           attributes: [service.name, service.namespace, deployment.environment]
     log_attributes:
-      attributes_config:
-        # Request/trace identities remain queryable structured metadata, never index labels.
-        - action: structured_metadata
-          attributes: [request_id, trace_id, span_id, route, method, status, duration_ms, error_class, smoke_run_id]
-        - action: drop
-          attributes: [authorization, cookie, api_key, token, password, prompt, query, output, tool_arguments, provider_error_body, raw_query]
+      # Request/trace identities remain queryable structured metadata, never index labels.
+      - action: structured_metadata
+        attributes: [request_id, trace_id, span_id, route, method, status, duration_ms, error_class, smoke_run_id]
+      - action: drop
+        attributes: [authorization, cookie, api_key, token, password, prompt, query, output, tool_arguments, provider_error_body, raw_query]

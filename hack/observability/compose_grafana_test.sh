@@ -103,10 +103,10 @@ def trusted_health_probe?(service, test)
   return false unless test.is_a?(Array) && test.length == 2 && test.first == "CMD-SHELL" && test.last.is_a?(String)
   command = test.last.strip
   allowed = {
-    "collector" => ["curl --fail --silent --show-error http://127.0.0.1:13133/healthz"],
-    "prometheus" => ["curl --fail --silent --show-error http://127.0.0.1:9090/-/ready"],
-    "loki" => ["curl --fail --silent --show-error http://127.0.0.1:3100/ready"],
-    "tempo" => ["curl --fail --silent --show-error http://127.0.0.1:3200/ready"],
+    "collector-health-probe" => ["wget --spider --quiet http://collector:13133/healthz"],
+    "loki-health-probe" => ["wget --spider --quiet http://loki:3100/ready"],
+    "tempo-health-probe" => ["wget --spider --quiet http://tempo:3200/ready"],
+    "prometheus" => ["wget --quiet --output-document=/dev/null http://127.0.0.1:9090/-/ready"],
     "grafana" => ["curl --fail --silent --show-error http://127.0.0.1:3000/api/health"],
     "langfuse-web" => ["wget --spider --no-verbose \"http://$$(hostname):3000/api/public/health\""],
     "langfuse-db" => ["pg_isready -U langfuse -d langfuse"],
@@ -125,7 +125,7 @@ langfuse_services = required_hash(langfuse_compose["services"], "missing_langfus
 services = grafana_services.merge(langfuse_services)
 fail_check("duplicate_split_service") unless services.length == grafana_services.length + langfuse_services.length
 fail_check("custom_compose_network_forbidden") if [compose, langfuse_compose].any? { |document| document.key?("networks") } || services.values.any? { |service| service.key?("networks") }
-required_services = %w[collector collector-storage-init prometheus loki tempo grafana langfuse-web langfuse-worker langfuse-db langfuse-clickhouse langfuse-clickhouse-init langfuse-redis langfuse-minio langfuse-minio-init]
+required_services = %w[collector collector-health-probe collector-storage-init prometheus loki loki-health-probe tempo tempo-health-probe grafana langfuse-web langfuse-worker langfuse-db langfuse-clickhouse langfuse-clickhouse-init langfuse-redis langfuse-minio langfuse-minio-init]
 fail_check("invalid_grafana_profile_services") unless services.keys.sort == required_services.sort
 fail_check("invalid_bootstrap_services") unless langfuse_services.keys.sort == %w[langfuse-clickhouse langfuse-clickhouse-init langfuse-db langfuse-minio langfuse-minio-init langfuse-redis langfuse-web langfuse-worker]
 fail_check("collector_leaked_into_bootstrap") if scalar_strings(langfuse_compose).any? { |value| value.include?("LANGFUSE_OTLP_AUTHORIZATION") || value.include?("LANGFUSE_OTEL_INGESTION_VERSION") }
@@ -162,7 +162,7 @@ budget = required_hash(compose["x-observability-budget"], "missing_observability
 fail_check("invalid_observability_budget") unless budget == {"cpus" => "8", "memory" => "12GiB", "volumes" => "20GiB"}
 
 image_variables = {
-  "collector" => "OTELCOL_CONTRIB_IMAGE", "prometheus" => "PROMETHEUS_IMAGE", "loki" => "LOKI_IMAGE", "tempo" => "TEMPO_IMAGE", "grafana" => "GRAFANA_IMAGE",
+  "collector" => "OTELCOL_CONTRIB_IMAGE", "collector-health-probe" => "COLLECTOR_STORAGE_INIT_IMAGE", "loki-health-probe" => "COLLECTOR_STORAGE_INIT_IMAGE", "tempo-health-probe" => "COLLECTOR_STORAGE_INIT_IMAGE", "prometheus" => "PROMETHEUS_IMAGE", "loki" => "LOKI_IMAGE", "tempo" => "TEMPO_IMAGE", "grafana" => "GRAFANA_IMAGE",
   "langfuse-web" => "LANGFUSE_IMAGE", "langfuse-worker" => "LANGFUSE_WORKER_IMAGE", "langfuse-db" => "LANGFUSE_POSTGRES_IMAGE", "langfuse-clickhouse" => "LANGFUSE_CLICKHOUSE_IMAGE", "langfuse-redis" => "LANGFUSE_REDIS_IMAGE", "langfuse-minio" => "LANGFUSE_MINIO_IMAGE"
 }
 image_variables.each do |service_name, variable|
@@ -170,7 +170,7 @@ image_variables.each do |service_name, variable|
   fail_check("invalid_fixed_image:#{service_name}") unless service["image"] == "${#{variable}}" && versions.fetch(variable, "").include?(":") && !versions.fetch(variable, "").include?(":latest")
   limits = service.dig("deploy", "resources", "limits")
   fail_check("missing_resource_limit:#{service_name}") unless limits.is_a?(Hash) && limits.key?("cpus") && limits.key?("memory")
-  next if service_name == "langfuse-worker"
+  next if %w[collector loki tempo langfuse-worker].include?(service_name)
 
   healthcheck = service["healthcheck"]
   fail_check("missing_healthcheck:#{service_name}") unless healthcheck.is_a?(Hash) && healthcheck["test"].is_a?(Array) && healthcheck["test"].length > 1 && healthcheck["interval"].to_s.match?(/\A[1-9][0-9]*s\z/) && healthcheck["timeout"].to_s.match?(/\A[1-9][0-9]*s\z/) && healthcheck["retries"].is_a?(Integer) && healthcheck["retries"].positive?
@@ -178,7 +178,19 @@ image_variables.each do |service_name, variable|
 end
 
 fail_check("unexpected_langfuse_worker_healthcheck") if services.fetch("langfuse-worker").key?("healthcheck")
-(image_variables.keys - ["langfuse-worker"]).each { |service_name| fail_check("untrusted_healthcheck:#{service_name}") unless trusted_health_probe?(service_name, services.fetch(service_name).dig("healthcheck", "test")) }
+%w[collector loki tempo].each { |service_name| fail_check("unexpected_distroless_healthcheck:#{service_name}") if services.fetch(service_name).key?("healthcheck") }
+(image_variables.keys - %w[collector loki tempo langfuse-worker]).each { |service_name| fail_check("untrusted_healthcheck:#{service_name}") unless trusted_health_probe?(service_name, services.fetch(service_name).dig("healthcheck", "test")) }
+{
+  "collector-health-probe" => "collector",
+  "loki-health-probe" => "loki",
+  "tempo-health-probe" => "tempo"
+}.each do |probe_name, target_name|
+  probe = services.fetch(probe_name)
+  fail_check("missing_health_probe_dependency:#{probe_name}") unless probe.dig("depends_on", target_name, "condition") == "service_started"
+  fail_check("invalid_health_probe_user:#{probe_name}") unless probe["user"] == "65534:65534"
+  fail_check("health_probe_root_filesystem_writable:#{probe_name}") unless probe["read_only"] == true
+  fail_check("health_probe_capabilities_not_minimized:#{probe_name}") unless Array(probe["cap_drop"]) == ["ALL"] && !probe.key?("cap_add")
+end
 {
   "collector-storage-init" => "COLLECTOR_STORAGE_INIT_IMAGE",
   "langfuse-minio-init" => "LANGFUSE_MINIO_MC_IMAGE",

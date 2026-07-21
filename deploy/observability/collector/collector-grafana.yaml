@@ -1,6 +1,12 @@
 # Grafana 主线 Collector：应用只向此处发送 OTLP；后端连接与重试在此边界收敛。
 # 方案 C 先在 ingress 做一次确定性脱敏，再分别投影 infra 与 AI 两个平面。
 extensions:
+  # Compose health probes run from a separate network peer because the Collector
+  # image is distroless. Bind explicitly rather than relying on the extension's
+  # localhost default, while the published host port remains loopback-only.
+  health_check:
+    endpoint: 0.0.0.0:13133
+    path: /healthz
   file_storage/tempo:
     # Persistent queues must remain under the collector-data mount. The bounded
     # one-shot initializer prepares these directories before the non-root
@@ -252,6 +258,7 @@ exporters:
 
 service:
   extensions:
+    - health_check
     - file_storage/tempo
     - file_storage/loki
     - file_storage/langfuse

@@ -169,10 +169,17 @@ compose_paths.sort.each do |compose_path|
     # as a long-running healthy service would conceal a failed cold bootstrap.
     is_one_shot_initializer = %w[collector-storage-init langfuse-minio-init langfuse-clickhouse-init].include?(service_name)
     is_langfuse_worker_without_health_endpoint = service_name == "langfuse-worker"
+    # The Collector image is distroless. Its real /healthz endpoint is checked
+    # by collector-health-probe, which has the minimal shell client needed to
+    # make a network request without weakening the Collector container.
+    sidecar_probe_name = "#{service_name}-health-probe"
+    is_probed_by_sidecar = %w[collector loki tempo].include?(service_name) && services.dig(sidecar_probe_name, "depends_on", service_name, "condition") == "service_started"
     if is_one_shot_initializer
       fail_check(compose_path, "invalid_one_shot_initializer") unless service["restart"] == "no" && !service.key?("healthcheck")
     elsif is_langfuse_worker_without_health_endpoint
       fail_check(compose_path, "unexpected_langfuse_worker_healthcheck") if service.key?("healthcheck")
+    elsif is_probed_by_sidecar
+      fail_check(compose_path, "unexpected_sidecar_probed_healthcheck") if service.key?("healthcheck")
     else
       fail_check(compose_path, "missing_healthcheck") unless service["healthcheck"].is_a?(Hash)
     end

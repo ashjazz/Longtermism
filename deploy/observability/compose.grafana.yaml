@@ -78,16 +78,74 @@ services:
       - type: volume
         source: collector-data
         target: /var/lib/otelcol/storage
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512MiB
+
+  # The Collector image is distroless, so a CMD-SHELL probe inside it can never
+  # run. Keep readiness semantic by probing the real health endpoint from a
+  # separate non-root utility container on the same Compose network.
+  collector-health-probe:
+    image: ${COLLECTOR_STORAGE_INIT_IMAGE}
+    user: "65534:65534"
+    command: ["tail", "-f", "/dev/null"]
+    read_only: true
+    cap_drop: [ALL]
+    depends_on:
+      collector:
+        condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:13133/healthz"]
+      test: ["CMD-SHELL", "wget --spider --quiet http://collector:13133/healthz"]
       interval: 10s
       timeout: 5s
       retries: 6
     deploy:
       resources:
         limits:
-          cpus: "0.50"
-          memory: 512MiB
+          cpus: "0.10"
+          memory: 64MiB
+
+  loki-health-probe:
+    image: ${COLLECTOR_STORAGE_INIT_IMAGE}
+    user: "65534:65534"
+    command: ["tail", "-f", "/dev/null"]
+    read_only: true
+    cap_drop: [ALL]
+    depends_on:
+      loki:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://loki:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64MiB
+
+  tempo-health-probe:
+    image: ${COLLECTOR_STORAGE_INIT_IMAGE}
+    user: "65534:65534"
+    command: ["tail", "-f", "/dev/null"]
+    read_only: true
+    cap_drop: [ALL]
+    depends_on:
+      tempo:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://tempo:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64MiB
 
   prometheus:
     image: ${PROMETHEUS_IMAGE}
@@ -105,7 +163,7 @@ services:
         source: prometheus-data
         target: /prometheus
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:9090/-/ready"]
+      test: ["CMD-SHELL", "wget --quiet --output-document=/dev/null http://127.0.0.1:9090/-/ready"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -130,11 +188,6 @@ services:
       - type: volume
         source: loki-data
         target: /loki
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:3100/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
     deploy:
       resources:
         limits:
@@ -156,11 +209,6 @@ services:
       - type: volume
         source: tempo-data
         target: /var/tempo
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:3200/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
     deploy:
       resources:
         limits:

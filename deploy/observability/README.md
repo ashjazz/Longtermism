@@ -130,6 +130,15 @@ fail-fast，避免用空 header 启动一个看似健康、实际丢失 AI 平�
 `10001:<当前宿主机 GID>`。Collector 镜像本身不含 shell，因此不能在其容器内执行这一步；无需
 手工 `chown`，也不要用 `down -v` 删除诊断卷。
 
+同样因为 Collector、Loki 与 Tempo 镜像是无 shell 的精简镜像，Compose 使用无特权的
+`*-health-probe` 容器请求它们各自真实的 HTTP readiness endpoint。`make obs-grafana-up --wait`
+等待的是这些真实 HTTP 就绪证据，不是对服务二进制的伪检查；Prometheus 镜像则直接使用它自带的
+`wget` 探测 `/-/ready`。
+
+如果修改了 Collector、Loki、Tempo 或 Prometheus 的 bind-mounted 配置文件，现有容器不会因文件内容
+变化自动重建。请执行 `make obs-grafana-down` 后再执行 `make obs-grafana-up`；两条命令都不会使用
+`-v`，因此不会删除 named volumes。
+
 应用运行在宿主机时，将其 OTLP endpoint 配置为 `127.0.0.1:4317`（或显式选择
 `127.0.0.1:4318` 的 HTTP/protobuf 变体）。Compose 只将这两个 Collector ingress
 端口发布到 loopback；Tempo、Loki、Prometheus、Grafana 与 Langfuse 的服务 DNS 仍只

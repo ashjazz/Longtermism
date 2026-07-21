@@ -98,11 +98,12 @@ exporters = section(config, "exporters")
 require_keys(receivers, %w[otlp filelog/glog], "missing_required_receiver")
 require_keys(connectors, %w[forward/infra forward/ai], "missing_required_connector")
 require_keys(exporters, %w[otlp/tempo otlphttp/loki otlphttp/langfuse prometheus/app], "missing_stable_component")
-require_keys(extensions, %w[file_storage/tempo file_storage/loki file_storage/langfuse], "missing_persistent_queue_storage")
+require_keys(extensions, %w[health_check file_storage/tempo file_storage/loki file_storage/langfuse], "missing_persistent_queue_storage")
 require_keys(processors, %w[filter/ai transform/redact-ingress transform/redact-downstream tail_sampling/retain], "missing_required_processor")
 service_extensions = config.dig("service", "extensions")
 fail_check("missing_enabled_persistent_queue_storage") unless service_extensions.is_a?(Array)
-require_includes(service_extensions, %w[file_storage/tempo file_storage/loki file_storage/langfuse], "missing_enabled_persistent_queue_storage")
+require_includes(service_extensions, %w[health_check file_storage/tempo file_storage/loki file_storage/langfuse], "missing_enabled_persistent_queue_storage")
+fail_check("invalid_collector_health_endpoint") unless extensions.dig("health_check", "endpoint") == "0.0.0.0:13133" && extensions.dig("health_check", "path") == "/healthz"
 {
   "file_storage/tempo" => ["/var/lib/otelcol/storage/queue/tempo", "/var/lib/otelcol/storage/queue/tempo-compaction"],
   "file_storage/loki" => ["/var/lib/otelcol/storage/queue/loki", "/var/lib/otelcol/storage/queue/loki-compaction"],
