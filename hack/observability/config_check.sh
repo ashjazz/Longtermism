@@ -167,7 +167,7 @@ compose_paths.sort.each do |compose_path|
     fail_check(compose_path, "unresolved_image_tag") if image.empty? || image.include?("${")
     # Bucket initialization is deliberately a one-shot dependency: treating it
     # as a long-running healthy service would conceal a failed cold bootstrap.
-    is_one_shot_initializer = %w[langfuse-minio-init langfuse-clickhouse-init].include?(service_name)
+    is_one_shot_initializer = %w[collector-storage-init langfuse-minio-init langfuse-clickhouse-init].include?(service_name)
     is_langfuse_worker_without_health_endpoint = service_name == "langfuse-worker"
     if is_one_shot_initializer
       fail_check(compose_path, "invalid_one_shot_initializer") unless service["restart"] == "no" && !service.key?("healthcheck")

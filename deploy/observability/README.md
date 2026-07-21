@@ -125,6 +125,11 @@ Langfuse 的 Collector/基础设施容器。
 `compose.langfuse.yaml` 和 `compose.grafana.yaml`，并在缺少任意 Collector OTLP 变量时
 fail-fast，避免用空 header 启动一个看似健康、实际丢失 AI 平面投递的 profile。
 
+首次使用（或保留了旧卷后重启）时，profile 会先运行一个一次性的、固定版本 BusyBox
+初始化器：它只在 `collector-data` 中创建三套持久队列目录，并将其交给非 root Collector 的
+`10001:<当前宿主机 GID>`。Collector 镜像本身不含 shell，因此不能在其容器内执行这一步；无需
+手工 `chown`，也不要用 `down -v` 删除诊断卷。
+
 应用运行在宿主机时，将其 OTLP endpoint 配置为 `127.0.0.1:4317`（或显式选择
 `127.0.0.1:4318` 的 HTTP/protobuf 变体）。Compose 只将这两个 Collector ingress
 端口发布到 loopback；Tempo、Loki、Prometheus、Grafana 与 Langfuse 的服务 DNS 仍只
@@ -138,7 +143,8 @@ fail-fast，避免用空 header 启动一个看似健康、实际丢失 AI 平�
 1. 依照上面的冷启动或 warm-start 路径完成 `make obs-grafana-up`（首次创建 key 后也必须
    执行这一步）。该 target 会先创建被忽略的
    `resource/log/observability`，将目录设为当前用户主组可读，并将同一 GID 传给非 root
-   Collector；Collector 仅以只读 bind mount 读取该 JSONL 目录。应用必须由执行此命令的
+   Collector；Collector 仅以只读 bind mount 读取该 JSONL 目录。Collector 自己的持久队列由
+   profile 的 one-shot initializer 初始化，应用必须由执行此命令的
    同一普通用户启动；不要用 `sudo` 启动应用，也不要将该目录替换为符号链接。
 2. 复制 `manifest/config/config.grafana-smoke.example.yaml` 为已忽略的
    `config.grafana-smoke.local.yaml`。这是**独立配置文件**，不会与 `config.yaml` 或

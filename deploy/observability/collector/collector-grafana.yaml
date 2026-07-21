@@ -2,20 +2,29 @@
 # 方案 C 先在 ingress 做一次确定性脱敏，再分别投影 infra 与 AI 两个平面。
 extensions:
   file_storage/tempo:
-    directory: /var/lib/otelcol/queue/tempo
+    # Persistent queues must remain under the collector-data mount. The bounded
+    # one-shot initializer prepares these directories before the non-root
+    # Collector starts, so queue creation cannot escape into its root filesystem.
+    directory: /var/lib/otelcol/storage/queue/tempo
+    create_directory: true
     timeout: 1s
     compaction:
       on_start: true
+      directory: /var/lib/otelcol/storage/queue/tempo-compaction
   file_storage/loki:
-    directory: /var/lib/otelcol/queue/loki
+    directory: /var/lib/otelcol/storage/queue/loki
+    create_directory: true
     timeout: 1s
     compaction:
       on_start: true
+      directory: /var/lib/otelcol/storage/queue/loki-compaction
   file_storage/langfuse:
-    directory: /var/lib/otelcol/queue/langfuse
+    directory: /var/lib/otelcol/storage/queue/langfuse
+    create_directory: true
     timeout: 1s
     compaction:
       on_start: true
+      directory: /var/lib/otelcol/storage/queue/langfuse-compaction
 
 receivers:
   otlp:

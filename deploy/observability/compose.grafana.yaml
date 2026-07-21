@@ -7,6 +7,38 @@ x-observability-budget:
   volumes: "20GiB"
 
 services:
+  # Collector image is intentionally shell-less and runs non-root. This bounded
+  # one-shot job owns the only privileged filesystem action: initialize exactly
+  # the persistent queue directories and hand them to the Collector UID/GID.
+  collector-storage-init:
+    image: ${COLLECTOR_STORAGE_INIT_IMAGE}
+    user: "0:0"
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    # DAC_OVERRIDE is required only to make a repeated bootstrap idempotent
+    # after the queue directories have been handed to UID 10001 with mode 0750.
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    environment:
+      OBSERVABILITY_LOG_GID: ${OBSERVABILITY_LOG_GID:?set OBSERVABILITY_LOG_GID}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - >-
+        mkdir -p /var/lib/otelcol/storage/queue/tempo /var/lib/otelcol/storage/queue/loki /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/tempo-compaction /var/lib/otelcol/storage/queue/loki-compaction /var/lib/otelcol/storage/queue/langfuse-compaction;
+        chown 10001:"$${OBSERVABILITY_LOG_GID}" /var/lib/otelcol/storage/queue /var/lib/otelcol/storage/queue/tempo /var/lib/otelcol/storage/queue/loki /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/tempo-compaction /var/lib/otelcol/storage/queue/loki-compaction /var/lib/otelcol/storage/queue/langfuse-compaction;
+        chmod 0750 /var/lib/otelcol/storage/queue /var/lib/otelcol/storage/queue/tempo /var/lib/otelcol/storage/queue/loki /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/tempo-compaction /var/lib/otelcol/storage/queue/loki-compaction /var/lib/otelcol/storage/queue/langfuse-compaction
+    volumes:
+      - type: volume
+        source: collector-data
+        target: /var/lib/otelcol/storage
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64MiB
+
   collector:
     image: ${OTELCOL_CONTRIB_IMAGE}
     # 保持非 root UID；补充宿主机当前主组，使 filelog 能以只读方式读取 0640 JSONL。
@@ -15,6 +47,9 @@ services:
     environment:
       LANGFUSE_OTLP_AUTHORIZATION: ${LANGFUSE_OTLP_AUTHORIZATION:?set LANGFUSE_OTLP_AUTHORIZATION}
       LANGFUSE_OTEL_INGESTION_VERSION: ${LANGFUSE_OTEL_INGESTION_VERSION:?set LANGFUSE_OTEL_INGESTION_VERSION}
+    depends_on:
+      collector-storage-init:
+        condition: service_completed_successfully
     ports:
       # 本地应用运行在宿主机时也只能通过 loopback 进入 Collector；业务进程绝不
       # 直接认识 Tempo/Loki/Prometheus/Grafana/Langfuse 地址。

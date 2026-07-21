@@ -125,7 +125,7 @@ langfuse_services = required_hash(langfuse_compose["services"], "missing_langfus
 services = grafana_services.merge(langfuse_services)
 fail_check("duplicate_split_service") unless services.length == grafana_services.length + langfuse_services.length
 fail_check("custom_compose_network_forbidden") if [compose, langfuse_compose].any? { |document| document.key?("networks") } || services.values.any? { |service| service.key?("networks") }
-required_services = %w[collector prometheus loki tempo grafana langfuse-web langfuse-worker langfuse-db langfuse-clickhouse langfuse-clickhouse-init langfuse-redis langfuse-minio langfuse-minio-init]
+required_services = %w[collector collector-storage-init prometheus loki tempo grafana langfuse-web langfuse-worker langfuse-db langfuse-clickhouse langfuse-clickhouse-init langfuse-redis langfuse-minio langfuse-minio-init]
 fail_check("invalid_grafana_profile_services") unless services.keys.sort == required_services.sort
 fail_check("invalid_bootstrap_services") unless langfuse_services.keys.sort == %w[langfuse-clickhouse langfuse-clickhouse-init langfuse-db langfuse-minio langfuse-minio-init langfuse-redis langfuse-web langfuse-worker]
 fail_check("collector_leaked_into_bootstrap") if scalar_strings(langfuse_compose).any? { |value| value.include?("LANGFUSE_OTLP_AUTHORIZATION") || value.include?("LANGFUSE_OTEL_INGESTION_VERSION") }
@@ -180,6 +180,7 @@ end
 fail_check("unexpected_langfuse_worker_healthcheck") if services.fetch("langfuse-worker").key?("healthcheck")
 (image_variables.keys - ["langfuse-worker"]).each { |service_name| fail_check("untrusted_healthcheck:#{service_name}") unless trusted_health_probe?(service_name, services.fetch(service_name).dig("healthcheck", "test")) }
 {
+  "collector-storage-init" => "COLLECTOR_STORAGE_INIT_IMAGE",
   "langfuse-minio-init" => "LANGFUSE_MINIO_MC_IMAGE",
   "langfuse-clickhouse-init" => "LANGFUSE_CLICKHOUSE_IMAGE"
 }.each do |service_name, variable|
@@ -188,6 +189,17 @@ fail_check("unexpected_langfuse_worker_healthcheck") if services.fetch("langfuse
   fail_check("invalid_initializer_restart:#{service_name}") unless initializer["restart"] == "no"
   fail_check("unexpected_initializer_healthcheck:#{service_name}") if initializer.key?("healthcheck")
 end
+collector_storage_init = services.fetch("collector-storage-init")
+fail_check("invalid_collector_storage_initializer_user") unless collector_storage_init["user"] == "0:0"
+collector_storage_init_environment = required_hash(collector_storage_init["environment"], "missing_collector_storage_initializer_gid")
+fail_check("missing_collector_storage_initializer_gid") unless collector_storage_init_environment["OBSERVABILITY_LOG_GID"] == "${OBSERVABILITY_LOG_GID:?set OBSERVABILITY_LOG_GID}"
+collector_storage_init_command = Array(collector_storage_init["entrypoint"]).last
+%w[mkdir\ -p /var/lib/otelcol/storage/queue/tempo /var/lib/otelcol/storage/queue/loki /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/tempo-compaction /var/lib/otelcol/storage/queue/loki-compaction /var/lib/otelcol/storage/queue/langfuse-compaction chown\ 10001: chmod\ 0750].each do |required_fragment|
+  fail_check("invalid_collector_storage_initializer_command") unless collector_storage_init_command.is_a?(String) && collector_storage_init_command.include?(required_fragment)
+end
+fail_check("collector_storage_initializer_network_exposed") unless collector_storage_init["network_mode"] == "none"
+fail_check("collector_storage_initializer_root_filesystem_writable") unless collector_storage_init["read_only"] == true
+fail_check("collector_storage_initializer_capabilities_not_minimized") unless Array(collector_storage_init["cap_drop"]) == ["ALL"] && Array(collector_storage_init["cap_add"]).sort == %w[CHOWN DAC_OVERRIDE FOWNER]
 clickhouse_init_command = Array(services.fetch("langfuse-clickhouse-init")["entrypoint"]).last
 fail_check("missing_clickhouse_password_syntax_guard") unless clickhouse_init_command.is_a?(String) && clickhouse_init_command.include?("*[!0-9a-f]*") && clickhouse_init_command.include?("-eq 64") && clickhouse_init_command.include?("--host langfuse-clickhouse") && clickhouse_init_command.include?("--user langfuse-admin")
 fail_check("missing_clickhouse_migration_grant") unless clickhouse_init_command.include?("GRANT ALL ON default.* TO langfuse")
@@ -216,8 +228,10 @@ allowed_ports = {
   "tempo" => [3200], "collector" => [4317, 4318, 13133, 8888]
 }
 services.each do |name, service|
-  fail_check("unsafe_network_mode:#{name}") if service.key?("network_mode")
-  fail_check("unsafe_container_privilege:#{name}") if service["privileged"] == true || %w[host service container].any? { |value| service["pid"] == value || service["ipc"] == value } || service.key?("devices") || service.key?("volumes_from") || service.key?("cap_add") || service.key?("security_opt") || service.key?("userns_mode") || service.key?("cgroup") || service.key?("device_cgroup_rules")
+  is_collector_storage_initializer = name == "collector-storage-init"
+  fail_check("unsafe_network_mode:#{name}") if service.key?("network_mode") && !(is_collector_storage_initializer && service["network_mode"] == "none")
+  allows_only_initializer_capabilities = is_collector_storage_initializer && Array(service["cap_drop"]) == ["ALL"] && Array(service["cap_add"]).sort == %w[CHOWN DAC_OVERRIDE FOWNER]
+  fail_check("unsafe_container_privilege:#{name}") if service["privileged"] == true || %w[host service container].any? { |value| service["pid"] == value || service["ipc"] == value } || service.key?("devices") || service.key?("volumes_from") || (service.key?("cap_add") && !allows_only_initializer_capabilities) || service.key?("security_opt") || service.key?("userns_mode") || service.key?("cgroup") || service.key?("device_cgroup_rules")
   fail_check("short_volume_syntax:#{name}") if Array(service["volumes"]).any? { |mount| !mount.is_a?(Hash) }
   Array(service["ports"]).each do |port|
     is_langfuse_ui_mapping = name == "langfuse-web" && port["target"] == 3000 && port["published"].to_i == 3001
@@ -234,7 +248,7 @@ fail_check("external_or_overridden_volume") unless volumes.values.all? { |defini
 fail_check("unsupported_compose_secret_or_config") if [compose, langfuse_compose].any? { |document| document.key?("secrets") || document.key?("configs") } || services.values.any? { |service| service.key?("secrets") || service.key?("configs") }
 
 state_volume_mounts = {
-  "collector" => ["collector-data", "/var/lib/otelcol/storage"], "tempo" => ["tempo-data", "/var/tempo"], "loki" => ["loki-data", "/loki"],
+  "collector" => ["collector-data", "/var/lib/otelcol/storage"], "collector-storage-init" => ["collector-data", "/var/lib/otelcol/storage"], "tempo" => ["tempo-data", "/var/tempo"], "loki" => ["loki-data", "/loki"],
   "prometheus" => ["prometheus-data", "/prometheus"], "grafana" => ["grafana-data", "/var/lib/grafana"], "langfuse-db" => ["langfuse-postgres-data", "/var/lib/postgresql/data"],
   "langfuse-clickhouse" => ["langfuse-clickhouse-data", "/var/lib/clickhouse"], "langfuse-redis" => ["langfuse-redis-data", "/data"], "langfuse-minio" => ["langfuse-minio-data", "/data"]
 }
@@ -252,6 +266,7 @@ end
 
 collector_mounts = Array(services.fetch("collector")["volumes"])
 fail_check("missing_collector_config_mount") unless has_mount?(collector_mounts, type: "bind", source: "./collector/collector-grafana.yaml", target: "/etc/otelcol-contrib/config.yaml", read_only: true)
+fail_check("missing_collector_storage_initialization_dependency") unless services.fetch("collector").dig("depends_on", "collector-storage-init", "condition") == "service_completed_successfully"
 # 宿主机运行应用时，JSONL 落在被忽略的项目运行目录；Collector 只读同一个 bind mount，
 # 因而仍由 filelog 异步送往 Loki，应用不直接连接后端。
 fail_check("missing_local_application_log_mount") unless has_mount?(collector_mounts, type: "bind", source: "../../resource/log/observability", target: "/var/log/longtermism", read_only: true)

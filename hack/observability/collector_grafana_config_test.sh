@@ -103,9 +103,19 @@ require_keys(processors, %w[filter/ai transform/redact-ingress transform/redact-
 service_extensions = config.dig("service", "extensions")
 fail_check("missing_enabled_persistent_queue_storage") unless service_extensions.is_a?(Array)
 require_includes(service_extensions, %w[file_storage/tempo file_storage/loki file_storage/langfuse], "missing_enabled_persistent_queue_storage")
-%w[file_storage/tempo file_storage/loki file_storage/langfuse].each do |name|
-  directory = extensions.fetch(name).fetch("directory", "")
-  fail_check("invalid_persistent_queue_storage:#{name}") unless directory.is_a?(String) && directory.start_with?("/")
+{
+  "file_storage/tempo" => ["/var/lib/otelcol/storage/queue/tempo", "/var/lib/otelcol/storage/queue/tempo-compaction"],
+  "file_storage/loki" => ["/var/lib/otelcol/storage/queue/loki", "/var/lib/otelcol/storage/queue/loki-compaction"],
+  "file_storage/langfuse" => ["/var/lib/otelcol/storage/queue/langfuse", "/var/lib/otelcol/storage/queue/langfuse-compaction"]
+}.each do |name, (expected_directory, expected_compaction_directory)|
+  storage = extensions.fetch(name)
+  directory = storage.fetch("directory", "")
+  # Queue persistence must live inside collector-data. A writable path outside
+  # that mount would both lose retry evidence and require the non-root Collector
+  # to create a root-owned parent directory at startup.
+  fail_check("invalid_persistent_queue_storage:#{name}") unless directory == expected_directory
+  fail_check("missing_persistent_queue_directory_creation:#{name}") unless storage["create_directory"] == true
+  fail_check("invalid_persistent_queue_compaction_storage:#{name}") unless storage.dig("compaction", "directory") == expected_compaction_directory
 end
 extensions.each_key do |name|
   fail_check("unsupported_auth_extension") if name.match?(/auth/i)
