@@ -43,6 +43,9 @@ receivers:
   filelog/glog:
     include:
       - /var/log/longtermism/application.jsonl
+    # Docker Desktop bind mounts do not reliably forward host file-system watch events into the
+    # Linux VM. Polling keeps the local smoke's append-only JSONL visible without changing data.
+    poll_interval: 200ms
     start_at: beginning
     on_truncate: read_whole_file
     operators:
