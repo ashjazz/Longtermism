@@ -48,6 +48,23 @@ set_synthetic_smoke_environment() {
   export LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL="test-ai-plane-credential"
 }
 
+test_langfuse_bootstrap_starts_only_the_langfuse_profile() {
+  local temporary log output status commands
+  temporary="$(mktemp -d)"
+  log="${temporary}/commands.log"
+  setup_fake_tools "${temporary}"
+
+  set +e
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make obs-langfuse-bootstrap-up 2>&1)"
+  status=$?
+  set -e
+  [[ "${status}" -eq 0 ]] || { printf 'bootstrap failed\n%s\n' "${output}" >&2; exit 1; }
+  commands="$(cat "${log}")"
+  [[ "${commands}" == *"--project-name longtermism-observability --env-file deploy/observability/versions.env -f deploy/observability/compose.langfuse.yaml up -d --wait --wait-timeout 180 langfuse-web"* ]] || { printf 'bootstrap did not use the isolated Langfuse profile\n%s\n' "${commands}" >&2; exit 1; }
+  [[ "${commands}" != *"compose.grafana.yaml"* && "${commands}" != *"go run"* && "${commands}" != *"down -v"* ]] || { printf 'bootstrap leaked warm-start work\n%s\n' "${commands}" >&2; exit 1; }
+  rm -rf "${temporary}"
+}
+
 test_infra_smoke_preflight_explains_missing_local_configuration() {
   local temporary log output status
   temporary="$(mktemp -d)"
@@ -81,10 +98,10 @@ test_e2e_success_and_idempotent_lifecycle() {
   set -e
   [[ "${status}" -eq 0 ]] || { printf 'e2e success path failed\n%s\n' "${output}" >&2; exit 1; }
   assert_contains_in_order "$(cat "${log}")" \
-    "docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml up -d --wait --wait-timeout 180" \
-    "docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml ps" \
+    "docker compose --project-name longtermism-observability --env-file deploy/observability/versions.env -f deploy/observability/compose.langfuse.yaml -f deploy/observability/compose.grafana.yaml up -d --wait --wait-timeout 180" \
+    "docker compose --project-name longtermism-observability --env-file deploy/observability/versions.env -f deploy/observability/compose.langfuse.yaml -f deploy/observability/compose.grafana.yaml ps" \
     "go run ./cmd/obs-smoke infra" \
-    "docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml down"
+    "docker compose --project-name longtermism-observability --env-file deploy/observability/versions.env -f deploy/observability/compose.langfuse.yaml -f deploy/observability/compose.grafana.yaml down"
   [[ "${output}" != *"down -v"* ]] || { printf 'e2e output used destructive volume cleanup\n' >&2; exit 1; }
 
   : >"${log}"
@@ -122,6 +139,7 @@ test_e2e_failure_still_cleans_up_and_preserves_reports() {
 }
 
 test_infra_smoke_preflight_explains_missing_local_configuration
+test_langfuse_bootstrap_starts_only_the_langfuse_profile
 test_e2e_success_and_idempotent_lifecycle
 test_e2e_failure_still_cleans_up_and_preserves_reports
 printf '%s\n' 'make_grafana_e2e_test: pass'

@@ -127,7 +127,7 @@ def storage_mount(directory, mounts)
 end
 
 versions_path = File.join(root, "deploy/observability/versions.env")
-compose_paths = %w[compose.grafana.yaml compose.signoz.yaml].map do |name|
+compose_paths = %w[compose.grafana.yaml compose.langfuse.yaml compose.signoz.yaml].map do |name|
   path = File.join(root, "deploy/observability", name)
   required_file(path, "missing_compose_config")
   path

@@ -5,18 +5,20 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly COMPOSE_PATH="${REPO_ROOT}/deploy/observability/compose.grafana.yaml"
+readonly LANGFUSE_COMPOSE_PATH="${REPO_ROOT}/deploy/observability/compose.langfuse.yaml"
 readonly VERSIONS_PATH="${REPO_ROOT}/deploy/observability/versions.env"
 readonly TEMPO_PATH="${REPO_ROOT}/deploy/observability/tempo/tempo.yaml"
 readonly PROMETHEUS_PATH="${REPO_ROOT}/deploy/observability/prometheus/prometheus.yaml"
 readonly DATASOURCES_PATH="${REPO_ROOT}/deploy/observability/grafana/provisioning/datasources.yaml"
 
 [[ -f "${COMPOSE_PATH}" ]] || { printf '%s: missing_grafana_compose\n' "${COMPOSE_PATH}" >&2; exit 1; }
+[[ -f "${LANGFUSE_COMPOSE_PATH}" ]] || { printf '%s: missing_langfuse_compose\n' "${LANGFUSE_COMPOSE_PATH}" >&2; exit 1; }
 [[ -f "${TEMPO_PATH}" ]] || { printf '%s: missing_tempo_config\n' "${TEMPO_PATH}" >&2; exit 1; }
 [[ -f "${PROMETHEUS_PATH}" ]] || { printf '%s: missing_prometheus_config\n' "${PROMETHEUS_PATH}" >&2; exit 1; }
 [[ -f "${DATASOURCES_PATH}" ]] || { printf '%s: missing_grafana_datasources\n' "${DATASOURCES_PATH}" >&2; exit 1; }
 
 exec ruby -ropen3 -ryaml -e '
-repo_root, compose_path, versions_path, tempo_path, prometheus_path, datasources_path = ARGV.freeze
+repo_root, compose_path, langfuse_compose_path, versions_path, tempo_path, prometheus_path, datasources_path = ARGV.freeze
 
 def fail_check(message)
   warn "#{ARGV.fetch(1)}: #{message}"
@@ -116,11 +118,25 @@ def trusted_health_probe?(service, test)
 end
 
 compose = required_hash(yaml(compose_path), "invalid_compose")
+langfuse_compose = required_hash(yaml(langfuse_compose_path), "invalid_langfuse_compose")
 versions = parse_versions(versions_path)
-services = required_hash(compose["services"], "missing_compose_services")
-fail_check("custom_compose_network_forbidden") if compose.key?("networks") || services.values.any? { |service| service.key?("networks") }
+grafana_services = required_hash(compose["services"], "missing_compose_services")
+langfuse_services = required_hash(langfuse_compose["services"], "missing_langfuse_compose_services")
+services = grafana_services.merge(langfuse_services)
+fail_check("duplicate_split_service") unless services.length == grafana_services.length + langfuse_services.length
+fail_check("custom_compose_network_forbidden") if [compose, langfuse_compose].any? { |document| document.key?("networks") } || services.values.any? { |service| service.key?("networks") }
 required_services = %w[collector prometheus loki tempo grafana langfuse-web langfuse-worker langfuse-db langfuse-clickhouse langfuse-redis]
 fail_check("invalid_grafana_profile_services") unless services.keys.sort == required_services.sort
+fail_check("invalid_bootstrap_services") unless langfuse_services.keys.sort == %w[langfuse-clickhouse langfuse-db langfuse-redis langfuse-web langfuse-worker]
+fail_check("collector_leaked_into_bootstrap") if scalar_strings(langfuse_compose).any? { |value| value.include?("LANGFUSE_OTLP_AUTHORIZATION") || value.include?("LANGFUSE_OTEL_INGESTION_VERSION") }
+collector_environment = required_hash(grafana_services.fetch("collector")["environment"], "missing_collector_langfuse_configuration")
+{
+  "LANGFUSE_OTLP_AUTHORIZATION" => "LANGFUSE_OTLP_AUTHORIZATION",
+  "LANGFUSE_OTEL_INGESTION_VERSION" => "LANGFUSE_OTEL_INGESTION_VERSION"
+}.each do |key, variable|
+  value = collector_environment[key]
+  fail_check("missing_collector_langfuse_configuration") unless value.is_a?(String) && value.match?(/\A\$\{#{Regexp.escape(variable)}:\?[^}]+\}\z/)
+end
 budget = required_hash(compose["x-observability-budget"], "missing_observability_budget")
 fail_check("invalid_observability_budget") unless budget == {"cpus" => "8", "memory" => "12GiB", "volumes" => "20GiB"}
 
@@ -171,11 +187,11 @@ services.each do |name, service|
 end
 allowed_ports.each { |name, ports| fail_check("missing_loopback_port:#{name}") unless Array(services.fetch(name)["ports"]).map { |port| port.is_a?(Hash) ? port["target"] : nil }.sort == ports.sort }
 
-volumes = required_hash(compose["volumes"], "missing_observability_volumes")
+volumes = required_hash(compose["volumes"], "missing_observability_volumes").merge(required_hash(langfuse_compose["volumes"], "missing_langfuse_volumes"))
 required_volumes = %w[collector-data tempo-data loki-data prometheus-data grafana-data langfuse-postgres-data langfuse-clickhouse-data langfuse-redis-data]
 fail_check("invalid_observability_volumes") unless volumes.keys.sort == required_volumes.sort
 fail_check("external_or_overridden_volume") unless volumes.values.all? { |definition| definition == {} }
-fail_check("unsupported_compose_secret_or_config") if compose.key?("secrets") || compose.key?("configs") || services.values.any? { |service| service.key?("secrets") || service.key?("configs") }
+fail_check("unsupported_compose_secret_or_config") if [compose, langfuse_compose].any? { |document| document.key?("secrets") || document.key?("configs") } || services.values.any? { |service| service.key?("secrets") || service.key?("configs") }
 
 state_volume_mounts = {
   "collector" => ["collector-data", "/var/lib/otelcol/storage"], "tempo" => ["tempo-data", "/var/tempo"], "loki" => ["loki-data", "/loki"],
@@ -238,23 +254,28 @@ end
 fail_check("invalid_datasource_uid") unless actual_datasources == expected_datasources
 
 makefile = File.join(repo_root, "Makefile")
+makefile_text = File.read(makefile)
 up_recipe = target_recipe(makefile, "obs-grafana-up").join("\n")
 down_recipe = target_recipe(makefile, "obs-grafana-down").join("\n")
 health_recipe = target_recipe(makefile, "obs-stack-health").join("\n")
 infra_recipe = target_recipe(makefile, "obs-infra-smoke").join("\n")
 e2e_recipe = target_recipe(makefile, "obs-grafana-e2e").join("\n")
-compose_command = "docker compose --env-file deploy/observability/versions.env -f deploy/observability/compose.grafana.yaml"
-fail_check("invalid_grafana_up_target") unless up_recipe.include?(compose_command) && up_recipe.include?("up -d")
+bootstrap_recipe = target_recipe(makefile, "obs-langfuse-bootstrap-up").join("\n")
+langfuse_compose_definition = "OBS_LANGFUSE_COMPOSE = docker compose --project-name $(OBSERVABILITY_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml"
+fail_check("invalid_langfuse_compose_definition") unless makefile_text.include?(langfuse_compose_definition)
+fail_check("invalid_grafana_compose_definition") unless makefile_text.include?("OBS_GRAFANA_COMPOSE = OBSERVABILITY_LOG_GID=\"$$(id -g)\" $(OBS_LANGFUSE_COMPOSE) -f deploy/observability/compose.grafana.yaml")
+fail_check("invalid_grafana_up_target") unless up_recipe.include?("$(OBS_GRAFANA_COMPOSE) up -d")
+fail_check("invalid_langfuse_bootstrap_target") unless bootstrap_recipe.include?("$(OBS_LANGFUSE_COMPOSE) up -d --wait --wait-timeout 180 langfuse-web langfuse-worker") && !bootstrap_recipe.include?("compose.grafana.yaml") && !bootstrap_recipe.match?(/LANGFUSE_OTLP_AUTHORIZATION|LANGFUSE_OTEL_INGESTION_VERSION/)
 fail_check("missing_local_log_symlink_guard") unless up_recipe.include?("-L") && up_recipe.include?("resource/log/observability")
 collector_user = services.fetch("collector")["user"]
 fail_check("missing_local_log_group") unless collector_user == "10001:${OBSERVABILITY_LOG_GID:?set OBSERVABILITY_LOG_GID}"
-fail_check("invalid_grafana_down_target") unless down_recipe.include?(compose_command) && down_recipe.match?(/\bdown\b/) && !down_recipe.match?(/(?:^|\s)-v(?:\s|$)/)
-fail_check("invalid_stack_health_target") unless health_recipe.include?(compose_command) && health_recipe.match?(/\bps\b/)
+fail_check("invalid_grafana_down_target") unless down_recipe.include?("$(OBS_GRAFANA_COMPOSE) down") && !down_recipe.match?(/(?:^|\s)-v(?:\s|$)/)
+fail_check("invalid_stack_health_target") unless health_recipe.include?("$(OBS_GRAFANA_COMPOSE) ps")
 fail_check("invalid_infra_smoke_target") unless infra_recipe.include?("obs-smoke") && infra_recipe.include?("infra")
 fail_check("invalid_grafana_e2e_target") unless e2e_recipe.include?("obs-infra-smoke") && !e2e_recipe.match?(/\A(?:.*\bps\b.*)\z/m)
 
 secret_markers = /authorization|api.?key|secret|password|token/i
-[compose, datasources].each do |document|
+[compose, langfuse_compose, datasources].each do |document|
   sensitive_values(document).each do |path, value|
     next unless path.match?(secret_markers)
     # Compose 的 `:?` 形式让缺少凭据在容器创建前失败；仍只允许提交变量名，
@@ -263,7 +284,7 @@ secret_markers = /authorization|api.?key|secret|password|token/i
   end
 end
 fail_check("unsafe_environment_syntax") if services.values.any? { |service| service.key?("environment") && !service["environment"].is_a?(Hash) }
-fail_check("credential_bearing_uri_in_profile") if scalar_strings([compose, datasources]).any? { |value| value.match?(%r{[a-z]+://[^/\s:@]+:[^/\s@]+@}i) }
+fail_check("credential_bearing_uri_in_profile") if scalar_strings([compose, langfuse_compose, datasources]).any? { |value| value.match?(%r{[a-z]+://[^/\s:@]+:[^/\s@]+@}i) }
 fail_check("credential_in_healthcheck") if services.values.any? { |service| scalar_strings(service["healthcheck"]).any? { |value| value.match?(secret_markers) } }
 puts "compose_grafana_test: pass"
-' "${REPO_ROOT}" "${COMPOSE_PATH}" "${VERSIONS_PATH}" "${TEMPO_PATH}" "${PROMETHEUS_PATH}" "${DATASOURCES_PATH}"
+' "${REPO_ROOT}" "${COMPOSE_PATH}" "${LANGFUSE_COMPOSE_PATH}" "${VERSIONS_PATH}" "${TEMPO_PATH}" "${PROMETHEUS_PATH}" "${DATASOURCES_PATH}"

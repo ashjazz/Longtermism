@@ -52,6 +52,18 @@ EOF
   sed -i.bak "s|__STORAGE_SOURCE__|${fixture_root}/storage|" "${fixture_root}/deploy/observability/compose.grafana.yaml"
   rm -f "${fixture_root}/deploy/observability/compose.grafana.yaml.bak"
   cp "${fixture_root}/deploy/observability/compose.grafana.yaml" "${fixture_root}/deploy/observability/compose.signoz.yaml"
+  cat >"${fixture_root}/deploy/observability/compose.langfuse.yaml" <<'EOF'
+services:
+  langfuse-web:
+    image: ${OTELCOL_CONTRIB_IMAGE}
+    healthcheck:
+      test: ["CMD", "true"]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+EOF
 
   cat >"${fixture_root}/manifest/config/config.yaml" <<'EOF'
 observability:

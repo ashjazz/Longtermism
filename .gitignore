@@ -25,6 +25,7 @@ Thumbs.db
 .env.*
 .env.local
 !.env.example
+!deploy/observability/.env.local.example
 *.local.yaml
 
 # 真实观测 smoke 的本地低敏报告与运行时元数据（不得作为配置或证据源提交）

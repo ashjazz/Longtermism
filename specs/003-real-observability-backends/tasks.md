@@ -127,6 +127,7 @@
 - [X] T065 [US1] 在 `cmd/obs-smoke/main.go` 增加仅负责依赖装配的 `infra` scenario 命令入口；质量门控：使 T064E/T065D GREEN，行为委托给 T048 已测试 runner，缺配置时 fail-fast、报告写入 ignored 目录、退出码与 report status 一致，运行 `go test ./cmd/obs-smoke` 与 `go build ./cmd/obs-smoke`，stdout 不打印 credential/raw data。
 - [X] T064 [US1] 汇合 T064A–T064E 与 T065A–T065D 的 infra smoke 闭环；质量门控：T048、T064A、T064B、T064E 与 T065D 全部 GREEN，runner 只消费 adapter 的低敏 evidence、所有失败都有 schema-valid report，随后才允许开发 T066。
 - [X] T066 [US1] 在 `Makefile` 增加 `obs-grafana-up/down`、`obs-stack-health`、`obs-infra-smoke`、`obs-grafana-e2e`；质量门控：满足 T044 的 Make wiring 先行断言，up/down 幂等，E2E 不接受仅 healthy 为通过，失败时仍执行 cleanup 并保留低敏报告。
+- [X] T066A [US1] 在 `deploy/observability/compose.langfuse.yaml`、`Makefile` 与部署运行手册拆分首次 Langfuse cold bootstrap 和常规 Grafana warm start；质量门控：bootstrap 不解析 Collector project-key 变量，创建项目 key 后 warm start 仍对这两个变量 fail-fast，两个路径复用显式 Compose project 与 Langfuse named volumes，且本地配置模板不含凭据。
 - [ ] T067 [US1] 在 `specs/003-real-observability-backends/checklists/grafana-infra.md` 编写主线基础设施验收清单；质量门控：本阶段只关闭 SC-001，SC-006 告警项明确标记为“已 provision、待 US3 firing/resolved 验证”，所有通过结论都要求机器可读证据，不以手工 UI 截图单独通过。
 
 ## Phase 4：User Story 2 - 追溯一次真实 AI 对话（P1）

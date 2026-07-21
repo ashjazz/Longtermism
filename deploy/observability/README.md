@@ -20,7 +20,9 @@ Langfuse 始终是 AI 语义平面：它接收带 AI marker 的 trace 投影，�
 | 路径 | 责任 | 当前状态 | 对应任务 |
 | --- | --- | --- | --- |
 | `versions.env` | 唯一可读镜像 tag 矩阵 | 已实现；未有 E2E digest | T003 |
-| `compose.grafana.yaml` | Grafana 主线 Compose profile | 已实现；真实运行仍需显式注入 Langfuse 配置 | T056 |
+| `compose.langfuse.yaml` | Langfuse 自托管与首次 cold bootstrap | 已实现；仅含 Langfuse 及其持久依赖，不解析 Collector project key | T066A |
+| `compose.grafana.yaml` | Grafana 主线的 Collector/三信号/Grafana profile | 已实现；与 Langfuse Compose 组合后构成 warm-start 主线 | T056、T066A |
+| `.env.local.example` | 无凭据本地运行配置模板 | 已实现；复制出的 `.env.local` 被忽略 | T066A |
 | `collector/collector-grafana.yaml` | Grafana 主线 Collector ingress/fan-out | 已实现 | T054 |
 | `grafana/` | datasource、dashboard、alert provisioning | 已实现 | T059-T062 |
 | `compose.signoz.yaml` | SigNoz 备选 Compose profile | 计划契约，尚未创建 | T141 |
@@ -41,10 +43,46 @@ Langfuse 始终是 AI 语义平面：它接收带 AI marker 的 trace 投影，�
 
 ## Grafana profile 的本地前置条件
 
-`make obs-grafana-up` 会在 180 秒内等待 profile healthcheck 完成。运行前必须在当前
-shell 或被忽略的本地环境文件中提供 Langfuse 运行配置、`GRAFANA_ADMIN_USER`、
-`GRAFANA_ADMIN_PASSWORD` 和 Collector 写入 Langfuse 所需的两个 OTLP 变量；Compose
-会在任一项缺失时 fail-fast，仓库不提供默认管理员密码。
+首次启动和后续启动刻意分为两条命令，不能靠 Compose service selection 绕开变量插值：
+完整 profile 会在创建 Collector 前验证 Langfuse project key；而该 key 必须先在 Langfuse
+项目中创建。两条路径都使用固定的 `longtermism-observability` Compose project，因此共享
+同一组 Langfuse named volumes，绝不需要为拿到 key 而删除数据卷。
+
+先复制本地模板（它本身不含任何可用凭据）：
+
+```bash
+cp deploy/observability/.env.local.example deploy/observability/.env.local
+```
+
+填入 `LANGFUSE_*` 的自托管运行配置。`make` 在该文件存在时自动读取它；也可以继续只在
+当前 shell export 变量。不要提交 `.env.local`，不要把真实值填回 example。
+
+### 首次冷启动：先创建 Langfuse project key
+
+1. 只配置模板中 bootstrap 所需的 `LANGFUSE_POSTGRES_PASSWORD`、数据库/Redis/ClickHouse
+   connection string、`LANGFUSE_SALT`、`LANGFUSE_NEXTAUTH_SECRET` 和
+   `LANGFUSE_NEXTAUTH_URL`；此时不需要 Grafana 管理员信息或 Collector OTLP 变量。
+2. 执行 `make obs-langfuse-bootstrap-up`。它只启动 Langfuse web/worker 与它们依赖的
+   Postgres、ClickHouse、Redis，并等待健康检查完成。
+3. 打开 `http://127.0.0.1:3001`，完成自托管实例的首个用户/组织/项目初始化，并在该项目的
+   **Settings → API Keys** 创建 public/secret key 对。
+4. 在被忽略的 `.env.local`（或当前 shell）中填写 `GRAFANA_ADMIN_USER`、
+   `GRAFANA_ADMIN_PASSWORD`、`LANGFUSE_OTLP_AUTHORIZATION` 和
+   `LANGFUSE_OTEL_INGESTION_VERSION`，然后执行 `make obs-grafana-up`。
+
+`LANGFUSE_OTLP_AUTHORIZATION` 是 Collector 写入 header，格式为 `Basic <base64(public:secret)>`；
+它不是 Langfuse Web service 的启动配置。项目 key 后续轮换时，只更新本地值并重启 warm
+profile；不要通过 `down -v` 或重新 bootstrap 来轮换 key。
+
+如果首次初始化尚未进入 warm-start，可以用 `make obs-langfuse-bootstrap-down` 停止 bootstrap
+服务；完整 Grafana profile 已在运行时请只使用 `make obs-grafana-down`，避免留下仍依赖
+Langfuse 的 Collector/基础设施容器。
+
+### 非首次启动：常规 warm start
+
+项目 key 已存在且本地配置已齐全时，直接执行 `make obs-grafana-up`。它会组合
+`compose.langfuse.yaml` 和 `compose.grafana.yaml`，并在缺少任意 Collector OTLP 变量时
+fail-fast，避免用空 header 启动一个看似健康、实际丢失 AI 平面投递的 profile。
 
 应用运行在宿主机时，将其 OTLP endpoint 配置为 `127.0.0.1:4317`（或显式选择
 `127.0.0.1:4318` 的 HTTP/protobuf 变体）。Compose 只将这两个 Collector ingress
@@ -56,8 +94,8 @@ shell 或被忽略的本地环境文件中提供 Langfuse 运行配置、`GRAFAN
 `make obs-infra-smoke` 是一次**查询式验收**：它不会启动 Docker Compose，也不会启动应用。
 先完成下列顺序，再执行它：
 
-1. 在当前 shell 或被忽略的本地环境文件中准备上一节列出的 Compose 运行配置，然后执行
-   `make obs-grafana-up`。该 target 会先创建被忽略的
+1. 依照上面的冷启动或 warm-start 路径完成 `make obs-grafana-up`（首次创建 key 后也必须
+   执行这一步）。该 target 会先创建被忽略的
    `resource/log/observability`，将目录设为当前用户主组可读，并将同一 GID 传给非 root
    Collector；Collector 仅以只读 bind mount 读取该 JSONL 目录。应用必须由执行此命令的
    同一普通用户启动；不要用 `sudo` 启动应用，也不要将该目录替换为符号链接。
