@@ -89,6 +89,16 @@ func (a *GrafanaSmokeEvidenceAdapter) DecodePrometheusHTTPCount(result BackendQu
 	if err := result.Decode(&response); err != nil || response.Status != "success" || response.Data.ResultType != "vector" {
 		return SmokeCountEvidence{}, errMalformedSmokeEvidence
 	}
+	// infraHTTPCountQuery deliberately uses sum(...) after selecting the fixed route/method/status
+	// series. Prometheus therefore returns exactly one aggregate sample with an empty label map;
+	// it is safer than accepting extra labels and must not be decoded as an unaggregated series.
+	if len(response.Data.Result) == 1 && len(response.Data.Result[0].Metric) == 0 {
+		count, err := parsePrometheusSampleValue(response.Data.Result[0].Value)
+		if err != nil {
+			return SmokeCountEvidence{}, errMalformedSmokeEvidence
+		}
+		return SmokeCountEvidence{Count: count}, nil
+	}
 
 	var count *int64
 	for _, sample := range response.Data.Result {
