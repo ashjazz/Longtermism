@@ -165,6 +165,18 @@ func TestGrafanaSmokeEvidenceAdapterDecodesLowCardinalityCounts(t *testing.T) {
 	}
 }
 
+// The runner intentionally uses sum(...) so Prometheus returns one aggregate sample with no
+// labels. Treating that safe aggregate as a malformed raw series makes real smoke runs fail even
+// though the protected counter was observed.
+func TestDecodePrometheusHTTPCountAcceptsSingleAggregatedSample(t *testing.T) {
+	adapter := NewGrafanaSmokeEvidenceAdapter(nil)
+	result := backendQueryResultForTest(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1784608032,"42"]}]}}`)
+	evidence, err := adapter.DecodePrometheusHTTPCount(result, SmokeHTTPCountSelector{Route: "/api/v1/observability/infra-smoke", Method: "GET", StatusClass: "2xx"})
+	if err != nil || evidence.Count != 42 {
+		t.Fatalf("DecodePrometheusHTTPCount() = (%#v, %v), want aggregate count 42", evidence, err)
+	}
+}
+
 func TestGrafanaSmokeEvidenceAdapterRejectsMalformedMarkerDocuments(t *testing.T) {
 	target := smoke.PollMarkerTarget{Marker: "infra-t064c-marker", StartedAt: time.Now().UTC(), Deadline: time.Now().UTC().Add(time.Minute)}
 	tests := []struct {
