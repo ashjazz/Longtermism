@@ -137,6 +137,11 @@ collector_environment = required_hash(grafana_services.fetch("collector")["envir
   value = collector_environment[key]
   fail_check("missing_collector_langfuse_configuration") unless value.is_a?(String) && value.match?(/\A\$\{#{Regexp.escape(variable)}:\?[^}]+\}\z/)
 end
+%w[langfuse-web langfuse-worker].each do |service_name|
+  environment = required_hash(langfuse_services.fetch(service_name)["environment"], "missing_langfuse_encryption_key")
+  value = environment["ENCRYPTION_KEY"]
+  fail_check("missing_langfuse_encryption_key") unless value.is_a?(String) && value.match?(/\A\$\{LANGFUSE_ENCRYPTION_KEY:\?[^}]+\}\z/)
+end
 budget = required_hash(compose["x-observability-budget"], "missing_observability_budget")
 fail_check("invalid_observability_budget") unless budget == {"cpus" => "8", "memory" => "12GiB", "volumes" => "20GiB"}
 

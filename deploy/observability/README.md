@@ -60,8 +60,11 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
 ### 首次冷启动：先创建 Langfuse project key
 
 1. 只配置模板中 bootstrap 所需的 `LANGFUSE_POSTGRES_PASSWORD`、数据库/Redis/ClickHouse
-   connection string、`LANGFUSE_SALT`、`LANGFUSE_NEXTAUTH_SECRET` 和
+   connection string、`LANGFUSE_SALT`、`LANGFUSE_ENCRYPTION_KEY`、`LANGFUSE_NEXTAUTH_SECRET` 和
    `LANGFUSE_NEXTAUTH_URL`；此时不需要 Grafana 管理员信息或 Collector OTLP 变量。
+
+   `LANGFUSE_ENCRYPTION_KEY` 必须用 `openssl rand -hex 32` 生成一次并长期保留；它同时注入
+   Langfuse web 与 worker，用于解密既有数据中的加密字段，不能在已有数据卷上随意更换。
 2. 执行 `make obs-langfuse-bootstrap-up`。它只启动 Langfuse web/worker 与它们依赖的
    Postgres、ClickHouse、Redis，并等待健康检查完成。
 3. 打开 `http://127.0.0.1:3001`，完成自托管实例的首个用户/组织/项目初始化，并在该项目的

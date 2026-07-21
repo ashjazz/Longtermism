@@ -55,7 +55,7 @@ test_langfuse_bootstrap_starts_only_the_langfuse_profile() {
   setup_fake_tools "${temporary}"
 
   set +e
-  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make obs-langfuse-bootstrap-up 2>&1)"
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-langfuse-bootstrap-up 2>&1)"
   status=$?
   set -e
   [[ "${status}" -eq 0 ]] || { printf 'bootstrap failed\n%s\n' "${output}" >&2; exit 1; }
@@ -93,7 +93,7 @@ test_e2e_success_and_idempotent_lifecycle() {
   mkdir -p "${temporary}/reports"
 
   set +e
-  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make obs-grafana-e2e 2>&1)"
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-e2e 2>&1)"
   status=$?
   set -e
   [[ "${status}" -eq 0 ]] || { printf 'e2e success path failed\n%s\n' "${output}" >&2; exit 1; }
@@ -105,9 +105,9 @@ test_e2e_success_and_idempotent_lifecycle() {
   [[ "${output}" != *"down -v"* ]] || { printf 'e2e output used destructive volume cleanup\n' >&2; exit 1; }
 
   : >"${log}"
-  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make obs-grafana-up)
-  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make obs-grafana-up)
-  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make obs-grafana-down)
+  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-up)
+  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-up)
+  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-down)
   local lifecycle
   lifecycle="$(cat "${log}")"
   [[ "$(printf '%s\n' "${lifecycle}" | grep -c ' up -d --wait --wait-timeout 180$')" == "2" ]] || { printf 'up target was not repeatable\n%s\n' "${lifecycle}" >&2; exit 1; }
@@ -126,7 +126,7 @@ test_e2e_failure_still_cleans_up_and_preserves_reports() {
   printf '{}\n' >"${report}"
 
   set +e
-  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" FAKE_GO_EXIT=1 make obs-grafana-e2e 2>&1)"
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" FAKE_GO_EXIT=1 make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-e2e 2>&1)"
   status=$?
   set -e
   [[ "${status}" -ne 0 ]] || { printf 'e2e succeeded despite smoke failure\n' >&2; exit 1; }
