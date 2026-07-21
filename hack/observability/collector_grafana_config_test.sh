@@ -96,6 +96,7 @@ processors = section(config, "processors")
 connectors = section(config, "connectors")
 exporters = section(config, "exporters")
 require_keys(receivers, %w[otlp filelog/glog], "missing_required_receiver")
+fail_check("missing_filelog_append_polling") unless receivers.dig("filelog/glog", "poll_interval") == "200ms"
 require_keys(connectors, %w[forward/infra forward/ai], "missing_required_connector")
 require_keys(exporters, %w[otlp/tempo otlphttp/loki otlphttp/langfuse prometheus/app], "missing_stable_component")
 require_keys(extensions, %w[health_check file_storage/tempo file_storage/loki file_storage/langfuse], "missing_persistent_queue_storage")
