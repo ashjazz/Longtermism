@@ -111,8 +111,9 @@ def trusted_health_probe?(service, test)
     "langfuse-web" => ["curl --fail --silent --show-error http://127.0.0.1:3000/api/health"],
     "langfuse-worker" => ["node /app/worker-healthcheck.js"],
     "langfuse-db" => ["pg_isready -U langfuse -d langfuse"],
-    "langfuse-clickhouse" => ["clickhouse-client --query \"SELECT 1\""],
-    "langfuse-redis" => ["redis-cli ping"]
+    "langfuse-clickhouse" => ["wget --spider --no-verbose http://127.0.0.1:8123/ping"],
+    "langfuse-redis" => ["redis-cli ping"],
+    "langfuse-minio" => ["mc ready local"]
   }
   allowed.fetch(service).include?(command)
 end
@@ -125,9 +126,9 @@ langfuse_services = required_hash(langfuse_compose["services"], "missing_langfus
 services = grafana_services.merge(langfuse_services)
 fail_check("duplicate_split_service") unless services.length == grafana_services.length + langfuse_services.length
 fail_check("custom_compose_network_forbidden") if [compose, langfuse_compose].any? { |document| document.key?("networks") } || services.values.any? { |service| service.key?("networks") }
-required_services = %w[collector prometheus loki tempo grafana langfuse-web langfuse-worker langfuse-db langfuse-clickhouse langfuse-redis]
+required_services = %w[collector prometheus loki tempo grafana langfuse-web langfuse-worker langfuse-db langfuse-clickhouse langfuse-clickhouse-init langfuse-redis langfuse-minio langfuse-minio-init]
 fail_check("invalid_grafana_profile_services") unless services.keys.sort == required_services.sort
-fail_check("invalid_bootstrap_services") unless langfuse_services.keys.sort == %w[langfuse-clickhouse langfuse-db langfuse-redis langfuse-web langfuse-worker]
+fail_check("invalid_bootstrap_services") unless langfuse_services.keys.sort == %w[langfuse-clickhouse langfuse-clickhouse-init langfuse-db langfuse-minio langfuse-minio-init langfuse-redis langfuse-web langfuse-worker]
 fail_check("collector_leaked_into_bootstrap") if scalar_strings(langfuse_compose).any? { |value| value.include?("LANGFUSE_OTLP_AUTHORIZATION") || value.include?("LANGFUSE_OTEL_INGESTION_VERSION") }
 collector_environment = required_hash(grafana_services.fetch("collector")["environment"], "missing_collector_langfuse_configuration")
 {
@@ -141,13 +142,26 @@ end
   environment = required_hash(langfuse_services.fetch(service_name)["environment"], "missing_langfuse_encryption_key")
   value = environment["ENCRYPTION_KEY"]
   fail_check("missing_langfuse_encryption_key") unless value.is_a?(String) && value.match?(/\A\$\{LANGFUSE_ENCRYPTION_KEY:\?[^}]+\}\z/)
+  {
+    "CLICKHOUSE_USER" => "LANGFUSE_CLICKHOUSE_USER",
+    "CLICKHOUSE_PASSWORD" => "LANGFUSE_CLICKHOUSE_PASSWORD",
+    "LANGFUSE_S3_EVENT_UPLOAD_BUCKET" => "LANGFUSE_S3_EVENT_UPLOAD_BUCKET",
+    "LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID" => "LANGFUSE_MINIO_ACCESS_KEY_ID",
+    "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY" => "LANGFUSE_MINIO_SECRET_ACCESS_KEY"
+  }.each do |key, variable|
+    value = environment[key]
+    fail_check("missing_langfuse_storage_configuration:#{service_name}:#{key}") unless value.is_a?(String) && value.match?(/\A\$\{#{Regexp.escape(variable)}:\?[^}]+\}\z/)
+  end
+  fail_check("invalid_langfuse_clickhouse_cluster_mode:#{service_name}") unless environment["CLICKHOUSE_CLUSTER_ENABLED"] == "false"
+  fail_check("invalid_langfuse_s3_endpoint:#{service_name}") unless environment["LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT"] == "http://langfuse-minio:9000"
+  fail_check("invalid_langfuse_s3_path_style:#{service_name}") unless environment["LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE"] == "true"
 end
 budget = required_hash(compose["x-observability-budget"], "missing_observability_budget")
 fail_check("invalid_observability_budget") unless budget == {"cpus" => "8", "memory" => "12GiB", "volumes" => "20GiB"}
 
 image_variables = {
   "collector" => "OTELCOL_CONTRIB_IMAGE", "prometheus" => "PROMETHEUS_IMAGE", "loki" => "LOKI_IMAGE", "tempo" => "TEMPO_IMAGE", "grafana" => "GRAFANA_IMAGE",
-  "langfuse-web" => "LANGFUSE_IMAGE", "langfuse-worker" => "LANGFUSE_WORKER_IMAGE", "langfuse-db" => "LANGFUSE_POSTGRES_IMAGE", "langfuse-clickhouse" => "LANGFUSE_CLICKHOUSE_IMAGE", "langfuse-redis" => "LANGFUSE_REDIS_IMAGE"
+  "langfuse-web" => "LANGFUSE_IMAGE", "langfuse-worker" => "LANGFUSE_WORKER_IMAGE", "langfuse-db" => "LANGFUSE_POSTGRES_IMAGE", "langfuse-clickhouse" => "LANGFUSE_CLICKHOUSE_IMAGE", "langfuse-redis" => "LANGFUSE_REDIS_IMAGE", "langfuse-minio" => "LANGFUSE_MINIO_IMAGE"
 }
 image_variables.each do |service_name, variable|
   service = required_hash(services[service_name], "invalid_service:#{service_name}")
@@ -160,6 +174,22 @@ image_variables.each do |service_name, variable|
 end
 
 image_variables.keys.each { |service_name| fail_check("untrusted_healthcheck:#{service_name}") unless trusted_health_probe?(service_name, services.fetch(service_name).dig("healthcheck", "test")) }
+{
+  "langfuse-minio-init" => "LANGFUSE_MINIO_MC_IMAGE",
+  "langfuse-clickhouse-init" => "LANGFUSE_CLICKHOUSE_IMAGE"
+}.each do |service_name, variable|
+  initializer = required_hash(services.fetch(service_name), "invalid_service:#{service_name}")
+  fail_check("invalid_initializer_image:#{service_name}") unless initializer["image"] == "${#{variable}}" && versions.fetch(variable, "").include?(":") && !versions.fetch(variable, "").include?(":latest")
+  fail_check("invalid_initializer_restart:#{service_name}") unless initializer["restart"] == "no"
+  fail_check("unexpected_initializer_healthcheck:#{service_name}") if initializer.key?("healthcheck")
+end
+clickhouse_init_command = Array(services.fetch("langfuse-clickhouse-init")["entrypoint"]).last
+fail_check("missing_clickhouse_password_syntax_guard") unless clickhouse_init_command.is_a?(String) && clickhouse_init_command.include?("*[!0-9a-f]*") && clickhouse_init_command.include?("-eq 64") && clickhouse_init_command.include?("--host langfuse-clickhouse") && clickhouse_init_command.include?("--user langfuse-admin")
+fail_check("missing_clickhouse_migration_grant") unless clickhouse_init_command.include?("GRANT ALL ON default.* TO langfuse")
+clickhouse_environment = required_hash(langfuse_services.fetch("langfuse-clickhouse")["environment"], "missing_clickhouse_bootstrap_admin")
+fail_check("missing_clickhouse_bootstrap_admin") unless clickhouse_environment["CLICKHOUSE_USER"] == "langfuse-admin" && clickhouse_environment["CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT"] == "1" && clickhouse_environment["CLICKHOUSE_PASSWORD"].is_a?(String) && clickhouse_environment["CLICKHOUSE_PASSWORD"].match?(/\A\$\{LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD:\?[^}]+\}\z/)
+minio_init_command = Array(services.fetch("langfuse-minio-init")["entrypoint"]).last
+fail_check("missing_minio_least_privilege_identity") unless minio_init_command.is_a?(String) && minio_init_command.include?("mc admin user add") && minio_init_command.include?("langfuse-events")
 
 # Grafana UI 即使只绑定 loopback，也不能依赖公开已知的默认 admin/admin。
 # 这两个值必须由运行环境提供，profile 中只保留变量名与 fail-fast 语义。
@@ -193,7 +223,7 @@ end
 allowed_ports.each { |name, ports| fail_check("missing_loopback_port:#{name}") unless Array(services.fetch(name)["ports"]).map { |port| port.is_a?(Hash) ? port["target"] : nil }.sort == ports.sort }
 
 volumes = required_hash(compose["volumes"], "missing_observability_volumes").merge(required_hash(langfuse_compose["volumes"], "missing_langfuse_volumes"))
-required_volumes = %w[collector-data tempo-data loki-data prometheus-data grafana-data langfuse-postgres-data langfuse-clickhouse-data langfuse-redis-data]
+required_volumes = %w[collector-data tempo-data loki-data prometheus-data grafana-data langfuse-postgres-data langfuse-clickhouse-data langfuse-redis-data langfuse-minio-data]
 fail_check("invalid_observability_volumes") unless volumes.keys.sort == required_volumes.sort
 fail_check("external_or_overridden_volume") unless volumes.values.all? { |definition| definition == {} }
 fail_check("unsupported_compose_secret_or_config") if [compose, langfuse_compose].any? { |document| document.key?("secrets") || document.key?("configs") } || services.values.any? { |service| service.key?("secrets") || service.key?("configs") }
@@ -201,7 +231,7 @@ fail_check("unsupported_compose_secret_or_config") if [compose, langfuse_compose
 state_volume_mounts = {
   "collector" => ["collector-data", "/var/lib/otelcol/storage"], "tempo" => ["tempo-data", "/var/tempo"], "loki" => ["loki-data", "/loki"],
   "prometheus" => ["prometheus-data", "/prometheus"], "grafana" => ["grafana-data", "/var/lib/grafana"], "langfuse-db" => ["langfuse-postgres-data", "/var/lib/postgresql/data"],
-  "langfuse-clickhouse" => ["langfuse-clickhouse-data", "/var/lib/clickhouse"], "langfuse-redis" => ["langfuse-redis-data", "/data"]
+  "langfuse-clickhouse" => ["langfuse-clickhouse-data", "/var/lib/clickhouse"], "langfuse-redis" => ["langfuse-redis-data", "/data"], "langfuse-minio" => ["langfuse-minio-data", "/data"]
 }
 state_volume_mounts.each do |service_name, (source, target)|
   mounts = Array(services.fetch(service_name)["volumes"])
@@ -245,6 +275,10 @@ end
 %w[langfuse-db langfuse-clickhouse langfuse-redis].each do |dependency|
   fail_check("missing_langfuse_dependency:#{dependency}") unless dependency_names(services.fetch("langfuse-web")["depends_on"]).include?(dependency) && dependency_names(services.fetch("langfuse-worker")["depends_on"]).include?(dependency)
   fail_check("unhealthy_langfuse_dependency:#{dependency}") unless services.fetch("langfuse-web").dig("depends_on", dependency, "condition") == "service_healthy" && services.fetch("langfuse-worker").dig("depends_on", dependency, "condition") == "service_healthy"
+end
+%w[langfuse-web langfuse-worker].each do |service_name|
+  fail_check("missing_minio_bucket_initialization:#{service_name}") unless services.fetch(service_name).dig("depends_on", "langfuse-minio-init", "condition") == "service_completed_successfully"
+  fail_check("missing_clickhouse_identity_initialization:#{service_name}") unless services.fetch(service_name).dig("depends_on", "langfuse-clickhouse-init", "condition") == "service_completed_successfully"
 end
 
 tempo = required_hash(yaml(tempo_path), "invalid_tempo_config")

@@ -129,6 +129,8 @@
 - [X] T066 [US1] 在 `Makefile` 增加 `obs-grafana-up/down`、`obs-stack-health`、`obs-infra-smoke`、`obs-grafana-e2e`；质量门控：满足 T044 的 Make wiring 先行断言，up/down 幂等，E2E 不接受仅 healthy 为通过，失败时仍执行 cleanup 并保留低敏报告。
 - [X] T066A [US1] 在 `deploy/observability/compose.langfuse.yaml`、`Makefile` 与部署运行手册拆分首次 Langfuse cold bootstrap 和常规 Grafana warm start；质量门控：bootstrap 不解析 Collector project-key 变量，创建项目 key 后 warm start 仍对这两个变量 fail-fast，两个路径复用显式 Compose project 与 Langfuse named volumes，且本地配置模板不含凭据。
 - [X] T066B [US1] 在 Langfuse self-hosted Compose 与本地环境模板补齐稳定的 `ENCRYPTION_KEY`；质量门控：web/worker 共享同一个 fail-fast 环境变量，模板只说明本地生成方式，文档禁止在既有数据卷上随意轮换该密钥。
+- [X] T066C [US1] 补齐 Langfuse v3 冷启动的 ClickHouse 身份与必需事件对象存储；质量门控：web/worker 显式配置 ClickHouse user/password、单节点 migration 模式与 MinIO S3 event upload，one-shot 初始化任务幂等建桶，MinIO 不发布宿主机端口，且不删除既有 Langfuse named volumes。
+- [X] T066D [US1] 兼容已存在的失败冷启动 ClickHouse 卷；质量门控：在 web/worker 启动前以幂等 one-shot task 创建并授权专用 `langfuse` 用户，避免把删除 named volume 作为修复手段。
 - [X] T067 [US1] 在 `specs/003-real-observability-backends/checklists/grafana-infra.md` 编写主线基础设施验收清单；质量门控：本阶段只关闭 SC-001，SC-006 告警项明确标记为“已 provision、待 US3 firing/resolved 验证”，所有通过结论都要求机器可读证据，不以手工 UI 截图单独通过。
 
 ## Phase 4：User Story 2 - 追溯一次真实 AI 对话（P1）

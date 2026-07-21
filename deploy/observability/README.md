@@ -20,7 +20,7 @@ Langfuse 始终是 AI 语义平面：它接收带 AI marker 的 trace 投影，�
 | 路径 | 责任 | 当前状态 | 对应任务 |
 | --- | --- | --- | --- |
 | `versions.env` | 唯一可读镜像 tag 矩阵 | 已实现；未有 E2E digest | T003 |
-| `compose.langfuse.yaml` | Langfuse 自托管与首次 cold bootstrap | 已实现；仅含 Langfuse 及其持久依赖，不解析 Collector project key | T066A |
+| `compose.langfuse.yaml` | Langfuse 自托管与首次 cold bootstrap | 已实现；含 Langfuse、ClickHouse、Redis、Postgres 与仅内部可见的 MinIO，不解析 Collector project key | T066A |
 | `compose.grafana.yaml` | Grafana 主线的 Collector/三信号/Grafana profile | 已实现；与 Langfuse Compose 组合后构成 warm-start 主线 | T056、T066A |
 | `.env.local.example` | 无凭据本地运行配置模板 | 已实现；复制出的 `.env.local` 被忽略 | T066A |
 | `collector/collector-grafana.yaml` | Grafana 主线 Collector ingress/fan-out | 已实现 | T054 |
@@ -60,13 +60,45 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
 ### 首次冷启动：先创建 Langfuse project key
 
 1. 只配置模板中 bootstrap 所需的 `LANGFUSE_POSTGRES_PASSWORD`、数据库/Redis/ClickHouse
-   connection string、`LANGFUSE_SALT`、`LANGFUSE_ENCRYPTION_KEY`、`LANGFUSE_NEXTAUTH_SECRET` 和
+   connection string、`LANGFUSE_CLICKHOUSE_USER`、`LANGFUSE_CLICKHOUSE_PASSWORD`、
+   `LANGFUSE_MINIO_ROOT_USER`、`LANGFUSE_MINIO_ROOT_PASSWORD`、`LANGFUSE_S3_EVENT_UPLOAD_BUCKET`、
+   `LANGFUSE_SALT`、`LANGFUSE_ENCRYPTION_KEY`、`LANGFUSE_NEXTAUTH_SECRET` 和
    `LANGFUSE_NEXTAUTH_URL`；此时不需要 Grafana 管理员信息或 Collector OTLP 变量。
+
+   本地 Compose 网络中请使用服务 DNS，而不是容器名称或宿主机端口。例如：
+
+   ```dotenv
+   LANGFUSE_DATABASE_URL=postgresql://langfuse:<LANGFUSE_POSTGRES_PASSWORD>@langfuse-db:5432/langfuse
+   LANGFUSE_DIRECT_URL=postgresql://langfuse:<LANGFUSE_POSTGRES_PASSWORD>@langfuse-db:5432/langfuse
+   LANGFUSE_REDIS_CONNECTION_STRING=redis://langfuse-redis:6379
+   LANGFUSE_CLICKHOUSE_URL=http://langfuse-clickhouse:8123
+   LANGFUSE_CLICKHOUSE_MIGRATION_URL=clickhouse://langfuse-clickhouse:9000
+   LANGFUSE_CLICKHOUSE_USER=langfuse
+   LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse
+   LANGFUSE_MINIO_ROOT_USER=langfuse
+   ```
+
+   `LANGFUSE_CLICKHOUSE_PASSWORD`、`LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD`、`LANGFUSE_MINIO_ROOT_USER`、`LANGFUSE_MINIO_ROOT_PASSWORD` 与
+   `LANGFUSE_MINIO_SECRET_ACCESS_KEY` 都是你本地生成的强随机值；其中 ClickHouse 密码必须用
+   `openssl rand -hex 32` 分别生成（64 位小写十六进制），其余值也应独立生成并长期保存。
+   `LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD` 只交给 ClickHouse 与初始化任务，Langfuse web/worker
+   只获得 `LANGFUSE_CLICKHOUSE_PASSWORD` 对应的 `default` 数据库账户。该账户需要完成 Langfuse
+   自身 schema migration，故在本地 profile 中拥有该数据库内的完整权限，不能用于项目外查询。
+   MinIO root
+   凭据只交给初始化任务；Langfuse web/worker 只使用独立的
+   `LANGFUSE_MINIO_ACCESS_KEY_ID`/`LANGFUSE_MINIO_SECRET_ACCESS_KEY`，其策略限制为该 bucket 的
+   `events/` 前缀。`langfuse-minio` 不发布宿主机端口，bootstrap 会通过
+   one-shot initializer 自动、幂等地创建 `LANGFUSE_S3_EVENT_UPLOAD_BUCKET`，无需手工打开
+   MinIO Console 或创建桶。另一个 one-shot initializer 会以同样的幂等方式创建/授权
+   `langfuse` ClickHouse 用户，因此即使先前失败的冷启动已留下 ClickHouse 数据卷，也不要
+   用 `down -v` 重置。MinIO 仍位于默认 Compose 网络，所以同一 profile 的其他容器在网络层
+   也可解析它的服务 DNS；本地配置依靠不发布端口和独立、最小权限账户收紧边界。持久卷保存原始
+   事件，敏感环境还必须依赖宿主机磁盘访问控制或加密。
 
    `LANGFUSE_ENCRYPTION_KEY` 必须用 `openssl rand -hex 32` 生成一次并长期保留；它同时注入
    Langfuse web 与 worker，用于解密既有数据中的加密字段，不能在已有数据卷上随意更换。
 2. 执行 `make obs-langfuse-bootstrap-up`。它只启动 Langfuse web/worker 与它们依赖的
-   Postgres、ClickHouse、Redis，并等待健康检查完成。
+   Postgres、ClickHouse、Redis、MinIO 及一次性建桶任务，并等待健康检查完成。
 3. 打开 `http://127.0.0.1:3001`，完成自托管实例的首个用户/组织/项目初始化，并在该项目的
    **Settings → API Keys** 创建 public/secret key 对。
 4. 在被忽略的 `.env.local`（或当前 shell）中填写 `GRAFANA_ADMIN_USER`、

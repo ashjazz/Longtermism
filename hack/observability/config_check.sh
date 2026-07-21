@@ -165,7 +165,14 @@ compose_paths.sort.each do |compose_path|
     image = resolve_image(service.fetch("image", "").to_s, values)
     fail_check(versions_path, "latest_image") if image.match?(/(^|:)latest(?:$|@)/)
     fail_check(compose_path, "unresolved_image_tag") if image.empty? || image.include?("${")
-    fail_check(compose_path, "missing_healthcheck") unless service["healthcheck"].is_a?(Hash)
+    # Bucket initialization is deliberately a one-shot dependency: treating it
+    # as a long-running healthy service would conceal a failed cold bootstrap.
+    is_one_shot_initializer = %w[langfuse-minio-init langfuse-clickhouse-init].include?(service_name)
+    if is_one_shot_initializer
+      fail_check(compose_path, "invalid_one_shot_initializer") unless service["restart"] == "no" && !service.key?("healthcheck")
+    else
+      fail_check(compose_path, "missing_healthcheck") unless service["healthcheck"].is_a?(Hash)
+    end
 
     limits = service.dig("deploy", "resources", "limits")
     unless limits.is_a?(Hash) && limits["cpus"] && limits["memory"]

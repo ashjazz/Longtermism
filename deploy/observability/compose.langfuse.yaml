@@ -24,12 +24,18 @@ services:
 
   langfuse-clickhouse:
     image: ${LANGFUSE_CLICKHOUSE_IMAGE}
+    environment:
+      # The upstream entrypoint recreates this network-reachable administrator on
+      # every start, including when an earlier failed bootstrap left data behind.
+      CLICKHOUSE_USER: langfuse-admin
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD:?set LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     volumes:
       - type: volume
         source: langfuse-clickhouse-data
         target: /var/lib/clickhouse
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --query \"SELECT 1\""]
+      test: ["CMD-SHELL", "wget --spider --no-verbose http://127.0.0.1:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -38,6 +44,33 @@ services:
         limits:
           cpus: "1.25"
           memory: 2GiB
+
+  # Environment variables create a user only when ClickHouse initializes an empty
+  # data directory. This idempotent task also repairs an interrupted first cold
+  # bootstrap that already left a ClickHouse named volume behind.
+  langfuse-clickhouse-init:
+    image: ${LANGFUSE_CLICKHOUSE_IMAGE}
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - >-
+        case "$${LANGFUSE_CLICKHOUSE_PASSWORD}" in ''|*[!0-9a-f]*) echo "LANGFUSE_CLICKHOUSE_PASSWORD must be 64 lowercase hexadecimal characters" >&2; exit 2;; esac;
+        test "$${#LANGFUSE_CLICKHOUSE_PASSWORD}" -eq 64 || { echo "LANGFUSE_CLICKHOUSE_PASSWORD must be 64 lowercase hexadecimal characters" >&2; exit 2; };
+        case "$${LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD}" in ''|*[!0-9a-f]*) echo "LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD must be 64 lowercase hexadecimal characters" >&2; exit 2;; esac;
+        test "$${#LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD}" -eq 64 || { echo "LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD must be 64 lowercase hexadecimal characters" >&2; exit 2; };
+        clickhouse-client --host langfuse-clickhouse --user langfuse-admin --password "$${LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD}" --multiquery --query "CREATE USER IF NOT EXISTS langfuse IDENTIFIED WITH sha256_password BY '$${LANGFUSE_CLICKHOUSE_PASSWORD}'; GRANT ALL ON default.* TO langfuse"
+    environment:
+      LANGFUSE_CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:?set LANGFUSE_CLICKHOUSE_PASSWORD}
+      LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD: ${LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD:?set LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD}
+    depends_on:
+      langfuse-clickhouse:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 128MiB
 
   langfuse-redis:
     image: ${LANGFUSE_REDIS_IMAGE}
@@ -56,6 +89,60 @@ services:
           cpus: "0.25"
           memory: 512MiB
 
+  # Langfuse v3 requires durable S3-compatible storage for raw events. This local
+  # profile keeps MinIO internal to Compose; only Langfuse services can reach it.
+  langfuse-minio:
+    image: ${LANGFUSE_MINIO_IMAGE}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:?set LANGFUSE_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:?set LANGFUSE_MINIO_ROOT_PASSWORD}
+    volumes:
+      - type: volume
+        source: langfuse-minio-data
+        target: /data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 512MiB
+
+  # Keep bucket creation idempotent and separate from the storage server. The
+  # one-shot container must complete before Langfuse starts so a cold profile
+  # cannot race its first event upload against bucket provisioning.
+  langfuse-minio-init:
+    image: ${LANGFUSE_MINIO_MC_IMAGE}
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - >-
+        mc alias set local http://langfuse-minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
+        mc mb --ignore-existing "local/$${LANGFUSE_S3_EVENT_UPLOAD_BUCKET}";
+        mc admin user add local "$${LANGFUSE_MINIO_ACCESS_KEY_ID}" "$${LANGFUSE_MINIO_SECRET_ACCESS_KEY}" || true;
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::'"$${LANGFUSE_S3_EVENT_UPLOAD_BUCKET}"'"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject"],"Resource":["arn:aws:s3:::'"$${LANGFUSE_S3_EVENT_UPLOAD_BUCKET}"'/events/*"]}]}' > /tmp/langfuse-events-policy.json;
+        mc admin policy create local langfuse-events /tmp/langfuse-events-policy.json || true;
+        mc admin policy attach local langfuse-events --user "$${LANGFUSE_MINIO_ACCESS_KEY_ID}"
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_ROOT_USER:?set LANGFUSE_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:?set LANGFUSE_MINIO_ROOT_PASSWORD}
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:?set LANGFUSE_S3_EVENT_UPLOAD_BUCKET}
+      LANGFUSE_MINIO_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ACCESS_KEY_ID:?set LANGFUSE_MINIO_ACCESS_KEY_ID}
+      LANGFUSE_MINIO_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_SECRET_ACCESS_KEY:?set LANGFUSE_MINIO_SECRET_ACCESS_KEY}
+    depends_on:
+      langfuse-minio:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 128MiB
+
   langfuse-web:
     image: ${LANGFUSE_IMAGE}
     environment:
@@ -71,14 +158,28 @@ services:
       REDIS_CONNECTION_STRING: ${LANGFUSE_REDIS_CONNECTION_STRING:?set LANGFUSE_REDIS_CONNECTION_STRING}
       CLICKHOUSE_URL: ${LANGFUSE_CLICKHOUSE_URL:?set LANGFUSE_CLICKHOUSE_URL}
       CLICKHOUSE_MIGRATION_URL: ${LANGFUSE_CLICKHOUSE_MIGRATION_URL:?set LANGFUSE_CLICKHOUSE_MIGRATION_URL}
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:?set LANGFUSE_CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:?set LANGFUSE_CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:?set LANGFUSE_S3_EVENT_UPLOAD_BUCKET}
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ACCESS_KEY_ID:?set LANGFUSE_MINIO_ACCESS_KEY_ID}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_SECRET_ACCESS_KEY:?set LANGFUSE_MINIO_SECRET_ACCESS_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
     depends_on:
       langfuse-db:
         condition: service_healthy
       langfuse-clickhouse:
         condition: service_healthy
+      langfuse-clickhouse-init:
+        condition: service_completed_successfully
       langfuse-redis:
         condition: service_healthy
+      langfuse-minio-init:
+        condition: service_completed_successfully
     ports:
       - host_ip: 127.0.0.1
         target: 3000
@@ -105,13 +206,27 @@ services:
       REDIS_CONNECTION_STRING: ${LANGFUSE_REDIS_CONNECTION_STRING:?set LANGFUSE_REDIS_CONNECTION_STRING}
       CLICKHOUSE_URL: ${LANGFUSE_CLICKHOUSE_URL:?set LANGFUSE_CLICKHOUSE_URL}
       CLICKHOUSE_MIGRATION_URL: ${LANGFUSE_CLICKHOUSE_MIGRATION_URL:?set LANGFUSE_CLICKHOUSE_MIGRATION_URL}
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:?set LANGFUSE_CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:?set LANGFUSE_CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:?set LANGFUSE_S3_EVENT_UPLOAD_BUCKET}
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ACCESS_KEY_ID:?set LANGFUSE_MINIO_ACCESS_KEY_ID}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_SECRET_ACCESS_KEY:?set LANGFUSE_MINIO_SECRET_ACCESS_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
     depends_on:
       langfuse-db:
         condition: service_healthy
       langfuse-clickhouse:
         condition: service_healthy
+      langfuse-clickhouse-init:
+        condition: service_completed_successfully
       langfuse-redis:
         condition: service_healthy
+      langfuse-minio-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "node /app/worker-healthcheck.js"]
       interval: 10s
@@ -127,3 +242,4 @@ volumes:
   langfuse-postgres-data: {}
   langfuse-clickhouse-data: {}
   langfuse-redis-data: {}
+  langfuse-minio-data: {}
