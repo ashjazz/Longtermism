@@ -294,6 +294,25 @@
 - [ ] T168 在 `docs/ROADMAP.md` 与 `README.md` 更新 003 实施状态和验证入口；质量门控：区分 generated/planned/in-progress/verified，保留 002 学习资产历史归属，不提前宣告 SigNoz 或真实后端完成。
 - [ ] T169 执行最终质量与安全审查并把低敏结果写入 `specs/003-real-observability-backends/checklists/final-verification.md`；质量门控：至少运行 `git diff --check`、`make verify`、`go test -race ./...`、覆盖率门禁、secret scan、`make obs-config-check`，有真实配置时再运行 Grafana/resilience/SigNoz gates，任何未运行项必须写明原因和剩余风险。
 
+## Phase 3A：US1 本地日志出口去 bind-mount 化（P1，插入真实后端验收前）
+
+**用户故事目标**：本机运行的应用以 OTLP logs 将受控 completion 事实发送给 Collector，使 Loki 证据不依赖 Docker Desktop 对宿主机 JSONL bind mount 的可见性；JSONL 仅可作为本地诊断工件，不能再成为验收数据路径。
+
+**独立验收标准**：应用、Collector、Loki 均已启动时，触发唯一 smoke marker 后，Loki 在同一 bounded window 内查询到该 marker；停止或删除宿主机 JSONL bind mount 不改变此结论；raw body、request/trace identity 不成为 Loki index label。
+
+### Tests - RED
+
+- [ ] T170 [P] [US1] 在 `internal/observability/http_logging_test.go` 与 `internal/observability/logging_test.go` 编写 completion log → OTLP log record 映射 RED 契约；质量门控：仅允许现有低敏 allowlist、保留 `smoke_run_id` 作为 structured metadata、拒绝 raw payload/credential，发送失败不得改变 HTTP 响应。
+- [ ] T171 [P] [US1] 在 `deploy/observability/collector/collector-grafana.yaml`、`hack/observability/collector_grafana_config_test.sh` 与 `hack/observability/compose_grafana_test.sh` 编写 OTLP logs pipeline RED 配置断言；质量门控：logs 只由 OTLP receiver 接收，Loki exporter 保留 queue/retry/redaction，移除应用 JSONL bind mount/filelog 依赖，Collector self-telemetry 可由 Prometheus 查询。
+- [ ] T172 [P] [US1] 在 `internal/observability/backend/grafana_smoke_adapter_test.go` 与 `internal/observability/smoke/infra_runner_test.go` 增加真实 Tempo search response、可恢复查询失败重试、OTLP-log Loki marker 的 RED 契约；质量门控：Tempo/Loki 任一短暂查询错误只在 deadline 耗尽后失败，且不会将 raw response 写入 report。
+
+### Implementation - GREEN/REFACTOR
+
+- [ ] T173 [US1] 在 `internal/observability/http_logging.go`、`internal/cmd/cmd.go` 与 `internal/logic/observability/infra_smoke.go` 实现受控 completion OTLP log emitter 的 composition-root 装配；质量门控：使 T170 GREEN，应用只连接 Collector，日志写入与 trace/metrics 使用同一 provider lifecycle，JSONL writer 改为显式本地诊断 opt-in 而非 smoke 必经路径。
+- [ ] T174 [US1] 在 `deploy/observability/collector/collector-grafana.yaml`、`deploy/observability/compose.grafana.yaml`、`deploy/observability/prometheus/prometheus.yaml` 实现 OTLP logs→Loki 和 Collector self-telemetry 可查询配置；质量门控：使 T171 GREEN，不发布额外公网端口、不删除 named volumes、不把 request/trace/run identity 升格为 Loki index label。
+- [ ] T175 [US1] 在 `internal/observability/backend/grafana_smoke_adapter.go`、`internal/observability/smoke/poller.go` 完成 Tempo/Loki transient-query retry 与真实响应解码；质量门控：使 T172 GREEN，任何最终失败仍产生 schema-valid、低敏 report，并准确区分 timeout、authentication、malformed response 与 marker missing。
+- [ ] T176 [US1] 在 `cmd/obs-smoke/main.go`、`Makefile`、`deploy/observability/README.md` 与 `specs/003-real-observability-backends/checklists/real-backend-acceptance.md` 完成去 bind-mount 后的真实 infra smoke 验收与运行手册；质量门控：以新的 passed report 关闭对应未完成项，明确 `obs-infra-smoke` 只查询已运行服务，删除已失效的宿主机 JSONL 同步说明，未取得报告不得勾选验收项。
+
 ## 依赖关系
 
 ### Phase 依赖图
