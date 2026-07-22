@@ -224,7 +224,8 @@ processors:
       - name: ordinary-success
         type: probabilistic
         probabilistic:
-          sampling_percentage: 10
+          # 本地调试将采样率设置为 100%，生产环境考虑设置为10%
+          sampling_percentage: 100
 
 connectors:
   forward/infra: {}

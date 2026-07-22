@@ -74,6 +74,8 @@ var processObservabilityBootstrapState observabilityBootstrapState
 // BuildObservabilityBootstrap 以固定顺序完成唯一的应用装配边界：解析 runtime、建立
 // resource/exporter 配置、短暂消费 header、创建 bundle，最后让 lifecycle 安装全局 provider。
 func BuildObservabilityBootstrap(ctx context.Context, input ObservabilityBootstrapInput, dependencies ObservabilityBootstrapDependencies) (*ObservabilityBootstrap, error) {
+	// 如果已经完成了观测体系的初始化，注册了全局观测provider
+	// 则会根据state跳过本次注册流程
 	state := dependencies.state
 	if state == nil {
 		state = &processObservabilityBootstrapState
@@ -112,6 +114,7 @@ func BuildObservabilityBootstrap(ctx context.Context, input ObservabilityBootstr
 	if resourceInput.Environment == "" {
 		resourceInput.Environment = runtime.Environment
 	}
+	// 从系统配置的观测体系配置，映射到OTLE模式的配置
 	config, err := buildObservabilityOTLPExporterConfig(runtime, resourceInput, input.SamplingRatio)
 	if err != nil {
 		return nil, err
@@ -121,6 +124,8 @@ func BuildObservabilityBootstrap(ctx context.Context, input ObservabilityBootstr
 	if middleware == nil {
 		return nil, fmt.Errorf("build observability middleware: middleware is required")
 	}
+	// 拿到系统封装好的导出器 exporter，这个exporter持有tracerProvider和meterProvider以及可能存在的共用grpc连接
+	// 接下来将进一步封装为lifecycle
 	exporter, err := dependencies.BuildCollector(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("build collector bundle: %w", err)
@@ -158,6 +163,7 @@ func BuildObservabilityBootstrap(ctx context.Context, input ObservabilityBootstr
 	return bootstrap, nil
 }
 
+// normalizeObservabilityBootstrapInput 校验Bootstrap输入对象
 func normalizeObservabilityBootstrapInput(input ObservabilityBootstrapInput) (ObservabilityRuntimeConfigInput, error) {
 	if input.Signals.TracesEnabled != input.Signals.MetricsEnabled {
 		return ObservabilityRuntimeConfigInput{}, fmt.Errorf("trace and metric signals must be enabled together")

@@ -97,18 +97,14 @@ func (l *ObservabilityProviderLifecycle) Initialize(ctx context.Context) error {
 		return nil
 	}
 	if l.tracer != nil || l.meter != nil {
+		// 初始化exporter 和 注册全局tracer和meter的入口
 		ownsGlobalProviders, err := l.initializeGlobalProviderOwner(ctx)
 		if err != nil {
 			l.recordInitializationFailure(err)
 			return nil
 		}
+		// 后续 follower 的ownsGlobalProviders固定为false，也不必在Shutdown和Flush时 对全局tracer meter负责
 		l.ownsGlobalProviders = ownsGlobalProviders
-		// 带 provider 的第二个 lifecycle 是只读 follower：它不能再启动自己的 exporter，
-		// 否则虽未替换 global provider，仍会形成第二套发送/关闭生命周期。
-		if !l.ownsGlobalProviders {
-			l.status.Initialized = true
-			return nil
-		}
 		l.status.Initialized = true
 		return nil
 	}

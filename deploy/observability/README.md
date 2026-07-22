@@ -112,6 +112,11 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
    `LANGFUSE_OTEL_INGESTION_VERSION`，然后执行 `make obs-grafana-up`。
 
 `LANGFUSE_OTLP_AUTHORIZATION` 是 Collector 写入 header，格式为 `Basic <base64(public:secret)>`；
+
+```bash
+printf '%s:%s' '<Public Key>' '<Secret Key>' | base64
+```
+
 它不是 Langfuse Web service 的启动配置。项目 key 后续轮换时，只更新本地值并重启 warm
 profile；不要通过 `down -v` 或重新 bootstrap 来轮换 key。
 

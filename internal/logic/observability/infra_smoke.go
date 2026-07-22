@@ -135,6 +135,7 @@ func infraSmokeSpanAttributes(input InfraSmokeInput) []attribute.KeyValue {
 		attribute.String("http.request.method", "GET"),
 		attribute.String("http.route", infraSmokeRouteTemplate),
 		attribute.Int("http.response.status_code", 200),
+		attribute.String("custom.attr.name", "ashjazz"),
 	}
 }
 
