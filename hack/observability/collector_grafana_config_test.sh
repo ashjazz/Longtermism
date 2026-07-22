@@ -105,6 +105,17 @@ service_extensions = config.dig("service", "extensions")
 fail_check("missing_enabled_persistent_queue_storage") unless service_extensions.is_a?(Array)
 require_includes(service_extensions, %w[health_check file_storage/tempo file_storage/loki file_storage/langfuse], "missing_enabled_persistent_queue_storage")
 fail_check("invalid_collector_health_endpoint") unless extensions.dig("health_check", "endpoint") == "0.0.0.0:13133" && extensions.dig("health_check", "path") == "/healthz"
+# Prometheus runs in a peer container, so Collector self-telemetry must not use
+# the default loopback-only listener. This endpoint is separate from the
+# application metric exporter on 8889.
+telemetry_metrics = config.dig("service", "telemetry", "metrics")
+fail_check("missing_collector_self_telemetry") unless telemetry_metrics.is_a?(Hash)
+readers = telemetry_metrics["readers"]
+fail_check("missing_collector_self_telemetry") unless readers.is_a?(Array)
+self_telemetry_reader = readers.find do |reader|
+  reader.is_a?(Hash) && reader.dig("pull", "exporter", "prometheus", "host") == "0.0.0.0" && reader.dig("pull", "exporter", "prometheus", "port") == 8888
+end
+fail_check("invalid_collector_self_telemetry_endpoint") unless self_telemetry_reader
 {
   "file_storage/tempo" => ["/var/lib/otelcol/storage/queue/tempo", "/var/lib/otelcol/storage/queue/tempo-compaction"],
   "file_storage/loki" => ["/var/lib/otelcol/storage/queue/loki", "/var/lib/otelcol/storage/queue/loki-compaction"],

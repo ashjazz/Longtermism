@@ -267,6 +267,17 @@ exporters:
     endpoint: 0.0.0.0:8889
 
 service:
+  # Collector 自身指标与应用 OTLP metrics 是两个独立端点。8888 仅供同一
+  # Compose 网络中的 Prometheus 抓取；Compose 仍把宿主机发布限制在 loopback。
+  # 不显式设置时 Collector 默认绑定 localhost，peer container 会得到 connection refused。
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
   extensions:
     - health_check
     - file_storage/tempo

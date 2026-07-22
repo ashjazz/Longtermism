@@ -177,6 +177,11 @@ image_variables.each do |service_name, variable|
   fail_check("unsafe_healthcheck:#{service_name}") if scalar_strings(healthcheck["test"]).any? { |value| value.match?(/\b(?:true|echo|exit 0)\b/i) }
 end
 
+# Grafana 13.0.2 crashes when opening Tempo Explore in this profile. Keep the
+# verified replacement explicit so a future generic image-pin edit cannot
+# silently reintroduce the broken UI build.
+fail_check("unexpected_grafana_version") unless versions.fetch("GRAFANA_IMAGE") == "grafana/grafana:13.1.0"
+
 fail_check("unexpected_langfuse_worker_healthcheck") if services.fetch("langfuse-worker").key?("healthcheck")
 %w[collector loki tempo].each { |service_name| fail_check("unexpected_distroless_healthcheck:#{service_name}") if services.fetch(service_name).key?("healthcheck") }
 (image_variables.keys - %w[collector loki tempo langfuse-worker]).each { |service_name| fail_check("untrusted_healthcheck:#{service_name}") unless trusted_health_probe?(service_name, services.fetch(service_name).dig("healthcheck", "test")) }
