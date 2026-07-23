@@ -161,7 +161,7 @@
 - [X] T081 [P] [US2] 在 `internal/cmd/langfuse_score_lifecycle_test.go` 编写 score worker 装配 RED 测试；质量门控：覆盖未配置为 not_configured、配置完整启动一次、shutdown flush、有界队列指标和不阻塞 HTTP lifecycle。
 - [X] T082 [P] [US2] 在 `hack/observability/langfuse_collector_test.sh` 编写 Langfuse downstream 静态 RED 测试；质量门控：断言 OTLP/HTTP protobuf、`/api/public/otel`、ingestion version header、secret env 注入、AI filter、独立 queue/retry/timeout/file_storage。
 - [X] T083 [P] [US2] 在 `hack/observability/langfuse_compose_test.sh` 编写 self-hosted Langfuse 静态 RED 测试；质量门控：覆盖固定版本、依赖服务、healthcheck、14 天 retention、无 raw volume、loopback UI 和无默认 credential。
-- [ ] T084 [P] [US2] 在 `hack/observability/grafana_ai_dashboard_test.go` 编写 AI dashboard RED 测试；质量门控：断言 LLM request/duration/token/cost-ready、eval regression、score projection/queue 与 infra trace correlation 面板存在且 labels 合规。
+- [X] T084 [P] [US2] 在 `hack/observability/grafana_ai_dashboard_test.go` 编写 AI dashboard RED 测试；质量门控：断言 LLM request/duration/token/cost-ready、eval regression、score projection/queue 与 infra trace correlation 面板存在且 labels 合规。
 - [ ] T085 [P] [US2] 在 `internal/observability/smoke/chat_runner_test.go` 编写 chat smoke runner RED 测试；质量门控：fake API/backends 覆盖 60 秒双平面关联、marker/identity 匹配、模型失败与 telemetry 失败分离、schema-valid report。
 - [ ] T086 [P] [US2] 在 `internal/observability/smoke/score_runner_test.go` 编写 score smoke runner RED 测试；质量门控：覆盖 120 秒异步成功、not_configured、retry、稳定 ID 重试不重复、本地 evidence 先存在和 projection failure 可诊断。
 - [ ] T087 [P] [US2] 在 `internal/observability/smoke/privacy_runner_test.go` 编写真实平台隐私 runner RED 测试；质量门控：使用 fake query clients/counting transport 离线模拟 API/log/Collector queue report/Tempo/Loki/Langfuse trace+score/report，synthetic forbidden marker 未脱敏命中必须为 0，RED 测试不得启动 Docker 或访问真实平台。
