@@ -157,7 +157,7 @@
 - [X] T077 [P] [US2] 在 `internal/observability/langfuse/trace_mapper_test.go` 编写 Langfuse OTLP attribute mapper RED 测试；质量门控：覆盖 allowlist、平台属性仅在 adapter、OTel TraceID/SpanID 与 ai_trace_id 分离、metadata/redacted/raw 三模式，且 raw 本地工件不进入 mapper、所有平台属性 secret 零命中。
 - [X] T078 [P] [US2] 在 `internal/observability/langfuse/projection_test.go` 编写 `ScoreProjection` 状态机 RED 测试；质量门控：覆盖稳定幂等 ID、真实 platform trace/observation ID 必填、queued/sending/retry/sent/drop/permanent/shutdown 状态且不修改 evidence。
 - [X] T079 [P] [US2] 在 `internal/observability/langfuse/client_test.go` 编写 Langfuse score API client RED 测试；质量门控：httptest 覆盖 Basic Auth、稳定 score ID、timeout/429/5xx/4xx 分类、body 上限和日志不泄漏 secret/evidence 原文。
-- [ ] T080 [P] [US2] 在 `internal/observability/langfuse/worker_test.go` 编写有界异步 worker RED 测试；质量门控：覆盖非阻塞 enqueue、queue full、指数退避、幂等重试、优雅 shutdown timeout、race 与本地 evidence 不丢失，禁止 `time.Sleep()`。
+- [X] T080 [P] [US2] 在 `internal/observability/langfuse/worker_test.go` 编写有界异步 worker RED 测试；质量门控：覆盖非阻塞 enqueue、queue full、指数退避、幂等重试、优雅 shutdown timeout、race 与本地 evidence 不丢失，禁止 `time.Sleep()`。
 - [ ] T081 [P] [US2] 在 `internal/cmd/langfuse_score_lifecycle_test.go` 编写 score worker 装配 RED 测试；质量门控：覆盖未配置为 not_configured、配置完整启动一次、shutdown flush、有界队列指标和不阻塞 HTTP lifecycle。
 - [ ] T082 [P] [US2] 在 `hack/observability/langfuse_collector_test.sh` 编写 Langfuse downstream 静态 RED 测试；质量门控：断言 OTLP/HTTP protobuf、`/api/public/otel`、ingestion version header、secret env 注入、AI filter、独立 queue/retry/timeout/file_storage。
 - [ ] T083 [P] [US2] 在 `hack/observability/langfuse_compose_test.sh` 编写 self-hosted Langfuse 静态 RED 测试；质量门控：覆盖固定版本、依赖服务、healthcheck、14 天 retention、无 raw volume、loopback UI 和无默认 credential。
