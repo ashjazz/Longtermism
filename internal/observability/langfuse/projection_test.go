@@ -115,7 +115,7 @@ func TestScoreProjectionStateMachinePreservesEvidence(t *testing.T) {
 	wantEvidence := cloneT078Evidence(base.Evidence)
 	sent := mustTransitionT078(t, mustTransitionT078(t, base, ScoreProjectionStatusSending), ScoreProjectionStatusSent)
 	dropped := mustTransitionT078(t, base, ScoreProjectionStatusDroppedQueueFull)
-	permanent := mustTransitionT078(t, mustTransitionT078(t, base, ScoreProjectionStatusSending), ScoreProjectionStatusFailedPermanent)
+	permanent := mustTransitionT078(t, base, ScoreProjectionStatusFailedPermanent)
 	shutdown := mustTransitionT078(t, base, ScoreProjectionStatusFailedShutdownTimeout)
 	retryWait := mustTransitionT078(t, mustTransitionT078(t, base, ScoreProjectionStatusSending), ScoreProjectionStatusRetryWait)
 	tests := []struct {
@@ -219,7 +219,7 @@ func TestScoreProjectionStateMachinePreservesEvidence(t *testing.T) {
 		}
 	}
 
-	// 已发送、已丢弃和永久失败都是终态，任何后续转换都可能造成重复写分数或错误复活。
+	// 已发送、已丢弃、永久失败和 shutdown 失败都是终态，任何后续转换都可能造成重复写分数或错误复活。
 	terminalStates := map[string]ScoreProjection{
 		"sent":              sent,
 		"dropped":           dropped,
