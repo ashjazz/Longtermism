@@ -153,7 +153,7 @@
 - [X] T073 [P] [US2] 在 `internal/eval/evidence_store_test.go` 编写本地 evidence 持久化 RED 测试；质量门控：覆盖先持久化后投影、防御性副本、进程重开可读取、并发追加、磁盘失败可诊断和 raw content 零命中。
 - [X] T074 [P] [US2] 在 `internal/logic/chat/evaluator_test.go` 编写确定性本地 evaluator 与 debug summary RED 测试；质量门控：定义第一阶段低敏 metric/threshold，覆盖 passed/warning/failed/not_run、evidence correlation、序列化 <=1024 bytes、非 debug 缺失和 reason_class 不含原文。
 - [X] T075 [P] [US2] 在 `internal/controller/chat/chat_test.go` 编写 controller RED 测试；质量门控：覆盖 JSON 校验、错误码映射、header/meta 一致、upstream body/endpoint/credential 不回显，controller 只依赖 usecase 接口。
-- [ ] T076 [P] [US2] 在 `internal/cmd/routes_chat_test.go` 编写 chat 路由与 middleware RED 测试；质量门控：覆盖启用/关闭、request context 传播、配置化限流 429、真实 AI usecase 启动时才打 AI marker、infra route 不受影响。
+- [X] T076 [P] [US2] 在 `internal/cmd/routes_chat_test.go` 编写 chat 路由与 middleware RED 测试；质量门控：覆盖启用/关闭、request context 传播、配置化限流 429、真实 AI usecase 启动时才打 AI marker、infra route 不受影响。
 - [ ] T077 [P] [US2] 在 `internal/observability/langfuse/trace_mapper_test.go` 编写 Langfuse OTLP attribute mapper RED 测试；质量门控：覆盖 allowlist、平台属性仅在 adapter、OTel TraceID/SpanID 与 ai_trace_id 分离、metadata/redacted/raw 三模式，且 raw 本地工件不进入 mapper、所有平台属性 secret 零命中。
 - [ ] T078 [P] [US2] 在 `internal/observability/langfuse/projection_test.go` 编写 `ScoreProjection` 状态机 RED 测试；质量门控：覆盖稳定幂等 ID、真实 platform trace/observation ID 必填、queued/sending/retry/sent/drop/permanent/shutdown 状态且不修改 evidence。
 - [ ] T079 [P] [US2] 在 `internal/observability/langfuse/client_test.go` 编写 Langfuse score API client RED 测试；质量门控：httptest 覆盖 Basic Auth、稳定 score ID、timeout/429/5xx/4xx 分类、body 上限和日志不泄漏 secret/evidence 原文。
