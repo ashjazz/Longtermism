@@ -151,7 +151,7 @@
 - [X] T071 [P] [US2] 在 `pkg/ai/obs/otel_mapper_test.go` 扩展 AI plane/GenAI 映射 RED 测试；质量门控：root/bridge 与 generation/evaluator 有 marker，普通 HTTP/DB/Redis child 无 marker，缺语义字段不得被 adapter 猜测。
 - [X] T072 [P] [US2] 在 `internal/observability/generation_test.go` 编写 generation span RED 测试；质量门控：覆盖 parent/SpanContext、requested/actual model、token 类型、latency/outcome/prompt identity/payload mode，非流式不得伪造 TTFT。
 - [X] T073 [P] [US2] 在 `internal/eval/evidence_store_test.go` 编写本地 evidence 持久化 RED 测试；质量门控：覆盖先持久化后投影、防御性副本、进程重开可读取、并发追加、磁盘失败可诊断和 raw content 零命中。
-- [ ] T074 [P] [US2] 在 `internal/logic/chat/evaluator_test.go` 编写确定性本地 evaluator 与 debug summary RED 测试；质量门控：定义第一阶段低敏 metric/threshold，覆盖 passed/warning/failed/not_run、evidence correlation、序列化 <=1024 bytes、非 debug 缺失和 reason_class 不含原文。
+- [X] T074 [P] [US2] 在 `internal/logic/chat/evaluator_test.go` 编写确定性本地 evaluator 与 debug summary RED 测试；质量门控：定义第一阶段低敏 metric/threshold，覆盖 passed/warning/failed/not_run、evidence correlation、序列化 <=1024 bytes、非 debug 缺失和 reason_class 不含原文。
 - [ ] T075 [P] [US2] 在 `internal/controller/chat/chat_test.go` 编写 controller RED 测试；质量门控：覆盖 JSON 校验、错误码映射、header/meta 一致、upstream body/endpoint/credential 不回显，controller 只依赖 usecase 接口。
 - [ ] T076 [P] [US2] 在 `internal/cmd/routes_chat_test.go` 编写 chat 路由与 middleware RED 测试；质量门控：覆盖启用/关闭、request context 传播、配置化限流 429、真实 AI usecase 启动时才打 AI marker、infra route 不受影响。
 - [ ] T077 [P] [US2] 在 `internal/observability/langfuse/trace_mapper_test.go` 编写 Langfuse OTLP attribute mapper RED 测试；质量门控：覆盖 allowlist、平台属性仅在 adapter、OTel TraceID/SpanID 与 ai_trace_id 分离、metadata/redacted/raw 三模式，且 raw 本地工件不进入 mapper、所有平台属性 secret 零命中。
