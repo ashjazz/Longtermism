@@ -53,6 +53,12 @@ type LLMProviderConfigSnapshot struct {
 
 // LLMProviderDependencies keeps secret lookup, networking, time, and provider construction
 // injectable. Offline tests can therefore prove the default path without external calls.
+//
+// TODO(provider-adapter-factory): T089 只交付 OpenAI-compatible adapter，因此 cmd 暂时
+// 通过 NewOpenAI 完成选择。等 Anthropic 等 adapter 落地时，应由各 adapter 自己公开
+// provider-specific Config + NewProvider/factory；这里仅保留 provider kind 选择、环境变量
+// 引用校验和通用 resilience 装配。不要在 cmd 演化一个同时容纳所有 provider 专属字段的
+// 大 Config 或 Functional Options 集合，否则会允许无意义的配置组合并污染 llm 核心端口。
 type LLMProviderDependencies struct {
 	LookupEnv      func(string) string
 	NewHTTPClient  func(time.Duration) *http.Client
@@ -62,9 +68,11 @@ type LLMProviderDependencies struct {
 	Sleep          func(context.Context, time.Duration) error
 }
 
-// BuildLLMProvider is the only application boundary that resolves the OpenAI-compatible
-// provider's configuration. A disabled chat feature never reads environment variables; an
-// enabled feature fails before client construction rather than silently producing fake results.
+// BuildLLMProvider 是当前唯一的 OpenAI-compatible 应用装配边界。禁用 chat 时绝不读取
+// 环境变量；启用时必须在 client 构建前 fail-fast，不能静默返回 fake result。
+//
+// 这个函数刻意不属于 pkg/ai/llm：核心包只能定义 Provider 端口，不能反向依赖 OpenAI
+// 或未来的 Anthropic adapter。见 LLMProviderDependencies 的重构 TODO。
 func BuildLLMProvider(ctx context.Context, input LLMProviderConfigInput, dependencies LLMProviderDependencies) (llm.Provider, LLMProviderConfigSnapshot, error) {
 	dependencies = defaultLLMProviderDependencies(dependencies)
 	if !input.ChatEnabled {
