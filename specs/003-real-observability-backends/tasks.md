@@ -313,6 +313,21 @@
 - [ ] T175 [US1] 在 `internal/observability/backend/grafana_smoke_adapter.go`、`internal/observability/smoke/poller.go` 完成 Tempo/Loki transient-query retry 与真实响应解码；质量门控：使 T172 GREEN，任何最终失败仍产生 schema-valid、低敏 report，并准确区分 timeout、authentication、malformed response 与 marker missing。
 - [ ] T176 [US1] 在 `cmd/obs-smoke/main.go`、`Makefile`、`deploy/observability/README.md` 与 `specs/003-real-observability-backends/checklists/real-backend-acceptance.md` 完成去 bind-mount 后的真实 infra smoke 验收与运行手册；质量门控：以新的 passed report 关闭对应未完成项，明确 `obs-infra-smoke` 只查询已运行服务，删除已失效的宿主机 JSONL 同步说明，未取得报告不得勾选验收项。
 
+## Phase 9：条件性架构演进 - 多 Provider 装配与通用 LLM Resilience（仅在引入第二个 Provider 时触发）
+
+**触发条件**：产品范围正式要求 OpenAI-compatible 之外的第二个 provider（例如 Anthropic）。在此之前，T089 的最小实现保持不变，禁止为了预期扩展提前引入中央 options bag 或空 adapter。
+
+**目标**：保持 `pkg/ai/llm` 只定义稳定端口；各 adapter 负责自身专属构建；`internal/cmd` 只选择 provider、校验 env 引用并组合一次通用 resilience；`internal/logic` 只选择业务策略，不执行 retry/stream forwarding。
+
+### Tests - RED
+
+- [ ] T177 [P] 在 `pkg/ai/resilience/provider_retry_test.go`、`pkg/ai/resilience/provider_wrapper_test.go` 与 `internal/cmd/llm_provider_factory_test.go` 编写多 provider 演进 RED 契约；质量门控：覆盖一个总 deadline、最多两次仅限首个 stream chunk 前的重试、取消感知转发、稳定错误脱敏、4xx 不重试；固定 decorator 顺序为 `ProviderWrapper(RetryTimeout(adapter))`，一次用户调用只计一次 breaker/outcome/总 latency；首 chunk 前上游失败可重试且只产出最终 request-level outcome，已输出部分 chunk 后的 upstream error 绝不重试但在 stream 终止时只计一次 breaker failure/outcome，调用方取消不计 upstream failure；覆盖 adapter-specific config/factory、未知 provider fail-fast，且证明 `pkg/ai/llm` 不导入 OpenAI/Anthropic adapter 或 provider 专属配置。
+
+### Implementation - GREEN/REFACTOR
+
+- [ ] T178 在 `pkg/ai/resilience/provider_retry.go`、`pkg/ai/resilience/provider_wrapper.go`、`internal/cmd/llm_provider.go` 以及新增 provider adapter 的目录中完成重构；质量门控：使 T177 GREEN，通用 retry/timeout/stream safety 只由 resilience decorator 实现一次；`ProviderWrapper` 必须包在 retry decorator 外，非流式在最终结果时记录一次 breaker/outcome，流式在 channel 终止时按 T177 的首 chunk/部分输出/取消语义记录一次最终结果；adapter 自己拥有 `Config` 与 `NewProvider`/factory，cmd 只解析低敏配置引用并选择 factory，logic 仅传递业务策略；不得用跨 provider 的大 Config 或 Functional Options 集合表达异构专属字段。
+- [ ] T179 在 `docs/adr/`、`docs/adr/README.md` 与 `docs/journal/` 记录这次实际多 provider/resilience 重构；质量门控：ADR 说明选择 adapter-owned factory + resilience decorator 而非 core registry/logic retry 的理由、备选方案和迁移兼容性，journal 记录一次真实迁移风险与回归证据；仅在 T178 已完成且有第二个 adapter 的实际验证后关闭。
+
 ## 依赖关系
 
 ### Phase 依赖图
@@ -338,6 +353,7 @@ US1 + US2 + US3 验收完成
 - **US3（P1）**：依赖 US1/US2 的真实出口、score worker、dashboard/alert 资产；不能在正常路径尚未通过时做恢复验收。
 - **US4（P2）**：依赖 Grafana 主线 US1-US3 已完成，避免备选 profile 阻塞首个闭环；不改变应用或 AI 契约。
 - **US5（P2）**：只依赖 Phase 2 的 mapper/payload/report 公共能力，可与 US1-US3 大部分实现并行；它永远不能替代真实 E2E。
+- **Phase 9（条件性）**：依赖 T089 的 OpenAI baseline，且只在第二个 provider 已获产品范围授权时启动；T177 → T178 → T179，必须在该 provider 对外启用前完成，不能阻塞当前单 provider US2 闭环。
 
 ## 并行执行机会
 

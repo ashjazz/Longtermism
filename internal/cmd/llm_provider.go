@@ -226,6 +226,15 @@ type retryingLLMProvider struct {
 	sleep        func(context.Context, time.Duration) error
 }
 
+// TODO(provider-resilience-refactor): 当前 T089 为最小 OpenAI-compatible 路径，暂在
+// composition root 实现总 deadline、retry 与流取消。`pkg/ai/resilience.ProviderWrapper`
+// 已拥有断路器和 outcome 观测；引入第二个 provider 前，必须先把这些通用执行策略合并
+// 到 resilience 的独立 decorator，再由 cmd 组合一次，避免多层 wrapper 对重试、熔断和
+// 错误脱敏作出不一致判断。此处不能直接复制到 logic：logic 只选择业务策略，不执行流
+// 转发、退避或网络安全边界。
+// 目标组合顺序必须是 ProviderWrapper(RetryTimeout(adapter))：一次用户调用只让断路器
+// 与 outcome 观察最终结果一次，而不是让每次临时重试都触发熔断或重复记录。
+
 func (p *retryingLLMProvider) Name() string { return p.provider.Name() }
 
 func (p *retryingLLMProvider) Capabilities(model string) llm.ProviderCapabilities {
