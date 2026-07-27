@@ -11,16 +11,24 @@ import (
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
+// ErrProviderRejected is a stable, low-sensitivity projection for a provider response that is
+// not retryable but whose original text is untrusted. It prevents upstream response bodies from
+// crossing the resilience boundary while allowing callers to distinguish rejection from outage.
+var ErrProviderRejected = errors.New("resilience: provider rejected request")
+
 // ProviderWrapper 用断路器保护 llm.Provider。
 //
 // 这里刻意保持 llm.Provider 接口不变：调用方仍然只看到 Name/Capabilities/Chat/ChatStream。
 // wrapper 只在内部判断错误是否属于 llm.ErrUpstream，并据此决定是否计入断路器失败。
 type ProviderWrapper struct {
-	provider llm.Provider
-	breaker  CircuitBreaker
-	tracer   obs.Tracer
-	feature  string
-	now      func() time.Time
+	provider        llm.Provider
+	breaker         CircuitBreaker
+	tracer          obs.Tracer
+	feature         string
+	now             func() time.Time
+	executionPolicy *ProviderExecutionPolicy
+	withTimeout     func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	sleep           func(context.Context, time.Duration) error
 }
 
 // ProviderWrapperOption 描述 provider wrapper 的可选装配项。
@@ -29,9 +37,11 @@ type ProviderWrapperOption func(*ProviderWrapper)
 // NewProviderWrapper 创建带 resilience 保护的 provider。
 func NewProviderWrapper(provider llm.Provider, breaker CircuitBreaker, options ...ProviderWrapperOption) *ProviderWrapper {
 	wrapper := &ProviderWrapper{
-		provider: provider,
-		breaker:  breaker,
-		now:      time.Now,
+		provider:    provider,
+		breaker:     breaker,
+		now:         time.Now,
+		withTimeout: context.WithTimeout,
+		sleep:       providerSleep,
 	}
 	for _, option := range options {
 		if option == nil {
@@ -66,6 +76,28 @@ func WithNow(now func() time.Time) ProviderWrapperOption {
 	}
 }
 
+// WithExecutionPolicy opts this wrapper into a single request-level timeout/retry lifecycle.
+// A zero policy is rejected at call time instead of silently inventing operational semantics.
+func WithExecutionPolicy(policy ProviderExecutionPolicy) ProviderWrapperOption {
+	return func(wrapper *ProviderWrapper) {
+		copy := policy
+		wrapper.executionPolicy = &copy
+	}
+}
+
+// withProviderRuntime is intentionally package-private: test seams belong to resilience, not
+// the cmd composition root that resolves production configuration.
+func withProviderRuntime(withTimeout func(context.Context, time.Duration) (context.Context, context.CancelFunc), sleep func(context.Context, time.Duration) error) ProviderWrapperOption {
+	return func(wrapper *ProviderWrapper) {
+		if withTimeout != nil {
+			wrapper.withTimeout = withTimeout
+		}
+		if sleep != nil {
+			wrapper.sleep = sleep
+		}
+	}
+}
+
 func (p *ProviderWrapper) Name() string {
 	if p == nil || p.provider == nil {
 		return ""
@@ -87,12 +119,11 @@ func (p *ProviderWrapper) Chat(ctx context.Context, req *llm.ChatRequest) (*llm.
 
 	startedAt := p.now()
 	var response *llm.ChatResponse
-	callResult := p.call(ctx, func(ctx context.Context) error {
-		got, err := p.provider.Chat(ctx, req)
-		response = got
-		return err
+	ctx = nonNilContext(ctx)
+	callResult := p.call(ctx, func(callCtx context.Context) error {
+		return p.executeChat(callCtx, req, &response)
 	})
-	err := callResult.err()
+	err := sanitizeProviderError(callResult.err())
 	p.recordOutcome(ctx, providerOutcomeObservation{
 		RequestedModel: requestedModel(req),
 		ActualModel:    actualModel(response),
@@ -110,25 +141,46 @@ func (p *ProviderWrapper) ChatStream(ctx context.Context, req *llm.ChatRequest) 
 	if err := p.validate(); err != nil {
 		return nil, err
 	}
-
+	ctx = nonNilContext(ctx)
+	// One slot carries a data chunk that the consumer has not yet read; the second guarantees a
+	// deadline terminal event can still be observed rather than being mistaken for a clean EOF.
+	forwarded := make(chan llm.ChatChunk, 2)
+	started := make(chan error, 1)
 	startedAt := p.now()
-	var chunks <-chan llm.ChatChunk
-	callResult := p.call(ctx, func(ctx context.Context) error {
-		got, err := p.provider.ChatStream(ctx, req)
-		chunks = got
-		return err
+
+	go p.runStream(ctx, req, forwarded, started, startedAt)
+	select {
+	case err := <-started:
+		if err != nil {
+			return nil, err
+		}
+		return forwarded, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (p *ProviderWrapper) runStream(ctx context.Context, req *llm.ChatRequest, forwarded chan<- llm.ChatChunk, started chan<- error, startedAt time.Time) {
+	defer close(forwarded)
+	startSent := false
+	callResult := p.call(ctx, func(callCtx context.Context) error {
+		return p.executeStream(callCtx, req, forwarded, func(err error) {
+			if !startSent {
+				started <- err
+				startSent = true
+			}
+		})
 	})
-	err := callResult.err()
+	err := sanitizeProviderError(callResult.err())
+	if !startSent {
+		started <- err
+	}
 	p.recordOutcome(ctx, providerOutcomeObservation{
 		RequestedModel: requestedModel(req),
 		Err:            err,
 		StartedAt:      startedAt,
 		EndedAt:        p.now(),
 	})
-	if err != nil {
-		return nil, err
-	}
-	return chunks, nil
 }
 
 func (p *ProviderWrapper) validate() error {
@@ -141,7 +193,178 @@ func (p *ProviderWrapper) validate() error {
 	if p.breaker == nil {
 		return fmt.Errorf("provider wrapper circuit breaker is required")
 	}
+	if p.executionPolicy != nil {
+		if err := p.executionPolicy.Validate(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (p *ProviderWrapper) executeChat(ctx context.Context, req *llm.ChatRequest, response **llm.ChatResponse) error {
+	executionCtx, cancel := p.executionContext(ctx)
+	defer cancel()
+	return p.executeWithRetry(executionCtx, func(attemptCtx context.Context) error {
+		got, err := p.provider.Chat(attemptCtx, req)
+		*response = got
+		return err
+	})
+}
+
+func (p *ProviderWrapper) executeStream(ctx context.Context, req *llm.ChatRequest, forwarded chan<- llm.ChatChunk, signalStarted func(error)) error {
+	executionCtx, cancel := p.executionContext(ctx)
+	defer cancel()
+
+	source, first, err := p.openStreamBeforeFirstOutput(executionCtx, req)
+	if err != nil {
+		signalStarted(sanitizeProviderError(err))
+		return err
+	}
+	signalStarted(nil)
+	if first != nil {
+		if err := p.forwardStreamChunk(executionCtx, forwarded, *first); err != nil {
+			return err
+		}
+		if first.Err != nil {
+			return first.Err
+		}
+	}
+	for {
+		select {
+		case <-executionCtx.Done():
+			return p.streamContextError(ctx, executionCtx, forwarded)
+		case chunk, open := <-source:
+			if !open {
+				return nil
+			}
+			if err := p.forwardStreamChunk(executionCtx, forwarded, chunk); err != nil {
+				return p.streamContextError(ctx, executionCtx, forwarded)
+			}
+			if chunk.Err != nil {
+				return chunk.Err
+			}
+		}
+	}
+}
+
+// openStreamBeforeFirstOutput owns the only replay-safe stream retry window. A failed HTTP/SSE
+// connection or an upstream terminal event before any chunk is forwarded can be retried; once a
+// chunk crosses this wrapper boundary, replay could duplicate text or tool-call side effects.
+func (p *ProviderWrapper) openStreamBeforeFirstOutput(ctx context.Context, req *llm.ChatRequest) (<-chan llm.ChatChunk, *llm.ChatChunk, error) {
+	for attempt := 0; ; attempt++ {
+		source, err := p.provider.ChatStream(ctx, req)
+		if err == nil && source == nil {
+			err = fmt.Errorf("provider returned an empty stream: %w", llm.ErrUpstream)
+		}
+		if err != nil {
+			if retry, retryErr := p.retryBeforeFirstOutput(ctx, attempt, err); retry {
+				continue
+			} else {
+				return nil, nil, retryErr
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case first, open := <-source:
+			if !open {
+				return source, nil, nil
+			}
+			if first.Err != nil {
+				if retry, retryErr := p.retryBeforeFirstOutput(ctx, attempt, first.Err); retry {
+					continue
+				} else {
+					return nil, nil, retryErr
+				}
+			}
+			return source, &first, nil
+		}
+	}
+}
+
+func (p *ProviderWrapper) retryBeforeFirstOutput(ctx context.Context, attempt int, err error) (bool, error) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, ctxErr
+	}
+	if p.executionPolicy == nil || !errors.Is(err, llm.ErrUpstream) || attempt >= p.executionPolicy.RetryMax {
+		return false, err
+	}
+	if err := p.sleep(ctx, providerRetryDelay(attempt, p.executionPolicy.RetryBackoff)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (p *ProviderWrapper) forwardStreamChunk(ctx context.Context, forwarded chan<- llm.ChatChunk, chunk llm.ChatChunk) error {
+	terminalErr := chunk.Err
+	if terminalErr != nil {
+		chunk.Err = sanitizeProviderError(terminalErr)
+	}
+	select {
+	case forwarded <- chunk:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *ProviderWrapper) streamContextError(parent, execution context.Context, forwarded chan<- llm.ChatChunk) error {
+	err := execution.Err()
+	if parent.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		// The caller is still alive, so the internal request-budget exhaustion is a required stream
+		// terminal event, not an optional best-effort notification. Waiting for queue space keeps a
+		// slow consumer from mistaking a truncated response for clean EOF; parent cancellation still
+		// releases an abandoned stream.
+		select {
+		case forwarded <- llm.ChatChunk{Err: context.DeadlineExceeded}:
+		case <-parent.Done():
+		}
+	}
+	return err
+}
+
+func (p *ProviderWrapper) executionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if p.executionPolicy == nil {
+		return ctx, func() {}
+	}
+	return p.withTimeout(ctx, p.executionPolicy.Timeout)
+}
+
+func (p *ProviderWrapper) executeWithRetry(ctx context.Context, call func(context.Context) error) error {
+	if p.executionPolicy == nil {
+		return call(ctx)
+	}
+	return retryProviderCall(ctx, *p.executionPolicy, p.sleep, call)
+}
+
+func nonNilContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func sanitizeProviderError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(err, llm.ErrRateLimit) {
+		return fmt.Errorf("provider request failed: %w", errors.Join(llm.ErrUpstream, llm.ErrRateLimit))
+	}
+	if errors.Is(err, llm.ErrUpstream) {
+		return fmt.Errorf("provider request failed: %w", llm.ErrUpstream)
+	}
+	if errors.Is(err, ErrCircuitOpen) {
+		return err
+	}
+	return ErrProviderRejected
 }
 
 func (p *ProviderWrapper) call(ctx context.Context, fn func(context.Context) error) providerCallResult {
@@ -223,6 +446,8 @@ func classifyProviderOutcome(observation providerOutcomeObservation) (outcomeSta
 	if observation.Err != nil {
 		rateLimited = errors.Is(observation.Err, llm.ErrRateLimit)
 		switch {
+		case errors.Is(observation.Err, context.DeadlineExceeded):
+			return "failure", string(obs.FailureTimeout), false, false
 		case rateLimited:
 			return "failure", string(obs.FailureRateLimit), false, true
 		case errors.Is(observation.Err, llm.ErrUpstream), errors.Is(observation.Err, ErrCircuitOpen):

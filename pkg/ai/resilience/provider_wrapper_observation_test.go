@@ -70,7 +70,7 @@ func TestProviderWrapperRecordsOutcomeObservation(t *testing.T) {
 			setupProvider: func(provider *countingProvider) {
 				provider.chatErrors["bad-request-model"] = callerErr
 			},
-			wantErrIs:         callerErr,
+			wantErrIs:         ErrProviderRejected,
 			wantOutcome:       "failure",
 			wantFailureStatus: string(obs.FailureCallerError),
 			wantCircuitState:  StateClosed,

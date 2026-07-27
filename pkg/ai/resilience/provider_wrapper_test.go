@@ -85,8 +85,8 @@ func TestProviderWrapperDoesNotOpenCircuitOnCallerError(t *testing.T) {
 	wrapped := NewProviderWrapper(provider, breaker)
 
 	_, err := wrapped.Chat(context.Background(), &llm.ChatRequest{Model: "bad-request-model"})
-	if !errors.Is(err, callerErr) {
-		t.Fatalf("caller Chat() error = %v, want preserve caller error", err)
+	if !errors.Is(err, ErrProviderRejected) {
+		t.Fatalf("caller Chat() error = %v, want stable rejection classification", err)
 	}
 	if breaker.State() != StateClosed {
 		t.Fatalf("breaker State() = %q, want %q after caller error", breaker.State(), StateClosed)
