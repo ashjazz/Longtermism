@@ -18,7 +18,6 @@ const (
 	defaultLLMRequestTimeout = 60 * time.Second
 	defaultLLMRetryMax       = 2
 	defaultLLMRetryBackoff   = time.Second
-	productionEnvironment    = "production"
 )
 
 var llmRetryDelayMultipliers = [...]time.Duration{1, 3}
