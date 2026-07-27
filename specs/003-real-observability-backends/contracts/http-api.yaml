@@ -82,7 +82,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorEnvelope'
+            $ref: '#/components/schemas/ChatPreAIErrorEnvelope'
     RateLimited:
       description: Request rejected by rate limit
       headers:
@@ -92,7 +92,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorEnvelope'
+            $ref: '#/components/schemas/ChatPreAIErrorEnvelope'
     UpstreamFailure:
       description: Configured model service failed
       headers:
@@ -102,7 +102,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorEnvelope'
+            $ref: '#/components/schemas/ChatPostAIErrorEnvelope'
     UpstreamTimeout:
       description: Configured model service timed out
       headers:
@@ -112,7 +112,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorEnvelope'
+            $ref: '#/components/schemas/ChatPostAIErrorEnvelope'
   schemas:
     ChatRequest:
       type: object
@@ -123,7 +123,8 @@ components:
           type: string
           minLength: 1
           maxLength: 32768
-          description: One user message. Provider, model, base URL and credentials are server-controlled.
+          x-longtermism-max-utf8-bytes: 32768
+          description: One UTF-8 user message. It must be non-blank after trimming and at most 32768 UTF-8 encoded bytes. Provider, model, base URL and credentials are server-controlled.
     UsageSummary:
       type: object
       additionalProperties: false
@@ -158,7 +159,8 @@ components:
         evaluator: { type: string }
         score: { type: number, minimum: 0, maximum: 1 }
         reason_class: { type: string }
-      description: Debug-only, low-sensitive and serialized to no more than 1024 bytes.
+      x-longtermism-max-serialized-bytes: 1024
+      description: Debug-only, low-sensitive and serialized to no more than 1024 UTF-8 bytes.
     ResponseMeta:
       type: object
       additionalProperties: false
@@ -179,10 +181,52 @@ components:
         data:
           $ref: '#/components/schemas/ChatData'
         meta:
-          allOf:
-            - $ref: '#/components/schemas/ResponseMeta'
-            - type: object
-              required: [ai_trace_id]
+          $ref: '#/components/schemas/ChatSuccessMeta'
+    ChatSuccessMeta:
+      type: object
+      additionalProperties: false
+      required: [request_id, ai_trace_id]
+      properties:
+        request_id: { type: string }
+        ai_trace_id: { type: string }
+        eval_summary:
+          $ref: '#/components/schemas/EvalSummary'
+      description: eval_summary is debug-only; smoke_run_id is never part of chat metadata.
+    ChatPreAIErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [code, message, data, meta]
+      properties:
+        code: { type: integer, enum: [400, 429] }
+        message: { type: string }
+        data: { type: 'null' }
+        meta:
+          $ref: '#/components/schemas/ChatPreAIErrorMeta'
+      description: Input and local rate-limit failures occur before the AI usecase and cannot have an AI identity.
+    ChatPreAIErrorMeta:
+      type: object
+      additionalProperties: false
+      required: [request_id]
+      properties:
+        request_id: { type: string }
+    ChatPostAIErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [code, message, data, meta]
+      properties:
+        code: { type: integer, enum: [502, 504] }
+        message: { type: string }
+        data: { type: 'null' }
+        meta:
+          $ref: '#/components/schemas/ChatPostAIErrorMeta'
+      description: Upstream failures occur after the AI usecase begins and retain its identity.
+    ChatPostAIErrorMeta:
+      type: object
+      additionalProperties: false
+      required: [request_id, ai_trace_id]
+      properties:
+        request_id: { type: string }
+        ai_trace_id: { type: string }
     InfraSmokeData:
       type: object
       additionalProperties: false

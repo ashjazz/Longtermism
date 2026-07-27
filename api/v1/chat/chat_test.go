@@ -94,7 +94,7 @@ func TestChatSuccessEnvelopeContract(t *testing.T) {
 			debugEnabled: true,
 			summary: &EvalSummary{
 				Status:      EvalStatusPassed,
-				Evaluator:   "contract-check",
+				Evaluator:   "contract_check",
 				Score:       ptrFloat64(0.95),
 				ReasonClass: "within_policy",
 			},
@@ -112,9 +112,9 @@ func TestChatSuccessEnvelopeContract(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			meta, err := NewChatMeta("req-chat-success", "ai-chat-success", tt.summary, tt.debugEnabled)
+			meta, err := NewChatSuccessMeta("req-chat-success", "ai-chat-success", tt.summary, tt.debugEnabled)
 			if err != nil {
-				t.Fatalf("NewChatMeta() error = %v", err)
+				t.Fatalf("NewChatSuccessMeta() error = %v", err)
 			}
 			envelope := ChatSuccessEnvelope{
 				Code:    0,
@@ -131,7 +131,7 @@ func TestChatSuccessEnvelopeContract(t *testing.T) {
 		})
 	}
 
-	assertChatMetaHasRequestIDJSONKey(t, ChatMeta{})
+	assertChatSuccessMetaRejectsMissingIdentity(t)
 }
 
 func TestChatEvalSummaryContract(t *testing.T) {
@@ -140,8 +140,10 @@ func TestChatEvalSummaryContract(t *testing.T) {
 		summary EvalSummary
 		wantErr bool
 	}{
-		{name: "accepts a low sensitivity summary", summary: EvalSummary{Status: EvalStatusWarning, Evaluator: "contract-check", ReasonClass: "low_confidence"}},
+		{name: "accepts a low sensitivity summary", summary: EvalSummary{Status: EvalStatusWarning, Evaluator: "contract_check", ReasonClass: "low_confidence"}},
 		{name: "rejects an oversized summary", summary: EvalSummary{Status: EvalStatusFailed, ReasonClass: strings.Repeat("a", 1025)}, wantErr: true},
+		{name: "rejects arbitrary text in a classification field", summary: EvalSummary{Status: EvalStatusFailed, ReasonClass: "https://upstream.example.test/?api_key=synthetic-secret"}, wantErr: true},
+		{name: "rejects secret-styled classification", summary: EvalSummary{Status: EvalStatusFailed, ReasonClass: "api_key_sk_live_secret"}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -153,28 +155,153 @@ func TestChatEvalSummaryContract(t *testing.T) {
 	}
 }
 
-func TestChatErrorEnvelopeContract(t *testing.T) {
+func TestDecodeChatRequestRejectsAmbiguousJSON(t *testing.T) {
 	tests := []struct {
-		name          string
-		code          int
-		meta          ChatMeta
-		wantAITraceID bool
+		name    string
+		body    []byte
+		wantErr bool
 	}{
-		{name: "invalid input stops before AI usecase", code: http.StatusBadRequest, meta: ChatMeta{RequestID: "req-chat-400"}},
-		{name: "local rate limit stops before AI usecase", code: http.StatusTooManyRequests, meta: ChatMeta{RequestID: "req-chat-429"}},
-		{name: "upstream failure keeps identity after AI usecase starts", code: http.StatusBadGateway, meta: ChatMeta{RequestID: "req-chat-502", AITraceID: "ai-chat-502"}, wantAITraceID: true},
-		{name: "upstream timeout keeps identity after AI usecase starts", code: http.StatusGatewayTimeout, meta: ChatMeta{RequestID: "req-chat-504", AITraceID: "ai-chat-504"}, wantAITraceID: true},
+		{name: "accepts one valid request object", body: []byte(`{"message":"hello"}`)},
+		{name: "rejects trailing JSON", body: []byte(`{"message":"hello"}{}`), wantErr: true},
+		{name: "rejects invalid UTF-8 before JSON replaces it", body: []byte{'{', '"', 'm', '"', ':', '"', 0xff, '"', '}'}, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			envelope := ChatErrorEnvelope{
-				Code:    tt.code,
-				Message: "chat request failed",
-				Data:    nil,
-				Meta:    tt.meta,
+			_, err := DecodeChatRequest(tt.body)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("DecodeChatRequest() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			assertChatErrorEnvelope(t, envelope, tt.code, tt.wantAITraceID)
+		})
+	}
+}
+
+func TestNewChatSuccessMetaAppliesServerControlledDebugBoundary(t *testing.T) {
+	tests := []struct {
+		name            string
+		requestID       string
+		aiTraceID       string
+		summary         *EvalSummary
+		debugEnabled    bool
+		wantEvalSummary bool
+		wantErr         bool
+	}{
+		{name: "debug emits explicit not-run summary when evaluator is absent", requestID: "req-1", aiTraceID: "ai-1", debugEnabled: true, wantEvalSummary: true},
+		{name: "debug disabled omits provided summary", requestID: "req-1", aiTraceID: "ai-1", summary: &EvalSummary{Status: EvalStatusPassed}, debugEnabled: false},
+		{name: "rejects missing request identity", aiTraceID: "ai-1", wantErr: true},
+		{name: "rejects missing AI identity", requestID: "req-1", wantErr: true},
+		{name: "rejects score outside contract range", requestID: "req-1", aiTraceID: "ai-1", summary: &EvalSummary{Status: EvalStatusPassed, Score: ptrFloat64(1.1)}, debugEnabled: true, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meta, err := NewChatSuccessMeta(tt.requestID, tt.aiTraceID, tt.summary, tt.debugEnabled)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("NewChatSuccessMeta() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			payload, marshalErr := json.Marshal(meta)
+			if marshalErr != nil {
+				t.Fatalf("marshal ChatSuccessMeta: %v", marshalErr)
+			}
+			var raw map[string]json.RawMessage
+			if unmarshalErr := json.Unmarshal(payload, &raw); unmarshalErr != nil {
+				t.Fatalf("unmarshal ChatSuccessMeta: %v", unmarshalErr)
+			}
+			if (raw["eval_summary"] != nil) != tt.wantEvalSummary {
+				t.Fatalf("EvalSummary presence = %v, want %v", raw["eval_summary"] != nil, tt.wantEvalSummary)
+			}
+			if tt.wantEvalSummary && !strings.Contains(string(raw["eval_summary"]), string(EvalStatusNotRun)) {
+				t.Fatalf("default EvalSummary = %s, want status %q", raw["eval_summary"], EvalStatusNotRun)
+			}
+		})
+	}
+}
+
+func TestChatSuccessMetaSnapshotsEvalSummary(t *testing.T) {
+	score := 0.95
+	summary := &EvalSummary{Status: EvalStatusPassed, Evaluator: "contract_check", Score: &score, ReasonClass: "within_policy"}
+	meta, err := NewChatSuccessMeta("req-snapshot", "ai-snapshot", summary, true)
+	if err != nil {
+		t.Fatalf("NewChatSuccessMeta() error = %v", err)
+	}
+
+	// A caller may continue to reuse evaluator state after this boundary. The public response must
+	// retain the validated snapshot, never a mutable alias that could later expose raw evidence.
+	summary.ReasonClass = "https://upstream.example.test/?api_key=synthetic-secret"
+	*summary.Score = 2
+	payload, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("marshal ChatSuccessMeta() error = %v", err)
+	}
+	if strings.Contains(string(payload), "synthetic-secret") || strings.Contains(string(payload), `"score":2`) {
+		t.Fatalf("success metadata must retain the validated summary snapshot: %s", payload)
+	}
+}
+
+func TestChatErrorEnvelopeContract(t *testing.T) {
+	tests := []struct {
+		name          string
+		code          int
+		requestID     string
+		aiTraceID     string
+		wantAITraceID bool
+	}{
+		{name: "invalid input stops before AI usecase", code: http.StatusBadRequest, requestID: "req-chat-400"},
+		{name: "local rate limit stops before AI usecase", code: http.StatusTooManyRequests, requestID: "req-chat-429"},
+		{name: "upstream failure keeps identity after AI usecase starts", code: http.StatusBadGateway, requestID: "req-chat-502", aiTraceID: "ai-chat-502", wantAITraceID: true},
+		{name: "upstream timeout keeps identity after AI usecase starts", code: http.StatusGatewayTimeout, requestID: "req-chat-504", aiTraceID: "ai-chat-504", wantAITraceID: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.wantAITraceID {
+				meta, err := NewChatPostAIErrorMeta(tt.requestID, tt.aiTraceID)
+				if err != nil {
+					t.Fatalf("NewChatPostAIErrorMeta() error = %v", err)
+				}
+				assertChatErrorEnvelope(t, ChatPostAIErrorEnvelope{Code: tt.code, Message: "chat request failed", Meta: meta}, tt.code, true)
+				return
+			}
+			meta, err := NewChatPreAIErrorMeta(tt.requestID)
+			if err != nil {
+				t.Fatalf("NewChatPreAIErrorMeta() error = %v", err)
+			}
+			assertChatErrorEnvelope(t, ChatPreAIErrorEnvelope{Code: tt.code, Message: "chat request failed", Meta: meta}, tt.code, false)
+		})
+	}
+}
+
+func TestChatEnvelopeRejectsCrossBranchStatusCodes(t *testing.T) {
+	successMeta, err := NewChatSuccessMeta("req-success", "ai-success", nil, false)
+	if err != nil {
+		t.Fatalf("NewChatSuccessMeta() error = %v", err)
+	}
+	preAIErrorMeta, err := NewChatPreAIErrorMeta("req-pre-ai")
+	if err != nil {
+		t.Fatalf("NewChatPreAIErrorMeta() error = %v", err)
+	}
+	postAIErrorMeta, err := NewChatPostAIErrorMeta("req-post-ai", "ai-post-ai")
+	if err != nil {
+		t.Fatalf("NewChatPostAIErrorMeta() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		envelope any
+	}{
+		{name: "success cannot carry an error code", envelope: ChatSuccessEnvelope{Code: http.StatusBadGateway, Meta: successMeta}},
+		{name: "pre-AI errors cannot impersonate upstream failures", envelope: ChatPreAIErrorEnvelope{Code: http.StatusBadGateway, Meta: preAIErrorMeta}},
+		{name: "post-AI errors cannot impersonate early request failures", envelope: ChatPostAIErrorEnvelope{Code: http.StatusBadRequest, Meta: postAIErrorMeta}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := json.Marshal(tt.envelope); err == nil {
+				t.Fatal("cross-branch status code must not serialize")
+			}
 		})
 	}
 }
@@ -238,7 +365,7 @@ func assertChatSuccessEnvelope(t *testing.T, envelope ChatSuccessEnvelope, wantE
 	assertChatMeta(t, raw["meta"], true, wantEvalSummary)
 }
 
-func assertChatErrorEnvelope(t *testing.T, envelope ChatErrorEnvelope, wantCode int, wantAITraceID bool) {
+func assertChatErrorEnvelope(t *testing.T, envelope any, wantCode int, wantAITraceID bool) {
 	t.Helper()
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -277,18 +404,10 @@ func assertChatMeta(t *testing.T, payload json.RawMessage, wantAITraceID, wantEv
 	}
 }
 
-func assertChatMetaHasRequestIDJSONKey(t *testing.T, meta ChatMeta) {
+func assertChatSuccessMetaRejectsMissingIdentity(t *testing.T) {
 	t.Helper()
-	payload, err := json.Marshal(meta)
-	if err != nil {
-		t.Fatalf("marshal zero-value chat meta: %v", err)
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &raw); err != nil {
-		t.Fatalf("decode zero-value chat meta: %v", err)
-	}
-	if raw["request_id"] == nil {
-		t.Fatal("request_id must not be omitted when its value is empty")
+	if _, err := json.Marshal(ChatSuccessMeta{}); err == nil {
+		t.Fatal("zero-value success metadata must not serialize without required identities")
 	}
 }
 
