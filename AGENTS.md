@@ -146,6 +146,16 @@ hack/config.yaml          gf CLI 代码生成配置
 docs/ adr/ journal/       设计文档、架构决策、开发日志
 ```
 
+### HTTP 传输边界（GoFrame）
+
+`api/v1/` 只声明 GoFrame 路由元数据与公开 Req/Res DTO：字段、类型、JSON tag、`v` 校验 tag、`g.Meta` 和稳定的公开枚举。`v` tag 是契约元数据，由 controller 显式调用 `gvalid` 执行；它不得包含 HTTP body 解码、输入校验实现、JSON 自定义序列化、HTTP 状态码分支、错误 envelope 构造、provider/LLM 映射或安全策略。每个 `api/v1/<feature>` 都必须有 DTO-only 架构测试，禁止行为函数和除 GoFrame DTO 元数据外的 JSON/HTTP/validation/provider 依赖回流。
+
+`internal/controller/` 是唯一的 HTTP adapter：负责严格 JSON 解码（包括未知字段、尾随 JSON、UTF-8 和 body 限制）、请求边界校验、`X-Request-ID`、稳定 HTTP 错误、以及 DTO 与应用 command/result 的映射。controller 可以依赖 `api/v1/` 和本地定义的窄 usecase 接口，但不得直接调用 `llm.Provider`、平台 backend、DAO/存储或密钥配置。
+
+`internal/logic/` 只处理应用/领域事实：它可以依赖 `pkg/ai/` 来编排模型、评估、evidence 和观测，但**绝不能导入 `api/v1/`、HTTP 状态码、JSON decoder 或 GoFrame HTTP 类型**。LLM provider 的原始响应先在 `pkg/ai/llm` adapter 归一化；logic 再生成领域 `ChatResult`；controller 最后投影为公开 DTO。每个 logic 包必须有架构测试守护这一方向，避免 DTO 便利性反向污染领域语义。
+
+身份和错误时机同样属于分层契约：transport 创建或传递 `request_id`，logic 在首次模型调用前创建 `ai_trace_id`，controller 只能投影既有 identity。错误响应只输出稳定分类和低敏元数据，禁止回显请求、prompt、provider body、endpoint 或凭据。
+
 > `§6 评估体系` 是指南点名的"面试最大考点"。`pkg/ai/eval/` 不应是事后补丁——
 > **每交付一个能力，必须同时交付评估它的一组 case**（见下方"完成定义"）。
 
