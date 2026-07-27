@@ -169,7 +169,7 @@
 ### Implementation - GREEN/REFACTOR
 
 - [X] T088 [US2] 在 `api/v1/chat/chat.go` 定义 Chat Req/Res、Usage、EvalSummary 与 envelope；质量门控：使 T068 GREEN，与 OpenAPI 完全一致，客户端不能提交 provider/model/base URL/key/debug。
-- [ ] T089 [US2] 在 `internal/cmd/llm_provider.go` 实现服务端 OpenAI-compatible provider、timeout 与 resilience retry 装配；质量门控：使 T069 GREEN，最多两次指数退避、4xx 不重试，配置只引用 env 名并在启用 chat 时 fail-fast，默认离线测试使用 fake provider。
+- [X] T089 [US2] 在 `internal/cmd/llm_provider.go` 实现服务端 OpenAI-compatible provider、timeout 与 resilience retry 装配；质量门控：使 T069 GREEN，最多两次指数退避、4xx 不重试，配置只引用 env 名并在启用 chat 时 fail-fast，默认离线测试使用 fake provider。
 - [ ] T090 [US2] 在 `internal/logic/chat/chat.go` 实现 chat usecase 的端口编排；质量门控：使 T070 GREEN，按“生成 AI identity -> 启动 root/bridge -> 调用 provider -> 调用 T094 evaluator -> 持久化 T093 evidence -> 非阻塞投影”的顺序组合已有职责，文件本身不重复实现 mapper/store/worker，观测/score 失败绝不覆盖模型业务结果。
 - [ ] T091 [US2] 在 `pkg/ai/obs/otel_mapper.go` 增加标准 GenAI 与 AI plane 显式映射；质量门控：使 T071 GREEN，只映射事实模型已有字段，Langfuse 专属属性不得进入核心 mapper。
 - [ ] T092 [US2] 在 `internal/observability/generation.go` 实现 generation/evaluator span adapter；质量门控：使 T072 GREEN，从活动 SpanContext 获取真实平台 identity，不把 domain AI ID 伪造成 OTel ID。

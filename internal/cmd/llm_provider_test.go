@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -363,6 +364,192 @@ func TestBuildLLMProviderRejectsUnsafeProductionBaseURLBeforeFactory(t *testing.
 	}
 }
 
+func TestLLMProviderUsesSafeDefaultsAndReleasesStreamBudget(t *testing.T) {
+	streamSource := make(chan llm.ChatChunk, 1)
+	streamSource <- llm.ChatChunk{DeltaContent: "hello"}
+	close(streamSource)
+	providerStub := &streamingLLMProvider{chunks: streamSource}
+	cancelled := make(chan struct{})
+	var cancelOnce sync.Once
+
+	provider, snapshot, err := BuildLLMProvider(context.Background(), LLMProviderConfigInput{
+		ChatEnabled:     true,
+		DefaultProvider: "openai",
+		BaseURLEnvName:  "OPENAI_BASE_URL",
+		APIKeyEnvName:   "OPENAI_API_KEY",
+		DefaultModel:    "chat-model",
+		Environment:     "production",
+	}, LLMProviderDependencies{
+		LookupEnv: lookupEnv(map[string]string{
+			"OPENAI_BASE_URL": "https://api.example.test/v1",
+			"OPENAI_API_KEY":  t069Secret,
+		}),
+		NewOpenAI: func(openai.Config) (llm.Provider, error) { return providerStub, nil },
+		WithTimeout: func(parent context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+			return parent, func() { cancelOnce.Do(func() { close(cancelled) }) }
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildLLMProvider() error = %v", err)
+	}
+	if snapshot.Timeout != 60*time.Second || snapshot.RetryMax != 2 || snapshot.RetryBackoff != time.Second {
+		t.Fatalf("default resilience snapshot = %#v", snapshot)
+	}
+	if provider.Name() != "streaming" || provider.Capabilities("chat-model").Streaming != true {
+		t.Fatalf("retrying provider must forward provider identity and capabilities")
+	}
+	chunks, err := provider.ChatStream(context.Background(), validLLMChatRequest())
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	if chunk := <-chunks; chunk.DeltaContent != "hello" {
+		t.Fatalf("stream chunk = %#v, want forwarded content", chunk)
+	}
+	if _, open := <-chunks; open {
+		t.Fatal("forwarded stream must close with the provider stream")
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("stream completion must release its request budget")
+	}
+
+	offline, _, err := BuildLLMProvider(context.Background(), LLMProviderConfigInput{}, LLMProviderDependencies{})
+	if err != nil || offline.Name() != "offline" {
+		t.Fatalf("default offline provider=%#v error=%v", offline, err)
+	}
+	if _, err := offline.Chat(context.Background(), validLLMChatRequest()); err == nil {
+		t.Fatal("default offline provider must not fabricate a chat result")
+	}
+}
+
+func TestLLMProviderRejectsInvalidResilienceConfigurationAndSanitizesClasses(t *testing.T) {
+	tests := []struct {
+		name  string
+		input LLMProviderConfigInput
+	}{
+		{name: "invalid timeout", input: LLMProviderConfigInput{Timeout: "not-a-duration"}},
+		{name: "negative retry count", input: LLMProviderConfigInput{RetryMax: -1}},
+		{name: "too many retries", input: LLMProviderConfigInput{RetryMax: 3}},
+		{name: "negative retry backoff", input: LLMProviderConfigInput{RetryBackoff: -time.Second}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, _, _, err := resolveLLMResilience(tt.input); err == nil {
+				t.Fatal("resolveLLMResilience() error = nil, want invalid configuration rejection")
+			}
+		})
+	}
+	if got := retryDelay(0, 500*time.Millisecond); got != 500*time.Millisecond {
+		t.Fatalf("first retry delay = %s, want 500ms", got)
+	}
+	if got := retryDelay(1, 500*time.Millisecond); got != 1500*time.Millisecond {
+		t.Fatalf("second retry delay = %s, want 1.5s", got)
+	}
+	if !errors.Is(sanitizeLLMProviderError(fmt.Errorf("secret body: %w", llm.ErrRateLimit)), llm.ErrRateLimit) {
+		t.Fatal("sanitized rate-limit error must retain its stable classification")
+	}
+	if !errors.Is(sanitizeLLMProviderError(context.DeadlineExceeded), context.DeadlineExceeded) {
+		t.Fatal("sanitized deadline error must retain context deadline semantics")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := sleepWithContext(cancelled, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Fatalf("sleepWithContext() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestBuildLLMProviderRetriesOnlyInitialStreamConnectionFailure(t *testing.T) {
+	streamSource := make(chan llm.ChatChunk, 1)
+	streamSource <- llm.ChatChunk{DeltaContent: "recovered"}
+	close(streamSource)
+	providerStub := &streamingLLMProvider{
+		errors: []error{
+			fmt.Errorf("temporary stream failure: %w", llm.ErrUpstream),
+			fmt.Errorf("temporary stream failure: %w", llm.ErrUpstream),
+		},
+		chunks: streamSource,
+	}
+	var delays []time.Duration
+	provider, _, err := BuildLLMProvider(context.Background(), enabledLLMProviderInput("OPENAI_BASE_URL", "OPENAI_API_KEY", "chat-model"), LLMProviderDependencies{
+		LookupEnv: lookupEnv(map[string]string{"OPENAI_BASE_URL": "https://api.example.test/v1", "OPENAI_API_KEY": t069Secret}),
+		NewOpenAI: func(openai.Config) (llm.Provider, error) { return providerStub, nil },
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			delays = append(delays, delay)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildLLMProvider() error = %v", err)
+	}
+	chunks, err := provider.ChatStream(context.Background(), validLLMChatRequest())
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	if chunk := <-chunks; chunk.DeltaContent != "recovered" {
+		t.Fatalf("stream chunk = %#v, want recovered stream", chunk)
+	}
+	if providerStub.streamCalls != 3 || !reflect.DeepEqual(delays, []time.Duration{time.Second, 3 * time.Second}) {
+		t.Fatalf("stream calls=%d delays=%v, want calls=3 delays=[1s 3s]", providerStub.streamCalls, delays)
+	}
+}
+
+func TestLLMProviderStreamCancellationAndErrorSanitization(t *testing.T) {
+	streamSource := make(chan llm.ChatChunk, 2)
+	streamSource <- llm.ChatChunk{DeltaContent: "first"}
+	streamSource <- llm.ChatChunk{DeltaContent: "second"}
+	close(streamSource)
+	providerStub := &streamingLLMProvider{chunks: streamSource}
+	requestContext, cancelRequest := context.WithCancel(context.Background())
+	t.Cleanup(cancelRequest)
+	budgetReleased := make(chan struct{})
+	var releaseOnce sync.Once
+	provider, _, err := BuildLLMProvider(context.Background(), enabledLLMProviderInput("OPENAI_BASE_URL", "OPENAI_API_KEY", "chat-model"), LLMProviderDependencies{
+		LookupEnv: lookupEnv(map[string]string{"OPENAI_BASE_URL": "https://api.example.test/v1", "OPENAI_API_KEY": t069Secret}),
+		NewOpenAI: func(openai.Config) (llm.Provider, error) { return providerStub, nil },
+		WithTimeout: func(parent context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+			return parent, func() { releaseOnce.Do(func() { close(budgetReleased) }) }
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildLLMProvider() error = %v", err)
+	}
+	chunks, err := provider.ChatStream(requestContext, validLLMChatRequest())
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	cancelRequest()
+	select {
+	case <-budgetReleased:
+	case <-time.After(time.Second):
+		t.Fatal("cancelling an unread stream must release its request budget")
+	}
+	for range chunks {
+	}
+}
+
+func TestLLMProviderSanitizesStreamErrorChunks(t *testing.T) {
+	streamSource := make(chan llm.ChatChunk, 1)
+	streamSource <- llm.ChatChunk{Err: fmt.Errorf("provider stream leaked %s: %w", t069Secret, llm.ErrUpstream)}
+	close(streamSource)
+	providerStub := &streamingLLMProvider{chunks: streamSource}
+	provider, _, err := BuildLLMProvider(context.Background(), enabledLLMProviderInput("OPENAI_BASE_URL", "OPENAI_API_KEY", "chat-model"), LLMProviderDependencies{
+		LookupEnv: lookupEnv(map[string]string{"OPENAI_BASE_URL": "https://api.example.test/v1", "OPENAI_API_KEY": t069Secret}),
+		NewOpenAI: func(openai.Config) (llm.Provider, error) { return providerStub, nil },
+	})
+	if err != nil {
+		t.Fatalf("BuildLLMProvider() error = %v", err)
+	}
+	chunks, err := provider.ChatStream(context.Background(), validLLMChatRequest())
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	chunk := <-chunks
+	if chunk.Err == nil || strings.Contains(chunk.Err.Error(), t069Secret) || !errors.Is(chunk.Err, llm.ErrUpstream) {
+		t.Fatalf("sanitized stream error = %v, want non-secret upstream classification", chunk.Err)
+	}
+}
+
 func enabledLLMProviderInput(baseURLEnvName, apiKeyEnvName, model string) LLMProviderConfigInput {
 	return LLMProviderConfigInput{
 		ChatEnabled:     true,
@@ -390,6 +577,30 @@ type scriptedLLMProvider struct {
 	chatCalls    int
 	lastDeadline time.Time
 	deadlines    []time.Time
+}
+
+type streamingLLMProvider struct {
+	chunks      <-chan llm.ChatChunk
+	errors      []error
+	streamCalls int
+}
+
+func (*streamingLLMProvider) Name() string { return "streaming" }
+
+func (*streamingLLMProvider) Capabilities(string) llm.ProviderCapabilities {
+	return llm.ProviderCapabilities{Streaming: true}
+}
+
+func (*streamingLLMProvider) Chat(context.Context, *llm.ChatRequest) (*llm.ChatResponse, error) {
+	return nil, errors.New("chat is not used by the stream forwarding test")
+}
+
+func (p *streamingLLMProvider) ChatStream(context.Context, *llm.ChatRequest) (<-chan llm.ChatChunk, error) {
+	p.streamCalls++
+	if attempt := p.streamCalls - 1; attempt < len(p.errors) && p.errors[attempt] != nil {
+		return nil, p.errors[attempt]
+	}
+	return p.chunks, nil
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
