@@ -103,6 +103,8 @@ func TestChatControllerMapsStableFailureClassesAndKeepsStartedAIIdentity(t *test
 		{name: "deadline takes precedence over rate limit and upstream errors", cause: errors.Join(context.DeadlineExceeded, llm.ErrRateLimit, llm.ErrUpstream), wantCode: 504, wantMessage: "chat upstream timeout"},
 		{name: "rate limit takes precedence over joined upstream errors", cause: errors.Join(llm.ErrRateLimit, llm.ErrUpstream), wantCode: 429, wantMessage: "chat rate limited"},
 		{name: "upstream unavailable", cause: llm.ErrUpstream, wantCode: 502, wantMessage: "chat upstream unavailable"},
+		{name: "provider call contract failure", cause: logicchat.ErrChatProviderFailure, wantCode: 502, wantMessage: "chat upstream unavailable"},
+		{name: "provider response contract failure", cause: logicchat.ErrChatInvalidResponse, wantCode: 502, wantMessage: "chat upstream unavailable"},
 		{name: "unclassified failure", cause: errors.New("unexpected failure"), wantCode: 500, wantMessage: "internal server error"},
 	}
 
@@ -265,6 +267,43 @@ func TestChatControllerNeverReflectsSensitiveUsecaseDetails(t *testing.T) {
 		if strings.Contains(string(payload), forbidden) || strings.Contains(err.Error(), forbidden) {
 			t.Fatalf("controller exposed forbidden failure detail %q", forbidden)
 		}
+	}
+}
+
+func TestChatControllerFailsClosedOnUnboundAIIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		identity obs.CorrelationIdentity
+	}{
+		{
+			name:     "result belongs to another request",
+			identity: obs.NewCorrelationIdentity("req-other", obs.WithAITraceID("ai-trace-t075-boundary")),
+		},
+		{
+			name:     "AI trace ID violates the opaque identity policy",
+			identity: obs.NewCorrelationIdentity("req-t075-boundary", obs.WithAITraceID("sk-sensitive-value")),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usecase := &chatUsecaseStub{result: logicchat.ChatResult{
+				Content:      "completed",
+				Model:        "provider-actual-model",
+				FinishReason: llm.FinishStop,
+				Identity:     tt.identity,
+			}}
+			controller := NewV1(ChatControllerDependencies{
+				Usecase:              usecase,
+				RequestIDFromContext: func(context.Context) string { return "req-t075-boundary" },
+			})
+
+			response, err := controller.Chat(context.Background(), &v1.ChatReq{Message: "hello"})
+			if response != nil {
+				t.Fatalf("Chat() response = %#v, want nil for unbound identity", response)
+			}
+			assertChatControllerError(t, err, 500, "internal server error", "req-t075-boundary", "", nil)
+		})
 	}
 }
 

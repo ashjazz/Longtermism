@@ -175,7 +175,7 @@
 - [X] T092 [US2] 在 `internal/observability/generation.go` 实现 generation/evaluator span adapter；质量门控：使 T072 GREEN，从活动 SpanContext 获取真实平台 identity，不把 domain AI ID 伪造成 OTel ID。
 - [X] T093 [US2] 在 `internal/eval/evidence_store.go` 实现低敏本地 evidence JSONL 存储；质量门控：使 T073 GREEN，原子/并发安全、错误可诊断、保留 90 天配置边界，不成为 Langfuse 专属事实源，并运行 `go test -race ./internal/eval/...`。
 - [X] T094 [US2] 在 `internal/logic/chat/evaluator.go` 实现确定性 completion-contract evaluator、泛型 evaluator 端口、evidence 输入与有界低敏摘要；质量门控：使 T074 GREEN，明确该实现只检查完成事实契约而非语义质量，评估事实不依赖 Langfuse，debug 只控制响应诊断，不改变 payload policy 或敏感扫描。
-- [ ] T095 [US2] 在 `internal/controller/chat/chat.go` 实现薄 controller；质量门控：使 T075 GREEN，使用统一错误 envelope 与稳定错误码，不记录 request body/provider body。
+- [X] T095 [US2] 在 `internal/controller/chat/chat.go` 实现薄 controller；质量门控：使 T075 GREEN，使用统一错误 envelope 与稳定错误码，不记录 request body/provider body。
 - [ ] T096 [US2] 在 `internal/cmd/cmd.go` 在既有 T052 装配结果上注册 chat 路由、配置化限流与 usecase 依赖；质量门控：使 T076 GREEN，运行 health/infra/chat 路由回归，单进程仍只有一个 provider lifecycle，限流不暴露用户输入，不得重新解析或重新安装 telemetry provider。
 - [ ] T097 [US2] 在 `internal/observability/langfuse/trace_mapper.go` 实现平台 allowlist 映射；质量门控：使 T077 GREEN，平台 adapter 只投影，不反向决定 `pkg/ai/obs.Trace` 或 eval evidence。
 - [ ] T098 [US2] 在 `internal/observability/langfuse/projection.go` 实现不可变 score projection 与稳定幂等键；质量门控：使 T078 GREEN，缺真实 platform identity 时 fail-fast，不通过名称/时间窗口猜测。

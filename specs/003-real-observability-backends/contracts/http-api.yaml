@@ -84,7 +84,7 @@ components:
           schema:
             $ref: '#/components/schemas/ChatPreAIErrorEnvelope'
     RateLimited:
-      description: Request rejected by rate limit
+      description: Request rejected by a local pre-AI limit or by the configured model service after AI identity creation
       headers:
         X-Request-ID:
           schema:
@@ -92,7 +92,9 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ChatPreAIErrorEnvelope'
+            oneOf:
+              - $ref: '#/components/schemas/ChatPreAIErrorEnvelope'
+              - $ref: '#/components/schemas/ChatPostAIErrorEnvelope'
     UpstreamFailure:
       description: Configured model service failed
       headers:
@@ -214,12 +216,12 @@ components:
       additionalProperties: false
       required: [code, message, data, meta]
       properties:
-        code: { type: integer, enum: [502, 504] }
+        code: { type: integer, enum: [429, 502, 504] }
         message: { type: string }
         data: { type: 'null' }
         meta:
           $ref: '#/components/schemas/ChatPostAIErrorMeta'
-      description: Upstream failures occur after the AI usecase begins and retain its identity.
+      description: Upstream failures and provider-side rate limits occur after the AI usecase begins and retain its identity.
     ChatPostAIErrorMeta:
       type: object
       additionalProperties: false

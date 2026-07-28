@@ -18,6 +18,8 @@ func TestDecodeAndValidateChatRequestOwnsHTTPBoundary(t *testing.T) {
 	}{
 		{name: "accepts one valid object", body: []byte(`{"message":"hello"}`)},
 		{name: "rejects caller-selected provider", body: []byte(`{"message":"hello","provider":"caller-controlled"}`), wantErr: true},
+		{name: "rejects duplicate message key", body: []byte(`{"message":"safe","message":"second"}`), wantErr: true},
+		{name: "rejects case-insensitive message alias", body: []byte(`{"Message":"hello"}`), wantErr: true},
 		{name: "rejects trailing JSON", body: []byte(`{"message":"hello"}{}`), wantErr: true},
 		{name: "rejects invalid UTF-8", body: []byte{'{', '"', 'm', '"', ':', '"', 0xff, '"', '}'}, wantErr: true},
 		{name: "rejects blank message", body: []byte(`{"message":" \t\n"}`), wantErr: true},

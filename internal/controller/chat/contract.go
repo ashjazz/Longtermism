@@ -30,6 +30,9 @@ func DecodeAndValidateChatRequest(ctx context.Context, body []byte) (v1.ChatReq,
 	if !utf8.Valid(body) {
 		return v1.ChatReq{}, errors.New("chat request must be valid UTF-8 JSON")
 	}
+	if err := validateExactChatRequestKeys(body); err != nil {
+		return v1.ChatReq{}, err
+	}
 
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
@@ -47,6 +50,42 @@ func DecodeAndValidateChatRequest(ctx context.Context, body []byte) (v1.ChatReq,
 		return v1.ChatReq{}, err
 	}
 	return request, nil
+}
+
+// validateExactChatRequestKeys closes a parser-differential gap in encoding/json: struct
+// decoding accepts case-insensitive aliases and silently lets a duplicate key overwrite the
+// earlier value. At an HTTP security boundary, one exact message field is the only valid shape.
+func validateExactChatRequestKeys(body []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	token, err := decoder.Token()
+	if err != nil {
+		return errors.New("chat request must be one JSON object")
+	}
+	opening, ok := token.(json.Delim)
+	if !ok || opening != '{' {
+		return errors.New("chat request must be one JSON object")
+	}
+
+	hasMessage := false
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return errors.New("chat request contains an invalid field")
+		}
+		key, ok := token.(string)
+		if !ok || key != "message" || hasMessage {
+			return errors.New("chat request contains an unknown or duplicate field")
+		}
+		hasMessage = true
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return errors.New("chat request contains an invalid message")
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return errors.New("chat request must be one JSON object")
+	}
+	return nil
 }
 
 func ValidateChatRequest(ctx context.Context, request v1.ChatReq) error {
