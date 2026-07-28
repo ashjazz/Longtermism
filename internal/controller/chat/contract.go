@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -17,23 +18,6 @@ import (
 const (
 	chatMessageMaxBytes = 32 * 1024
 	maxEvalSummaryBytes = 1024
-)
-
-var (
-	allowedEvaluators = map[string]struct{}{
-		"contract_check":                       {},
-		"deterministic_completion_contract_v1": {},
-	}
-	allowedEvalReasonClasses = map[string]struct{}{
-		"within_policy":            {},
-		"low_confidence":           {},
-		"threshold_not_configured": {},
-		"output_missing":           {},
-		"actual_model_missing":     {},
-		"finish_reason_invalid":    {},
-		"usage_inconsistent":       {},
-		"evaluator_not_configured": {},
-	}
 )
 
 // DecodeAndValidateChatRequest is the HTTP input boundary. GoFrame DTOs intentionally remain
@@ -93,7 +77,10 @@ func NewChatSuccessEnvelope(requestID, aiTraceID string, data v1.ChatData, summa
 	meta := v1.ChatSuccessMeta{RequestID: requestID, AITraceID: aiTraceID}
 	if debugEnabled {
 		if summary == nil {
-			summary = &v1.EvalSummary{Status: v1.EvalStatusNotRun}
+			summary = &v1.EvalSummary{
+				Status:      v1.EvalStatusNotRun,
+				ReasonClass: "evaluator_not_configured",
+			}
 		}
 		if err := validateEvalSummary(*summary); err != nil {
 			return v1.ChatSuccessEnvelope{}, err
@@ -124,23 +111,15 @@ func NewPostAIChatErrorEnvelope(code int, message, requestID, aiTraceID string) 
 }
 
 func validateEvalSummary(summary v1.EvalSummary) error {
-	switch summary.Status {
-	case v1.EvalStatusPassed, v1.EvalStatusWarning, v1.EvalStatusFailed, v1.EvalStatusNotRun:
-	default:
-		return errors.New("eval summary has an invalid status")
-	}
-	if summary.Score != nil && (*summary.Score < 0 || *summary.Score > 1) {
+	if summary.Score != nil &&
+		(math.IsNaN(*summary.Score) ||
+			math.IsInf(*summary.Score, 0) ||
+			*summary.Score < 0 ||
+			*summary.Score > 1) {
 		return errors.New("eval summary score must be between 0 and 1")
 	}
-	if summary.Evaluator != "" {
-		if _, ok := allowedEvaluators[summary.Evaluator]; !ok {
-			return errors.New("eval summary evaluator is not an approved low-sensitivity classification")
-		}
-	}
-	if summary.ReasonClass != "" {
-		if _, ok := allowedEvalReasonClasses[summary.ReasonClass]; !ok {
-			return errors.New("eval summary reason class is not an approved low-sensitivity classification")
-		}
+	if !isValidCompletionContractSummary(summary) {
+		return errors.New("eval summary fields do not form an approved completion contract result")
 	}
 	encoded, err := json.Marshal(summary)
 	if err != nil {
@@ -150,6 +129,49 @@ func validateEvalSummary(summary v1.EvalSummary) error {
 		return fmt.Errorf("eval summary exceeds %d bytes", maxEvalSummaryBytes)
 	}
 	return nil
+}
+
+func isValidCompletionContractSummary(summary v1.EvalSummary) bool {
+	if summary.Status == v1.EvalStatusNotRun {
+		return summary.Evaluator == "" &&
+			summary.Score == nil &&
+			summary.ReasonClass == "evaluator_not_configured"
+	}
+	if summary.Evaluator != "completion_contract_v1" || summary.Score == nil {
+		return false
+	}
+	switch {
+	case summary.Status == v1.EvalStatusPassed &&
+		*summary.Score == 1 &&
+		summary.ReasonClass == "within_policy":
+		return true
+	case summary.Status == v1.EvalStatusWarning &&
+		*summary.Score == 1 &&
+		summary.ReasonClass == "threshold_not_configured":
+		return true
+	case summary.Status == v1.EvalStatusWarning &&
+		*summary.Score == 0 &&
+		isCompletionContractFailureReason(summary.ReasonClass):
+		return true
+	case summary.Status == v1.EvalStatusFailed &&
+		*summary.Score == 0 &&
+		isCompletionContractFailureReason(summary.ReasonClass):
+		return true
+	default:
+		return false
+	}
+}
+
+func isCompletionContractFailureReason(reasonClass string) bool {
+	switch reasonClass {
+	case "output_missing",
+		"actual_model_missing",
+		"finish_reason_invalid",
+		"usage_inconsistent":
+		return true
+	default:
+		return false
+	}
 }
 
 func cloneEvalSummary(summary *v1.EvalSummary) *v1.EvalSummary {

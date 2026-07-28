@@ -43,7 +43,7 @@ func TestChatResponseDTOContract(t *testing.T) {
 			response: ChatSuccessEnvelope{
 				Code: 0, Message: "OK",
 				Data: ChatData{Content: "completed", Model: "actual-model", FinishReason: FinishReasonStop, Usage: UsageSummary{InputTokens: 2, OutputTokens: 3, TotalTokens: 5}},
-				Meta: ChatSuccessMeta{RequestID: "req-api", AITraceID: "ai-api", EvalSummary: &EvalSummary{Status: EvalStatusPassed, Evaluator: "contract_check", Score: &score, ReasonClass: "within_policy"}},
+				Meta: ChatSuccessMeta{RequestID: "req-api", AITraceID: "ai-api", EvalSummary: &EvalSummary{Status: EvalStatusPassed, Evaluator: "completion_contract_v1", Score: &score, ReasonClass: "within_policy"}},
 			},
 		},
 		{name: "pre-AI error has null data", response: ChatPreAIErrorEnvelope{Code: 400, Message: "invalid chat request", Data: nil, Meta: ChatPreAIErrorMeta{RequestID: "req-pre-ai"}}, wantNull: true},

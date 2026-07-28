@@ -239,6 +239,58 @@ func TestMapTraceToSpanSnapshotDoesNotLeakSensitiveGenerationFactsThroughGenAIAt
 	}
 }
 
+func TestMapTraceToSpanSnapshotRejectsSensitiveTopLevelIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(Trace) Trace
+	}{
+		{
+			name: "request ID",
+			mutate: func(trace Trace) Trace {
+				trace.RequestID = privacyContractJWT
+				return trace
+			},
+		},
+		{
+			name: "service trace ID",
+			mutate: func(trace Trace) Trace {
+				trace.ServiceTraceID = privacyContractAPIKey
+				return trace
+			},
+		},
+		{
+			name: "parent span ID",
+			mutate: func(trace Trace) Trace {
+				trace.SpanID = privacyContractExternalResponse
+				return trace
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot, err := MapTraceToSpanSnapshot(newMapperTrace(ObservationTypeGeneration, tt.mutate))
+			if err == nil {
+				payload, marshalErr := json.Marshal(snapshot)
+				if marshalErr != nil {
+					t.Fatalf("json.Marshal(snapshot) error = %v", marshalErr)
+				}
+				t.Fatalf("MapTraceToSpanSnapshot() accepted sensitive identity; payload bytes = %d", len(payload))
+			}
+			if snapshot.Name != "" ||
+				snapshot.RequestID != "" ||
+				snapshot.ServiceTraceID != "" ||
+				snapshot.SpanID != "" ||
+				snapshot.ParentSpanID != "" ||
+				snapshot.AITraceID != "" ||
+				len(snapshot.Attributes) != 0 ||
+				len(snapshot.Summaries) != 0 {
+				t.Fatalf("rejected identity returned partial snapshot = %#v", snapshot)
+			}
+		})
+	}
+}
+
 // Routing uses an explicit role, never a span-name or route heuristic. The same allowlist can be
 // used later by the chat bridge and real OTel adapter without marking infrastructure children.
 func TestMapSpanRoutingAttributesMarksOnlyExplicitAIPlaneRoles(t *testing.T) {
@@ -252,6 +304,9 @@ func TestMapSpanRoutingAttributesMarksOnlyExplicitAIPlaneRoles(t *testing.T) {
 		{name: "chat root", role: SpanRoutingRoleAIChatRoot, wantMarker: true},
 		{name: "chat bridge", role: SpanRoutingRoleAIChatBridge, wantMarker: true},
 		{name: "generation", role: SpanRoutingRoleAIGeneration, wantMarker: true},
+		{name: "retriever", role: SpanRoutingRoleAIRetriever, wantMarker: true},
+		{name: "tool", role: SpanRoutingRoleAITool, wantMarker: true},
+		{name: "agent", role: SpanRoutingRoleAIAgent, wantMarker: true},
 		{name: "evaluator", role: SpanRoutingRoleAIEvaluator, wantMarker: true},
 		{name: "ordinary HTTP child", role: SpanRoutingRoleHTTPChild},
 		{name: "database child", role: SpanRoutingRoleDatabaseChild},
@@ -274,7 +329,10 @@ func TestMapSpanRoutingAttributesMarksOnlyExplicitAIPlaneRoles(t *testing.T) {
 			}
 			marker, hasMarker := attributes["longtermism.observability.plane"]
 			if tt.wantMarker {
-				if !hasMarker || marker != "ai" || attributes["longtermism.ai.trace_id"] != "ai-trace-routing-001" {
+				if !hasMarker ||
+					marker != "ai" ||
+					attributes["longtermism.ai.trace_id"] != "ai-trace-routing-001" ||
+					attributes["ai.feature"] != "chat" {
 					t.Fatalf("AI routing attributes = %#v, want explicit plane marker and domain AI trace ID", attributes)
 				}
 				return
@@ -283,6 +341,114 @@ func TestMapSpanRoutingAttributesMarksOnlyExplicitAIPlaneRoles(t *testing.T) {
 				t.Fatalf("ordinary infrastructure child attributes = %#v, must not carry AI routing facts", attributes)
 			}
 		})
+	}
+}
+
+func TestMapSpanRoutingAttributesRejectsIncompleteOrSensitiveAIFacts(t *testing.T) {
+	validIdentity := NewCorrelationIdentity("req-routing-validation", WithAITraceID("ai-trace-routing-validation"))
+	tests := []struct {
+		name     string
+		identity CorrelationIdentity
+		feature  string
+	}{
+		{
+			name:     "missing AI trace identity",
+			identity: NewCorrelationIdentity("req-routing-validation"),
+			feature:  "chat",
+		},
+		{
+			name:     "blank AI trace identity",
+			identity: NewCorrelationIdentity("req-routing-validation", WithAITraceID("   ")),
+			feature:  "chat",
+		},
+		{
+			name:     "missing feature",
+			identity: validIdentity,
+		},
+		{
+			name:     "blank feature",
+			identity: validIdentity,
+			feature:  "   ",
+		},
+		{
+			name:     "sensitive AI trace identity",
+			identity: NewCorrelationIdentity("req-routing-validation", WithAITraceID(privacyContractAPIKey)),
+			feature:  "chat",
+		},
+		{
+			name:     "sensitive feature",
+			identity: validIdentity,
+			feature:  privacyContractPrompt,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attributes, err := MapSpanRoutingAttributes(SpanRoutingInput{
+				Role:     SpanRoutingRoleAIGeneration,
+				Identity: tt.identity,
+				Feature:  tt.feature,
+			})
+			if err == nil || len(attributes) != 0 {
+				t.Fatalf("MapSpanRoutingAttributes() = (%#v, %v), want rejected AI routing facts without partial attributes", attributes, err)
+			}
+		})
+	}
+}
+
+func TestMapSpanRoutingAttributesLeavesInfrastructureChildrenUnmarkedWithAILikeInput(t *testing.T) {
+	identity := NewCorrelationIdentity(
+		privacyContractJWT,
+		WithAITraceID(privacyContractAPIKey),
+	)
+
+	for _, role := range []SpanRoutingRole{
+		SpanRoutingRoleHTTPChild,
+		SpanRoutingRoleDatabaseChild,
+		SpanRoutingRoleRedisChild,
+	} {
+		t.Run(string(role), func(t *testing.T) {
+			attributes, err := MapSpanRoutingAttributes(SpanRoutingInput{
+				Role:     role,
+				Identity: identity,
+				Feature:  "HTTP POST /api/v1/chat",
+			})
+			if err != nil {
+				t.Fatalf("MapSpanRoutingAttributes() error = %v", err)
+			}
+			if len(attributes) != 0 {
+				t.Fatalf("infrastructure child attributes = %#v, want no AI routing facts", attributes)
+			}
+		})
+	}
+}
+
+func TestMapTraceToSpanSnapshotOmitsAbsentZeroGenAIFactsAndPlatformAttributes(t *testing.T) {
+	trace := newMapperTrace(
+		ObservationTypeGeneration,
+		withoutGenAIFacts("chat"),
+		WithUsage(0, 0, 0),
+		WithTemperature(0),
+	)
+
+	snapshot, err := MapTraceToSpanSnapshot(trace)
+	if err != nil {
+		t.Fatalf("MapTraceToSpanSnapshot() error = %v", err)
+	}
+	for key := range snapshot.Attributes {
+		if strings.HasPrefix(key, "langfuse.") {
+			t.Fatalf("core mapper emitted platform-specific attribute %q", key)
+		}
+	}
+	for _, key := range []string{
+		"gen_ai.usage.input_tokens",
+		"gen_ai.usage.output_tokens",
+		"gen_ai.usage.reasoning.output_tokens",
+		"gen_ai.request.temperature",
+	} {
+		if _, exists := snapshot.Attributes[key]; exists {
+			t.Fatalf("zero or absent GenAI fact must not be exported through %q", key)
+		}
 	}
 }
 

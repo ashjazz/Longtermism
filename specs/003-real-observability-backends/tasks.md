@@ -151,7 +151,7 @@
 - [X] T071 [P] [US2] 在 `pkg/ai/obs/otel_mapper_test.go` 扩展 AI plane/GenAI 映射 RED 测试；质量门控：root/bridge 与 generation/evaluator 有 marker，普通 HTTP/DB/Redis child 无 marker，缺语义字段不得被 adapter 猜测。
 - [X] T072 [P] [US2] 在 `internal/observability/generation_test.go` 编写 generation span RED 测试；质量门控：覆盖 parent/SpanContext、requested/actual model、token 类型、latency/outcome/prompt identity/payload mode，非流式不得伪造 TTFT。
 - [X] T073 [P] [US2] 在 `internal/eval/evidence_store_test.go` 编写本地 evidence 持久化 RED 测试；质量门控：覆盖先持久化后投影、防御性副本、进程重开可读取、并发追加、磁盘失败可诊断和 raw content 零命中。
-- [X] T074 [P] [US2] 在 `internal/logic/chat/evaluator_test.go` 编写确定性本地 evaluator 与 debug summary RED 测试；质量门控：定义第一阶段低敏 metric/threshold，覆盖 passed/warning/failed/not_run、evidence correlation、序列化 <=1024 bytes、非 debug 缺失和 reason_class 不含原文。
+- [X] T074 [P] [US2] 在 `internal/logic/chat/evaluator_test.go` 编写确定性 completion-contract evaluator 与 debug summary RED 测试；质量门控：定义第一阶段低敏 metric/threshold，覆盖 passed/warning/failed/not_run、evidence correlation、序列化 <=1024 bytes、非 debug 缺失和 reason_class 不含原文。
 - [X] T075 [P] [US2] 在 `internal/controller/chat/chat_test.go` 编写 controller RED 测试；质量门控：覆盖 JSON 校验、错误码映射、header/meta 一致、upstream body/endpoint/credential 不回显，controller 只依赖 usecase 接口。
 - [X] T076 [P] [US2] 在 `internal/cmd/routes_chat_test.go` 编写 chat 路由与 middleware RED 测试；质量门控：覆盖启用/关闭、request context 传播、配置化限流 429、真实 AI usecase 启动时才打 AI marker、infra route 不受影响。
 - [X] T077 [P] [US2] 在 `internal/observability/langfuse/trace_mapper_test.go` 编写 Langfuse OTLP attribute mapper RED 测试；质量门控：覆盖 allowlist、平台属性仅在 adapter、OTel TraceID/SpanID 与 ai_trace_id 分离、metadata/redacted/raw 三模式，且 raw 本地工件不进入 mapper、所有平台属性 secret 零命中。
@@ -170,11 +170,11 @@
 
 - [X] T088 [US2] 在 `api/v1/chat/chat.go` 定义 Chat Req/Res、Usage、EvalSummary 与 envelope；质量门控：使 T068 GREEN，与 OpenAPI 完全一致，客户端不能提交 provider/model/base URL/key/debug。
 - [X] T089 [US2] 在 `pkg/ai/resilience/provider_wrapper.go`、`pkg/ai/resilience/provider_retry.go` 与 `internal/cmd/llm_provider.go` 完成 OpenAI-compatible 装配和通用执行策略重构；质量门控：使 T069 GREEN，cmd 只处理 env 引用、production URL/redirect transport 防护、safe snapshot、offline fake 和 adapter 构建；resilience 以单一 `ProviderWrapper` 执行总 deadline、retry、stream forwarding/terminal 语义、错误归一化、breaker 与 outcome 观测，不能再保留 cmd retry wrapper。stream 必须以 terminal 而非首连成功结算 breaker/outcome；调用方取消不得计为 upstream failure，deadline 映射为 timeout outcome。adapter 继续拥有协议映射及其专属 `Config`/`NewProvider`，logic 只选择业务策略。
-- [ ] T090 [US2] 在 `internal/logic/chat/chat.go` 实现 chat usecase 的端口编排；质量门控：使 T070 GREEN，按“生成 AI identity -> 启动 root/bridge -> 调用 provider -> 调用 T094 evaluator -> 持久化 T093 evidence -> 非阻塞投影”的顺序组合已有职责，文件本身不重复实现 mapper/store/worker，观测/score 失败绝不覆盖模型业务结果。
-- [ ] T091 [US2] 在 `pkg/ai/obs/otel_mapper.go` 增加标准 GenAI 与 AI plane 显式映射；质量门控：使 T071 GREEN，只映射事实模型已有字段，Langfuse 专属属性不得进入核心 mapper。
-- [ ] T092 [US2] 在 `internal/observability/generation.go` 实现 generation/evaluator span adapter；质量门控：使 T072 GREEN，从活动 SpanContext 获取真实平台 identity，不把 domain AI ID 伪造成 OTel ID。
-- [ ] T093 [US2] 在 `internal/eval/evidence_store.go` 实现低敏本地 evidence JSONL 存储；质量门控：使 T073 GREEN，原子/并发安全、错误可诊断、保留 90 天配置边界，不成为 Langfuse 专属事实源，并运行 `go test -race ./internal/eval/...`。
-- [ ] T094 [US2] 在 `internal/logic/chat/evaluator.go` 实现确定性本地 evaluator、evidence 输入与有界低敏摘要；质量门控：使 T074 GREEN，评估事实不依赖 Langfuse，debug 只控制响应诊断，不改变 payload policy 或敏感扫描。
+- [X] T090 [US2] 在 `internal/logic/chat/chat.go` 实现 chat usecase 的端口编排；质量门控：使 T070 GREEN，按“生成 AI identity -> 启动 root/bridge -> 调用 provider -> 调用 T094 evaluator -> 持久化 T093 evidence -> 非阻塞投影”的顺序组合已有职责，文件本身不重复实现 mapper/store/worker，观测/score 失败绝不覆盖模型业务结果。
+- [X] T091 [US2] 在 `pkg/ai/obs/otel_mapper.go` 增加标准 GenAI 与 AI plane 显式映射；质量门控：使 T071 GREEN，只映射事实模型已有字段，Langfuse 专属属性不得进入核心 mapper。
+- [X] T092 [US2] 在 `internal/observability/generation.go` 实现 generation/evaluator span adapter；质量门控：使 T072 GREEN，从活动 SpanContext 获取真实平台 identity，不把 domain AI ID 伪造成 OTel ID。
+- [X] T093 [US2] 在 `internal/eval/evidence_store.go` 实现低敏本地 evidence JSONL 存储；质量门控：使 T073 GREEN，原子/并发安全、错误可诊断、保留 90 天配置边界，不成为 Langfuse 专属事实源，并运行 `go test -race ./internal/eval/...`。
+- [X] T094 [US2] 在 `internal/logic/chat/evaluator.go` 实现确定性 completion-contract evaluator、泛型 evaluator 端口、evidence 输入与有界低敏摘要；质量门控：使 T074 GREEN，明确该实现只检查完成事实契约而非语义质量，评估事实不依赖 Langfuse，debug 只控制响应诊断，不改变 payload policy 或敏感扫描。
 - [ ] T095 [US2] 在 `internal/controller/chat/chat.go` 实现薄 controller；质量门控：使 T075 GREEN，使用统一错误 envelope 与稳定错误码，不记录 request body/provider body。
 - [ ] T096 [US2] 在 `internal/cmd/cmd.go` 在既有 T052 装配结果上注册 chat 路由、配置化限流与 usecase 依赖；质量门控：使 T076 GREEN，运行 health/infra/chat 路由回归，单进程仍只有一个 provider lifecycle，限流不暴露用户输入，不得重新解析或重新安装 telemetry provider。
 - [ ] T097 [US2] 在 `internal/observability/langfuse/trace_mapper.go` 实现平台 allowlist 映射；质量门控：使 T077 GREEN，平台 adapter 只投影，不反向决定 `pkg/ai/obs.Trace` 或 eval evidence。

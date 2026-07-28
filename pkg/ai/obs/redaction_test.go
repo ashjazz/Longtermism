@@ -10,6 +10,9 @@ import (
 func TestScanForbiddenPayloadFieldsRejectsForbiddenKeys(t *testing.T) {
 	fields := map[string]string{
 		"raw_query":         "用户原文不应该进入普通观测",
+		"raw_output":        "模型原始回答不应该进入普通观测",
+		"raw_response":      "模型原始响应不应该进入普通观测",
+		"response_content":  "模型响应正文不应该进入普通观测",
 		"prompt_content":    "完整 prompt 不应该进入普通观测",
 		"tool_args":         `{"password":"secret"}`,
 		"api_key":           "sk-test-forbidden-key",
@@ -26,7 +29,10 @@ func TestScanForbiddenPayloadFieldsRejectsForbiddenKeys(t *testing.T) {
 		"jwt",
 		"password",
 		"prompt_content",
+		"raw_output",
 		"raw_query",
+		"raw_response",
+		"response_content",
 		"tool_args",
 	})
 	for _, finding := range findings {
@@ -46,6 +52,7 @@ func TestScanForbiddenPayloadFieldsRejectsSensitiveValues(t *testing.T) {
 		"provider_name":    "Bearer secret-token",
 		"outcome_status":   "password=secret",
 		"requested_model":  "external_response: private upstream body",
+		"response_summary": "raw output: private model response",
 		"tool_call_id":     `{"account_id":"acct-private","password":"secret"}`,
 		"service_trace_id": "svc-trace-safe",
 	}
@@ -57,6 +64,7 @@ func TestScanForbiddenPayloadFieldsRejectsSensitiveValues(t *testing.T) {
 		"outcome_status",
 		"provider_name",
 		"requested_model",
+		"response_summary",
 		"tool_call_id",
 		"user_id",
 	})

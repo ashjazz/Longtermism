@@ -28,7 +28,10 @@ var forbiddenPayloadKeys = map[string]struct{}{
 	"password":          {},
 	"prompt":            {},
 	"prompt_content":    {},
+	"raw_output":        {},
 	"raw_query":         {},
+	"raw_response":      {},
+	"response_content":  {},
 	"tool_args":         {},
 	"tool_arguments":    {},
 }
@@ -110,6 +113,7 @@ func ContainsSensitivePayloadValue(value string) bool {
 		"password",
 		"prompt:",
 		"raw query",
+		"raw output",
 		"sk-",
 		"system prompt",
 		"tool_args",

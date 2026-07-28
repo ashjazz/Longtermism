@@ -64,7 +64,7 @@ func TestChatControllerMapsUsecaseResultAndServerDebugPolicy(t *testing.T) {
 		Identity:     identity,
 		EvalSummary: &logicchat.DebugEvalSummary{
 			Status:      logicchat.EvalStatusPassed,
-			Evaluator:   "deterministic_completion_contract_v1",
+			Evaluator:   "completion_contract_v1",
 			Score:       &score,
 			ReasonClass: "within_policy",
 		},

@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 
@@ -37,7 +38,8 @@ func TestDecodeAndValidateChatRequestOwnsHTTPBoundary(t *testing.T) {
 }
 
 func TestChatResponseFactoriesKeepPublicEnvelopeSafe(t *testing.T) {
-	summary := v1.EvalSummary{Status: v1.EvalStatusPassed, Evaluator: "contract_check", ReasonClass: "within_policy"}
+	score := 1.0
+	summary := v1.EvalSummary{Status: v1.EvalStatusPassed, Evaluator: "completion_contract_v1", Score: &score, ReasonClass: "within_policy"}
 	success, err := NewChatSuccessEnvelope("req-controller", "ai-controller", v1.ChatData{Content: "completed", Model: "actual-model", FinishReason: v1.FinishReasonStop}, &summary, true)
 	if err != nil {
 		t.Fatalf("NewChatSuccessEnvelope() error = %v", err)
@@ -79,8 +81,8 @@ func TestChatResponseFactoriesKeepPublicEnvelopeSafe(t *testing.T) {
 }
 
 func TestChatSuccessFactoryAppliesDebugSummaryPolicyAndSnapshotsInput(t *testing.T) {
-	score := 0.95
-	summary := &v1.EvalSummary{Status: v1.EvalStatusPassed, Evaluator: "contract_check", Score: &score, ReasonClass: "within_policy"}
+	score := 1.0
+	summary := &v1.EvalSummary{Status: v1.EvalStatusPassed, Evaluator: "completion_contract_v1", Score: &score, ReasonClass: "within_policy"}
 	envelope, err := NewChatSuccessEnvelope("req-snapshot", "ai-snapshot", v1.ChatData{}, summary, true)
 	if err != nil {
 		t.Fatalf("NewChatSuccessEnvelope() error = %v", err)
@@ -105,6 +107,17 @@ func TestChatSuccessFactoryAppliesDebugSummaryPolicyAndSnapshotsInput(t *testing
 	if withoutDebug.Meta.EvalSummary != nil {
 		t.Fatal("debug-disabled success must omit eval summary")
 	}
+	notRun, err := NewChatSuccessEnvelope("req-not-run", "ai-not-run", v1.ChatData{}, nil, true)
+	if err != nil {
+		t.Fatalf("NewChatSuccessEnvelope(not-run) error = %v", err)
+	}
+	if notRun.Meta.EvalSummary == nil ||
+		notRun.Meta.EvalSummary.Status != v1.EvalStatusNotRun ||
+		notRun.Meta.EvalSummary.Evaluator != "" ||
+		notRun.Meta.EvalSummary.Score != nil ||
+		notRun.Meta.EvalSummary.ReasonClass != "evaluator_not_configured" {
+		t.Fatalf("not-run summary = %#v, want explicit evaluator_not_configured fact", notRun.Meta.EvalSummary)
+	}
 	if _, err := NewChatSuccessEnvelope("", "ai-missing-request", v1.ChatData{}, nil, false); err == nil {
 		t.Fatal("success factory must require request identity")
 	}
@@ -119,6 +132,31 @@ func TestChatSuccessFactoryAppliesDebugSummaryPolicyAndSnapshotsInput(t *testing
 	}
 	if _, err := NewChatSuccessEnvelope("req-invalid-status", "ai-invalid-status", v1.ChatData{}, &v1.EvalSummary{Status: "unknown"}, true); err == nil {
 		t.Fatal("success factory must reject unknown debug statuses")
+	}
+	for _, legacyEvaluator := range []string{"contract_check", "deterministic_completion_contract_v1"} {
+		if _, err := NewChatSuccessEnvelope(
+			"req-legacy-evaluator",
+			"ai-legacy-evaluator",
+			v1.ChatData{},
+			&v1.EvalSummary{Status: v1.EvalStatusPassed, Evaluator: legacyEvaluator, Score: ptrScore(1), ReasonClass: "within_policy"},
+			true,
+		); err == nil {
+			t.Fatalf("success factory must reject legacy evaluator identity %q", legacyEvaluator)
+		}
+	}
+	invalidCombinations := []v1.EvalSummary{
+		{Status: v1.EvalStatusPassed},
+		{Status: v1.EvalStatusPassed, Evaluator: "completion_contract_v1", Score: ptrScore(0), ReasonClass: "output_missing"},
+		{Status: v1.EvalStatusWarning, Evaluator: "completion_contract_v1", Score: ptrScore(0), ReasonClass: "threshold_not_configured"},
+		{Status: v1.EvalStatusFailed, Evaluator: "completion_contract_v1", Score: ptrScore(1), ReasonClass: "within_policy"},
+		{Status: v1.EvalStatusNotRun, Evaluator: "completion_contract_v1", Score: ptrScore(1), ReasonClass: "within_policy"},
+		{Status: v1.EvalStatusPassed, Evaluator: "completion_contract_v1", Score: ptrScore(math.NaN()), ReasonClass: "within_policy"},
+		{Status: v1.EvalStatusPassed, Evaluator: "completion_contract_v1", Score: ptrScore(math.Inf(1)), ReasonClass: "within_policy"},
+	}
+	for _, invalid := range invalidCombinations {
+		if _, err := NewChatSuccessEnvelope("req-invalid-combination", "ai-invalid-combination", v1.ChatData{}, &invalid, true); err == nil {
+			t.Fatalf("success factory accepted impossible eval summary %#v", invalid)
+		}
 	}
 }
 
