@@ -50,6 +50,24 @@ var (
 				return fmt.Errorf("initialize observability: %w", err)
 			}
 			defer shutdownObservabilityBootstrap(bootstrap)
+			limiter := ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{})
+			chatRuntime, err := buildDefaultChatRuntime(ctx, bootstrap)
+			if err != nil {
+				return fmt.Errorf("initialize chat runtime: %w", err)
+			}
+			defer func() {
+				if closeErr := chatRuntime.Close(); closeErr != nil {
+					g.Log().Error(ctx, "close chat runtime", closeErr)
+				}
+			}()
+			completionMiddleware, err := newHTTPCompletionLoggingMiddleware(
+				ctx,
+				bootstrap,
+				bootstrap.InfraSmokeEnabled || chatRuntime.Enabled,
+			)
+			if err != nil {
+				return err
+			}
 
 			s.Group("/api", func(group *ghttp.RouterGroup) {
 				// MiddlewareHandlerResponse 提供统一响应信封 {code, message, data}，
@@ -61,7 +79,18 @@ var (
 					v1.Bind(health.NewV1())
 				})
 			})
-			if err := registerDefaultObservabilityRoutes(ctx, s, bootstrap); err != nil {
+			if err := registerDefaultObservabilityRoutes(ctx, s, bootstrap, limiter, completionMiddleware); err != nil {
+				return err
+			}
+			if err := RegisterChatRoutes(s, ChatRoutesInput{
+				Enabled:                     chatRuntime.Enabled,
+				Bootstrap:                   bootstrap,
+				CompletionLoggingMiddleware: completionMiddleware,
+				Handler:                     chatRuntime.Handler,
+				Limiter:                     limiter,
+				Limit:                       chatRuntime.Limit,
+				state:                       &processChatRoutesState,
+			}); err != nil {
 				return err
 			}
 
@@ -107,11 +136,13 @@ func buildDefaultObservabilityBootstrap(ctx context.Context) (*ObservabilityBoot
 	}, ObservabilityBootstrapDependencies{})
 }
 
-func registerDefaultObservabilityRoutes(ctx context.Context, server *ghttp.Server, bootstrap *ObservabilityBootstrap) error {
-	completionMiddleware, err := newHTTPCompletionLoggingMiddleware(ctx, bootstrap)
-	if err != nil {
-		return err
-	}
+func registerDefaultObservabilityRoutes(
+	ctx context.Context,
+	server *ghttp.Server,
+	bootstrap *ObservabilityBootstrap,
+	limiter ratelimit.Limiter,
+	completionMiddleware func(http.Handler) http.Handler,
+) error {
 	rateLimitConfig, err := resolveInfraSmokeRateLimitConfig(ctx)
 	if err != nil {
 		return err
@@ -134,14 +165,18 @@ func registerDefaultObservabilityRoutes(ctx context.Context, server *ghttp.Serve
 		Bootstrap:                   bootstrap,
 		CompletionLoggingMiddleware: completionMiddleware,
 		InfraSmokeHandler:           newInfraSmokeHTTPHandler(controller),
-		Limiter:                     ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}),
+		Limiter:                     limiter,
 		InfraSmokeLimit:             rateLimitConfig,
 		state:                       &processObservabilityRoutesState,
 	})
 }
 
-func newHTTPCompletionLoggingMiddleware(ctx context.Context, bootstrap *ObservabilityBootstrap) (func(http.Handler) http.Handler, error) {
-	if bootstrap == nil || !bootstrap.InfraSmokeEnabled {
+func newHTTPCompletionLoggingMiddleware(
+	ctx context.Context,
+	bootstrap *ObservabilityBootstrap,
+	isHTTPObservationEnabled bool,
+) (func(http.Handler) http.Handler, error) {
+	if bootstrap == nil || !isHTTPObservationEnabled {
 		return nil, nil
 	}
 	config, err := gcfg.NewAdapterFile("manifest/config/glog-observability.yaml")

@@ -8,6 +8,7 @@
 
 # 本地运行产物
 resource/log/
+resource/eval/
 resource/cache/
 tmp/
 temp/

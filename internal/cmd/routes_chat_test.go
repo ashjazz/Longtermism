@@ -3,10 +3,12 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +24,8 @@ const (
 	chatRouteTestRequestID = "req-t076-chat"
 	chatRouteTestInput     = "private-chat-input-t076"
 )
+
+var chatRouteTestServerSequence atomic.Uint64
 
 func TestRegisterChatRoutesGatesChatAndPreservesRequestContext(t *testing.T) {
 	tests := []struct {
@@ -98,6 +102,28 @@ func TestRegisterChatRoutesUsesAnIndependentConfiguredRateLimit(t *testing.T) {
 	}
 }
 
+func TestRegisterChatRoutesRunsSharedHTTPCompletionMiddleware(t *testing.T) {
+	server := newChatRouteTestServer(t)
+	handler := &chatRouteHandlerStub{}
+	var middlewareCalls atomic.Int64
+	input := newChatRoutesInput(true, handler.handle, ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}), &chatRoutesState{})
+	input.CompletionLoggingMiddleware = func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			middlewareCalls.Add(1)
+			next.ServeHTTP(writer, request)
+		})
+	}
+	if err := RegisterChatRoutes(server, input); err != nil {
+		t.Fatalf("RegisterChatRoutes() error = %v", err)
+	}
+	if response := serveChatRoute(server); response.Code != http.StatusOK {
+		t.Fatalf("chat response = %d, want 200", response.Code)
+	}
+	if middlewareCalls.Load() != 1 {
+		t.Fatalf("completion middleware calls = %d, want 1", middlewareCalls.Load())
+	}
+}
+
 func TestRegisterChatRoutesDoesNotCreateAIIdentityBeforeTheUsecaseStarts(t *testing.T) {
 	server := newChatRouteTestServer(t)
 	handler := &chatRouteHandlerStub{startAIUsecase: true}
@@ -119,17 +145,35 @@ func TestRegisterChatRoutesDoesNotCreateAIIdentityBeforeTheUsecaseStarts(t *test
 func TestRegisterChatRoutesClearsUntrustedInboundAIPlaneMarker(t *testing.T) {
 	server := newChatRouteTestServer(t)
 	handler := &chatRouteHandlerStub{}
-	if err := RegisterChatRoutes(server, newChatRoutesInput(true, handler.handle, ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}), &chatRoutesState{})); err != nil {
+	input := newChatRoutesInput(true, handler.handle, ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}), &chatRoutesState{})
+	input.Bootstrap = &ObservabilityBootstrap{
+		Middleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				extracted := NewObservabilityIngressPropagator(ObservabilityIngressTrustPolicy{}).Extract(
+					request.Context(),
+					propagation.HeaderCarrier(request.Header),
+				)
+				next.ServeHTTP(writer, request.WithContext(extracted))
+			})
+		},
+	}
+	if err := RegisterChatRoutes(server, input); err != nil {
 		t.Fatalf("RegisterChatRoutes() error = %v", err)
 	}
 
-	requestContext := NewObservabilityIngressPropagator(ObservabilityIngressTrustPolicy{}).Extract(context.Background(), propagation.MapCarrier{
-		"baggage": observabilityPlaneBaggageKey + "=ai," + obs.BaggageAITraceID + "=forged-ai-t076," + obs.BaggageEvalRunID + "=forged-eval-t076",
-	})
-	response := serveChatRouteWithContext(server, requestContext)
+	response := serveChatRouteWithBaggageHeader(
+		server,
+		observabilityPlaneBaggageKey+"=ai,"+
+			obs.BaggageAITraceID+"=forged-ai-t076,"+
+			obs.BaggageEvalRunID+"=forged-eval-t076,"+
+			obs.BaggageRequestID+"=forged-request-t076",
+	)
 	identity, _ := handler.preUsecaseIdentity()
 	if response.Code != http.StatusOK || handler.preUsecaseAIPlaneMarker() != "" || handler.preUsecaseAITraceID() != "" || identity.EvalRunID != "" {
 		t.Fatalf("untrusted inbound AI facts = status:%d marker:%q trace:%q eval:%q, want request-only ingress", response.Code, handler.preUsecaseAIPlaneMarker(), handler.preUsecaseAITraceID(), identity.EvalRunID)
+	}
+	if forged := handler.preUsecaseBaggageRequestID(); forged != "" {
+		t.Fatalf("untrusted baggage request_id = %q, want discarded in favor of validated HTTP identity", forged)
 	}
 }
 
@@ -156,6 +200,23 @@ func TestRegisterChatRoutesIsIdempotentAndValidatesEnabledDependencies(t *testin
 	}
 	if err := RegisterChatRoutes(newChatRouteTestServer(t), ChatRoutesInput{Enabled: true, state: &chatRoutesState{}}); err == nil {
 		t.Fatal("enabled chat without handler error = nil, want fail-fast")
+	}
+	if err := RegisterChatRoutes(newChatRouteTestServer(t), ChatRoutesInput{
+		Enabled: true,
+		Handler: handler.handle,
+		Limit:   ChatRateLimitConfig{Rate: 1, Period: time.Minute},
+		state:   &chatRoutesState{},
+	}); err == nil {
+		t.Fatal("enabled chat without limiter error = nil, want fail-fast")
+	}
+	if err := RegisterChatRoutes(newChatRouteTestServer(t), ChatRoutesInput{
+		Enabled: true,
+		Handler: handler.handle,
+		Limiter: ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}),
+		Limit:   ChatRateLimitConfig{},
+		state:   &chatRoutesState{},
+	}); err == nil {
+		t.Fatal("enabled chat with invalid limit error = nil, want fail-fast")
 	}
 }
 
@@ -198,7 +259,11 @@ func assertChatRateLimitResponse(t *testing.T, response *httptest.ResponseRecord
 
 func newChatRouteTestServer(t *testing.T) *ghttp.Server {
 	t.Helper()
-	server := ghttp.GetServer("t076-" + strings.ReplaceAll(t.Name(), "/", "-"))
+	server := ghttp.GetServer(fmt.Sprintf(
+		"t076-%s-%d",
+		strings.ReplaceAll(t.Name(), "/", "-"),
+		chatRouteTestServerSequence.Add(1),
+	))
 	server.SetDumpRouterMap(false)
 	server.SetSessionStorage(gsession.NewStorageMemory())
 	server.SetPort(0)
@@ -234,6 +299,16 @@ func serveChatRouteWithContext(server *ghttp.Server, requestContext context.Cont
 	return response
 }
 
+func serveChatRouteWithBaggageHeader(server *ghttp.Server, baggageHeader string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, chatHTTPPath, strings.NewReader(`{"message":"`+chatRouteTestInput+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(RequestIDHeader, chatRouteTestRequestID)
+	request.Header.Set("Baggage", baggageHeader)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	return response
+}
+
 func countChatRoutes(routes []ghttp.RouterItem) int {
 	count := 0
 	for _, route := range routes {
@@ -252,6 +327,7 @@ type chatRouteHandlerStub struct {
 	preIdentity               obs.CorrelationIdentity
 	preIdentityOK             bool
 	preAIPlaneMarker          string
+	preBaggageRequestID       string
 	startedIdentity           obs.CorrelationIdentity
 	startedAIPlaneMarkerValue string
 	startAIUsecase            bool
@@ -264,6 +340,7 @@ func (h *chatRouteHandlerStub) handle(request *ghttp.Request) {
 	h.routeTemplateValue = RouteTemplateFromContext(request.GetCtx())
 	h.preIdentity, h.preIdentityOK = obs.CorrelationIdentityFromContext(request.GetCtx())
 	h.preAIPlaneMarker = baggage.FromContext(request.GetCtx()).Member(observabilityPlaneBaggageKey).Value()
+	h.preBaggageRequestID = baggage.FromContext(request.GetCtx()).Member(obs.BaggageRequestID).Value()
 	if h.startAIUsecase {
 		// 模拟真实 usecase 开始 AI 调用时才写入的 AI 平面标记；路由层在此之前不能猜测。
 		marker, err := baggage.NewMemberRaw(observabilityPlaneBaggageKey, "ai")
@@ -310,6 +387,11 @@ func (h *chatRouteHandlerStub) preUsecaseAIPlaneMarker() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.preAIPlaneMarker
+}
+func (h *chatRouteHandlerStub) preUsecaseBaggageRequestID() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.preBaggageRequestID
 }
 func (h *chatRouteHandlerStub) startedAITraceID() string {
 	h.mu.Lock()

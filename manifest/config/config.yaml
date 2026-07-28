@@ -43,6 +43,25 @@ ai:
   # 启动后意外调用模型或读取生产凭据。
   chat:
     enabled: false
+    # 产品路由使用独立低基数 bucket，不与 infra-smoke、health 或用户输入共享 key。
+    rate_limit:
+      rate: 20
+      period: "1m"
+    # 当前 usecase 的 prompt contract 是单条 user message；version 是显式领域事实，
+    # hash 由 composition root 对该固定 contract 计算，不能由 adapter 猜测。
+    prompt:
+      template_version: "direct-user-message-v1"
+    eval:
+      # 首阶段只执行完成事实 contract；它证明输出结构完整，不声称回答语义正确。
+      dataset:
+        name: "live-chat-completion-contract"
+        version: "v1"
+      sample_id: "non-streaming-chat"
+      metric_name: "completion-contract"
+      threshold: 1.0
+      evidence:
+        path: "resource/eval/chat-evidence.jsonl"
+        retention: "2160h"
   llm:
     default_provider: "openai"
     providers:
