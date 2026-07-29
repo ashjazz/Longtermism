@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	t078PlatformTraceID       = "platform-trace-t078"
-	t078PlatformObservationID = "platform-observation-t078"
+	t078PlatformTraceID       = "1234567890abcdef1234567890abcdef"
+	t078PlatformObservationID = "1234567890abcdef"
 )
 
 func TestNewScoreProjectionBuildsStableIdempotentEvidenceSnapshot(t *testing.T) {
@@ -88,7 +88,7 @@ func TestNewScoreTargetRequiresMappedPlatformIdentity(t *testing.T) {
 		{name: "trace score permits no observation", kind: ScoreTargetKindTrace, source: validSource},
 		{name: "generation score requires mapped observation", kind: ScoreTargetKindObservation, source: validSource, wantObservation: t078PlatformObservationID},
 		{name: "missing mapped trace", kind: ScoreTargetKindTrace, wantError: true},
-		{name: "hand assembled platform IDs have no mapper provenance", kind: ScoreTargetKindObservation, source: TraceProjection{PlatformTraceID: t078PlatformTraceID, PlatformObservationID: t078PlatformObservationID}, wantError: true},
+		{name: "hand assembled platform IDs have no mapper provenance", kind: ScoreTargetKindObservation, source: TraceProjection{platformTraceID: t078PlatformTraceID, platformObservationID: t078PlatformObservationID}, wantError: true},
 		{name: "unknown target kind", kind: ScoreTargetKind("unknown"), source: validSource, wantError: true},
 	}
 	for _, tt := range tests {
@@ -101,7 +101,7 @@ func TestNewScoreTargetRequiresMappedPlatformIdentity(t *testing.T) {
 				assertT078ErrorDoesNotContainIdentity(t, err, newT078Evidence(t, "answer_relevance"))
 				return
 			}
-			if err != nil || target.Kind() != tt.kind || target.PlatformTraceID() != tt.source.PlatformTraceID || target.PlatformObservationID() != tt.wantObservation {
+			if err != nil || target.Kind() != tt.kind || target.PlatformTraceID() != tt.source.PlatformTraceID() || target.PlatformObservationID() != tt.wantObservation {
 				t.Fatalf("NewScoreTarget() = (%#v, %v), want target derived from mapped projection", target, err)
 			}
 		})

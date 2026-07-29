@@ -54,9 +54,10 @@ func TestMapTraceToProjectionProjectsOnlyExplicitAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MapTraceToProjection() error = %v", err)
 	}
-	if projection.PlatformTraceID != t077OTelTraceID || projection.PlatformObservationID != t077OTelSpanID {
+	if projection.PlatformTraceID() != t077OTelTraceID || projection.PlatformObservationID() != t077OTelSpanID {
 		t.Fatalf("platform identity = %#v, want native OTel identities", projection)
 	}
+	projectionAttributes := projection.AttributesSnapshot()
 	wantAttributes := map[string]string{
 		"langfuse.observation.type":                             "generation",
 		"langfuse.observation.name":                             "ai.generation",
@@ -74,16 +75,16 @@ func TestMapTraceToProjectionProjectsOnlyExplicitAllowlist(t *testing.T) {
 		"langfuse.observation.metadata.payload_redacted":        "false",
 	}
 	for key, want := range wantAttributes {
-		if got := projection.Attributes[key]; got != want {
+		if got := projectionAttributes[key]; got != want {
 			t.Fatalf("mapped attribute %q = %q, want %q", key, got, want)
 		}
 	}
-	assertExactT077AttributeKeys(t, projection.Attributes, wantAttributes)
+	assertExactT077AttributeKeys(t, projectionAttributes, wantAttributes)
 	for _, forbidden := range []string{
 		"request.id", "ai.tenant_id", "ai.user_id", "ai.session_id", "ai.query.hash", "ai.agent.tool_name",
 		"http.route", "langfuse.observation.metadata.caller_key", "authorization", "gen_ai.prompt.0.content",
 	} {
-		if _, exists := projection.Attributes[forbidden]; exists {
+		if _, exists := projectionAttributes[forbidden]; exists {
 			t.Fatalf("mapper must not copy source attribute %q into a platform projection", forbidden)
 		}
 	}
@@ -108,7 +109,7 @@ func TestMapTraceToProjectionCreatesLangfusePropertiesOnlyAtAdapterBoundary(t *t
 	if err != nil {
 		t.Fatalf("MapTraceToProjection() error = %v", err)
 	}
-	if !hasT077AttributePrefix(projection.Attributes, "langfuse.") {
+	if !hasT077AttributePrefix(projection.AttributesSnapshot(), "langfuse.") {
 		t.Fatal("Langfuse properties must be created only by the platform adapter")
 	}
 	if got := span.Attributes["langfuse.observation.type"]; got != "" {
@@ -126,6 +127,10 @@ func TestMapTraceToProjectionKeepsNativeOTelAndAIDomainIdentitiesSeparate(t *tes
 		{name: "native OTel identities are required", traceID: t077OTelTraceID, spanID: t077OTelSpanID},
 		{name: "missing native trace ID cannot fall back to AI identity", spanID: t077OTelSpanID, wantError: true},
 		{name: "missing native span ID cannot fall back to AI identity", traceID: t077OTelTraceID, wantError: true},
+		{name: "malformed native trace ID is rejected", traceID: "not-an-otel-trace", spanID: t077OTelSpanID, wantError: true},
+		{name: "malformed native span ID is rejected", traceID: t077OTelTraceID, spanID: "not-an-otel-span", wantError: true},
+		{name: "zero native trace ID is rejected", traceID: strings.Repeat("0", 32), spanID: t077OTelSpanID, wantError: true},
+		{name: "zero native span ID is rejected", traceID: t077OTelTraceID, spanID: strings.Repeat("0", 16), wantError: true},
 	}
 
 	for _, tt := range tests {
@@ -149,11 +154,41 @@ func TestMapTraceToProjectionKeepsNativeOTelAndAIDomainIdentitiesSeparate(t *tes
 			if err != nil {
 				t.Fatalf("MapTraceToProjection() error = %v", err)
 			}
-			if projection.PlatformTraceID != t077OTelTraceID || projection.PlatformObservationID != t077OTelSpanID || projection.PlatformTraceID == t077AITraceID || projection.PlatformObservationID == t077AITraceID {
+			if projection.PlatformTraceID() != t077OTelTraceID || projection.PlatformObservationID() != t077OTelSpanID || projection.PlatformTraceID() == t077AITraceID || projection.PlatformObservationID() == t077AITraceID {
 				t.Fatalf("platform and AI identities were conflated: %#v", projection)
 			}
-			if projection.Attributes["langfuse.observation.metadata.ai_trace_id"] != t077AITraceID {
-				t.Fatalf("AI identity must remain an explicit metadata fact, attributes=%#v", projection.Attributes)
+			attributes := projection.AttributesSnapshot()
+			if attributes["langfuse.observation.metadata.ai_trace_id"] != t077AITraceID {
+				t.Fatalf("AI identity must remain an explicit metadata fact, attributes=%#v", attributes)
+			}
+		})
+	}
+}
+
+func TestMapTraceToProjectionRejectsUnsafeObservationNames(t *testing.T) {
+	tests := []struct {
+		name            string
+		observationName string
+	}{
+		{name: "empty", observationName: ""},
+		{name: "natural language", observationName: "show me the private customer request"},
+		{name: "line break", observationName: "ai.generation\nraw content"},
+		{name: "too long", observationName: strings.Repeat("a", 257)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			span := newT077OTLPSpanSnapshot(validT077SpanSnapshot().Attributes)
+			span.Name = tt.observationName
+			projection, err := MapTraceToProjection(TraceMapperInput{
+				Span:        span,
+				PayloadMode: obs.PayloadModeMetadataOnly,
+			})
+			if err == nil || !isZeroT077Projection(projection) {
+				t.Fatalf("MapTraceToProjection() = (%#v, %v), want unsafe name rejected", projection, err)
+			}
+			if tt.observationName != "" && strings.Contains(err.Error(), tt.observationName) {
+				t.Fatal("observation validation error must not echo the rejected name")
 			}
 		})
 	}
@@ -234,7 +269,7 @@ func TestMapTraceToProjectionAppliesPayloadModeBoundary(t *testing.T) {
 				t.Fatalf("MapTraceToProjection() error = %v", err)
 			}
 			for key, want := range map[string]string{"langfuse.observation.input": tt.wantInput, "langfuse.observation.output": tt.wantOutput} {
-				got, exists := projection.Attributes[key]
+				got, exists := projection.AttributesSnapshot()[key]
 				if !tt.wantContent && exists {
 					t.Fatalf("metadata-only mapper must omit %q, got %q", key, got)
 				}
@@ -259,7 +294,6 @@ func TestMapTraceToProjectionAppliesPayloadModeBoundary(t *testing.T) {
 func TestTraceMapperTypesDoNotExposeRawPayloadOrCallerMetadata(t *testing.T) {
 	allowedStringMaps := map[string]map[string]struct{}{
 		"OTLPSpanSnapshot": {"Attributes": {}},
-		"TraceProjection":  {"Attributes": {}},
 	}
 	for _, typeOfValue := range []reflect.Type{
 		reflect.TypeFor[TraceMapperInput](),
@@ -272,7 +306,7 @@ func TestTraceMapperTypesDoNotExposeRawPayloadOrCallerMetadata(t *testing.T) {
 			if field.Type == reflect.TypeFor[obs.LocalRawPayload]() || strings.Contains(name, "raw") || strings.Contains(name, "secret") || strings.Contains(name, "credential") || strings.Contains(name, "authorization") {
 				t.Fatalf("%s must not expose raw content or a secret-bearing field %q", typeOfValue.Name(), field.Name)
 			}
-			if field.Type.Kind() == reflect.Map {
+			if field.Type.Kind() == reflect.Map && field.IsExported() {
 				if field.Type.Key().Kind() != reflect.String || field.Type.Elem().Kind() != reflect.String {
 					t.Fatalf("%s.%s must not expose arbitrary metadata values", typeOfValue.Name(), field.Name)
 				}
@@ -281,6 +315,28 @@ func TestTraceMapperTypesDoNotExposeRawPayloadOrCallerMetadata(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestTraceProjectionAttributesSnapshotIsDefensive(t *testing.T) {
+	projection, err := MapTraceToProjection(TraceMapperInput{
+		Span:        newT077OTLPSpanSnapshot(validT077SpanSnapshot().Attributes),
+		PayloadMode: obs.PayloadModeMetadataOnly,
+	})
+	if err != nil {
+		t.Fatalf("MapTraceToProjection() error = %v", err)
+	}
+
+	callerCopy := projection.AttributesSnapshot()
+	callerCopy["authorization"] = "Bearer caller-injected-t077"
+	callerCopy["langfuse.observation.name"] = "mutated"
+
+	stableSnapshot := projection.AttributesSnapshot()
+	if _, exists := stableSnapshot["authorization"]; exists {
+		t.Fatal("caller mutation must not add attributes after the privacy scan")
+	}
+	if got := stableSnapshot["langfuse.observation.name"]; got != "ai.generation" {
+		t.Fatalf("caller mutation changed stored observation name to %q", got)
 	}
 }
 
@@ -328,7 +384,7 @@ func newT077OTLPSpanSnapshotWithIdentity(traceID, spanID string, attributes map[
 }
 
 func isZeroT077Projection(projection TraceProjection) bool {
-	return projection.PlatformTraceID == "" && projection.PlatformObservationID == "" && len(projection.Attributes) == 0
+	return projection.PlatformTraceID() == "" && projection.PlatformObservationID() == "" && len(projection.AttributesSnapshot()) == 0
 }
 
 func assertT077ProjectionContainsNoSecrets(t *testing.T, projection TraceProjection) {
@@ -345,7 +401,7 @@ func assertT077ProjectionContainsNoSecrets(t *testing.T, projection TraceProject
 			t.Fatalf("Langfuse projection leaked forbidden content")
 		}
 	}
-	if findings := obs.ScanForbiddenPayloadFields(projection.Attributes); len(findings) != 0 {
+	if findings := obs.ScanForbiddenPayloadFields(projection.AttributesSnapshot()); len(findings) != 0 {
 		t.Fatalf("Langfuse platform attributes contain forbidden payload fields: %#v", findings)
 	}
 }
