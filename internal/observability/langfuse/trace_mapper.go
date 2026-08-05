@@ -167,9 +167,17 @@ func projectAllowlistedAttributes(destination, source map[string]string) {
 }
 
 func isValidNativeIdentity(traceIDValue, spanIDValue string) bool {
-	traceID, traceErr := traceapi.TraceIDFromHex(traceIDValue)
-	spanID, spanErr := traceapi.SpanIDFromHex(spanIDValue)
-	return traceErr == nil && spanErr == nil && traceID.IsValid() && spanID.IsValid()
+	return isValidNativeTraceID(traceIDValue) && isValidNativeSpanID(spanIDValue)
+}
+
+func isValidNativeTraceID(value string) bool {
+	traceID, err := traceapi.TraceIDFromHex(value)
+	return err == nil && traceID.IsValid()
+}
+
+func isValidNativeSpanID(value string) bool {
+	spanID, err := traceapi.SpanIDFromHex(value)
+	return err == nil && spanID.IsValid()
 }
 
 func isSafeObservationName(name string) bool {

@@ -46,6 +46,11 @@ func TestNewScoreProjectionBuildsStableIdempotentEvidenceSnapshot(t *testing.T) 
 	if second.Evidence.Threshold == nil || *second.Evidence.Threshold != originalThreshold {
 		t.Fatal("separate projections must not share evidence pointer state")
 	}
+	snapshot := second.Snapshot()
+	*snapshot.Evidence.Threshold = 0.03
+	if second.Evidence.Threshold == nil || *second.Evidence.Threshold != originalThreshold {
+		t.Fatal("Snapshot() must isolate pointer-bearing evidence for queue ownership")
+	}
 
 	identityMutations := []struct {
 		name   string
@@ -57,7 +62,6 @@ func TestNewScoreProjectionBuildsStableIdempotentEvidenceSnapshot(t *testing.T) 
 		{name: "sample", mutate: func(value *aieval.EvaluationEvidence) { value.SampleID = "sample-t078-next" }},
 		{name: "request", mutate: func(value *aieval.EvaluationEvidence) { value.RequestID = "req-t078-next" }},
 		{name: "AI trace", mutate: func(value *aieval.EvaluationEvidence) { value.AITraceID = "ai-trace-t078-next" }},
-		{name: "service trace", mutate: func(value *aieval.EvaluationEvidence) { value.ServiceTraceID = "service-trace-t078-next" }},
 		{name: "span", mutate: func(value *aieval.EvaluationEvidence) { value.SpanID = "span-t078-next" }},
 		{name: "metric", mutate: func(value *aieval.EvaluationEvidence) { value.MetricName = "completion_contract" }},
 	}
@@ -72,6 +76,30 @@ func TestNewScoreProjectionBuildsStableIdempotentEvidenceSnapshot(t *testing.T) 
 			if different.ProjectionID == second.ProjectionID {
 				t.Fatalf("changed %s must not reuse score idempotency ID", tt.name)
 			}
+		})
+	}
+}
+
+func TestNewScoreProjectionRejectsCrossTraceAndUnsafeEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ScoreProjectionInput)
+	}{
+		{name: "cross trace evidence", mutate: func(input *ScoreProjectionInput) { input.Evidence.ServiceTraceID = strings.Repeat("f", 32) }},
+		{name: "sensitive failure summary", mutate: func(input *ScoreProjectionInput) { input.Evidence.FailureSummary = "Bearer secret-t078" }},
+		{name: "oversized metric", mutate: func(input *ScoreProjectionInput) { input.Evidence.MetricName = strings.Repeat("m", 257) }},
+		{name: "unbounded retry budget", mutate: func(input *ScoreProjectionInput) { input.MaxAttempts = 101 }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := newT078ProjectionInput(t, newT078Evidence(t, "answer_relevance"), ScoreTargetKindObservation)
+			tt.mutate(&input)
+			projection, err := NewScoreProjection(input)
+			if err == nil || !isZeroT078Projection(projection) {
+				t.Fatalf("NewScoreProjection() = (%#v, %v), want invalid projection rejected", projection, err)
+			}
+			assertT078ErrorDoesNotContainIdentity(t, err, input.Evidence)
 		})
 	}
 }
@@ -130,9 +158,13 @@ func TestScoreProjectionStateMachinePreservesEvidence(t *testing.T) {
 		{name: "sending to retry", start: mustTransitionT078(t, base, ScoreProjectionStatusSending), next: ScoreProjectionStatusRetryWait, wantStatus: ScoreProjectionStatusRetryWait, wantAttempt: 1},
 		{name: "retry to queued", start: retryWait, next: ScoreProjectionStatusQueued, wantStatus: ScoreProjectionStatusQueued, wantAttempt: 1},
 		{name: "sending to sent", start: mustTransitionT078(t, base, ScoreProjectionStatusSending), next: ScoreProjectionStatusSent, wantStatus: ScoreProjectionStatusSent},
+		{name: "sending fails permanently", start: mustTransitionT078(t, base, ScoreProjectionStatusSending), next: ScoreProjectionStatusFailedPermanent, wantStatus: ScoreProjectionStatusFailedPermanent},
+		{name: "sending times out at shutdown", start: mustTransitionT078(t, base, ScoreProjectionStatusSending), next: ScoreProjectionStatusFailedShutdownTimeout, wantStatus: ScoreProjectionStatusFailedShutdownTimeout},
 		{name: "queued drops when full", start: base, next: ScoreProjectionStatusDroppedQueueFull, wantStatus: ScoreProjectionStatusDroppedQueueFull},
 		{name: "queued fails permanently", start: base, next: ScoreProjectionStatusFailedPermanent, wantStatus: ScoreProjectionStatusFailedPermanent},
 		{name: "queued times out at shutdown", start: base, next: ScoreProjectionStatusFailedShutdownTimeout, wantStatus: ScoreProjectionStatusFailedShutdownTimeout},
+		{name: "queued reports not configured", start: base, next: ScoreProjectionStatusNotConfigured, wantStatus: ScoreProjectionStatusNotConfigured},
+		{name: "retry wait times out at shutdown", start: retryWait, next: ScoreProjectionStatusFailedShutdownTimeout, wantStatus: ScoreProjectionStatusFailedShutdownTimeout, wantAttempt: 1},
 		{name: "queued cannot skip to sent", start: base, next: ScoreProjectionStatusSent, wantError: true},
 		{name: "retry wait cannot send without queueing", start: retryWait, next: ScoreProjectionStatusSending, wantError: true},
 		{name: "sent is terminal", start: sent, next: ScoreProjectionStatusSending, wantError: true},
@@ -175,19 +207,23 @@ func TestScoreProjectionStateMachinePreservesEvidence(t *testing.T) {
 				ScoreProjectionStatusDroppedQueueFull:      true,
 				ScoreProjectionStatusFailedPermanent:       true,
 				ScoreProjectionStatusFailedShutdownTimeout: true,
+				ScoreProjectionStatusNotConfigured:         true,
 			},
 		},
 		"sending": {
 			projection: mustTransitionT078(t, base, ScoreProjectionStatusSending),
 			allowed: map[ScoreProjectionStatus]bool{
-				ScoreProjectionStatusSent:      true,
-				ScoreProjectionStatusRetryWait: true,
+				ScoreProjectionStatusSent:                  true,
+				ScoreProjectionStatusRetryWait:             true,
+				ScoreProjectionStatusFailedPermanent:       true,
+				ScoreProjectionStatusFailedShutdownTimeout: true,
 			},
 		},
 		"retry wait": {
 			projection: retryWait,
 			allowed: map[ScoreProjectionStatus]bool{
-				ScoreProjectionStatusQueued: true,
+				ScoreProjectionStatusQueued:                true,
+				ScoreProjectionStatusFailedShutdownTimeout: true,
 			},
 		},
 	}
@@ -199,6 +235,7 @@ func TestScoreProjectionStateMachinePreservesEvidence(t *testing.T) {
 		ScoreProjectionStatusDroppedQueueFull,
 		ScoreProjectionStatusFailedPermanent,
 		ScoreProjectionStatusFailedShutdownTimeout,
+		ScoreProjectionStatusNotConfigured,
 	}
 	for name, current := range nonTerminalStates {
 		for _, next := range allStatuses {
@@ -225,6 +262,7 @@ func TestScoreProjectionStateMachinePreservesEvidence(t *testing.T) {
 		"dropped":           dropped,
 		"permanent failure": permanent,
 		"shutdown failure":  shutdown,
+		"not configured":    mustTransitionT078(t, base, ScoreProjectionStatusNotConfigured),
 	}
 	for name, terminal := range terminalStates {
 		for _, next := range allStatuses {
@@ -289,7 +327,7 @@ func newT078Evidence(t *testing.T, metric string) aieval.EvaluationEvidence {
 	t.Helper()
 	threshold := 0.8
 	evidence, err := aieval.NewEvaluationEvidence(aieval.EvaluationEvidenceInput{
-		Identity:   obs.NewCorrelationIdentity("req-t078", obs.WithServiceSpan("service-trace-t078", "span-t078"), obs.WithAITraceID("ai-trace-t078"), obs.WithEvalRunID("eval-run-t078")),
+		Identity:   obs.NewCorrelationIdentity("req-t078", obs.WithServiceSpan(t078PlatformTraceID, "span-t078"), obs.WithAITraceID("ai-trace-t078"), obs.WithEvalRunID("eval-run-t078")),
 		Dataset:    aieval.DatasetIdentity{Name: "chat-golden", Version: "v1"},
 		SampleID:   "sample-t078",
 		MetricName: metric,
