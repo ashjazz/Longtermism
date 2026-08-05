@@ -69,6 +69,49 @@ func TestScoreClientCreateUsesBasicAuthAndStableProjectionID(t *testing.T) {
 	}
 }
 
+func TestScoreClientCreateOmitsObservationIDForTraceScore(t *testing.T) {
+	projection, err := NewScoreProjection(newT078ProjectionInput(t, newT078Evidence(t, "answer_relevance"), ScoreTargetKindTrace))
+	if err != nil {
+		t.Fatalf("NewScoreProjection() error = %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body map[string]json.RawMessage
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if _, exists := body["observationId"]; exists {
+			t.Fatalf("trace score must omit observationId: %#v", body)
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if err := mustNewT079ScoreClient(t, server.URL, time.Second).Create(context.Background(), projection); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+}
+
+func TestNewScoreClientRejectsInsecureRemoteURLAndExcessiveTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		timeout time.Duration
+	}{
+		{name: "remote plaintext URL", baseURL: "http://example.com", timeout: time.Second},
+		{name: "timeout above platform bound", baseURL: "https://example.com", timeout: maxScoreClientTimeout + time.Nanosecond},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewScoreClient(ScoreClientConfig{
+				BaseURL: tt.baseURL, PublicKey: t079PublicKey, SecretKey: t079SecretKey, Timeout: tt.timeout,
+			})
+			if !errors.Is(err, errInvalidScoreClient) {
+				t.Fatalf("NewScoreClient() error = %v, want sanitized invalid configuration", err)
+			}
+		})
+	}
+}
+
 func TestScoreClientCreateClassifiesTimeoutAndHTTPFailures(t *testing.T) {
 	projection := mustNewT078Projection(t)
 	tests := []struct {
@@ -86,15 +129,23 @@ func TestScoreClientCreateClassifiesTimeoutAndHTTPFailures(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			releaseBlockedHandler := make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				if tt.block {
-					<-request.Context().Done()
+					// Some HTTP/1.1 transports return the caller deadline before the
+					// server observes a disconnected peer. The explicit release keeps
+					// this fixture deterministic without weakening the timeout check.
+					select {
+					case <-request.Context().Done():
+					case <-releaseBlockedHandler:
+					}
 					return
 				}
 				writer.WriteHeader(tt.status)
 				_, _ = writer.Write([]byte("raw-t079-upstream-response"))
 			}))
 			defer server.Close()
+			defer close(releaseBlockedHandler)
 
 			client := mustNewT079ScoreClient(t, server.URL, time.Second)
 			ctx := context.Background()
@@ -109,6 +160,20 @@ func TestScoreClientCreateClassifiesTimeoutAndHTTPFailures(t *testing.T) {
 			}
 			assertT079ClientErrorIsSanitized(t, err)
 		})
+	}
+}
+
+func TestScoreClientCreatePreservesCallerCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		t.Error("canceled request must not reach upstream")
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := mustNewT079ScoreClient(t, server.URL, time.Second).Create(ctx, mustNewT078Projection(t))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create() error = %v, want context.Canceled", err)
 	}
 }
 
