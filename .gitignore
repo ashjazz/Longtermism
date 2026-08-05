@@ -5,6 +5,7 @@
 /obs-smoke
 *.test
 *.out
+vendor/
 
 # 本地运行产物
 resource/log/

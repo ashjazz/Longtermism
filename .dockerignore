@@ -1,4 +1,6 @@
 .git/
+Dockerfile*
+.dockerignore
 .env*
 *.local.yaml
 *.out

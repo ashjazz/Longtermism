@@ -59,6 +59,8 @@ type ScoreClientConfig struct {
 }
 
 // ScoreSender is the narrow boundary consumed by the asynchronous delivery worker.
+// Implementations must honor ctx and return promptly after cancellation; Go cannot
+// safely terminate an arbitrary dependency call that ignores its context.
 type ScoreSender interface {
 	Create(context.Context, ScoreProjection) error
 }

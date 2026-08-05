@@ -225,6 +225,11 @@ func TestScoreWorkerShutdownMarksUndrainedProjectionsWithoutDeletingEvidence(t *
 		t.Fatalf("Shutdown() error = %v, want context cancellation", err)
 	}
 	_ = receiveT080(t, sender.canceled)
+	for failures := 0; failures < 2; {
+		if transition := receiveT080(t, transitions.transitions); transition.Status == ScoreProjectionStatusFailedShutdownTimeout {
+			failures++
+		}
+	}
 	failed := transitions.ByStatus(ScoreProjectionStatusFailedShutdownTimeout)
 	if len(failed) != 2 || !reflect.DeepEqual(first.Evidence, firstEvidence) || !reflect.DeepEqual(second.Evidence, secondEvidence) {
 		t.Fatalf("shutdown failures = %#v, want both immutable local evidence snapshots", failed)
@@ -296,10 +301,10 @@ func TestScoreWorkerConcurrentEnqueueAndShutdownNeverPanicsOrBlocks(t *testing.T
 		}()
 	}
 	shutdownContext, cancel := context.WithCancel(context.Background())
+	cancel()
 	shutdownDone := make(chan error, 1)
 	go func() { shutdownDone <- worker.Shutdown(shutdownContext) }()
 	close(start)
-	cancel()
 	joined := make(chan struct{})
 	go func() {
 		callersDone.Wait()
@@ -410,6 +415,96 @@ func TestScoreWorkerConcurrentEnqueueIsRaceSafeAndConservesEveryProjection(t *te
 	}
 }
 
+func TestScoreWorkerRejectsTerminalProjectionWithoutSending(t *testing.T) {
+	sender := newT080Sender()
+	worker := newT080Worker(t, ScoreWorkerConfig{
+		QueueCapacity: 1, MaxAttempts: 1, InitialBackoff: time.Second, MaxBackoff: time.Second,
+		Sender: sender, Waiter: newT080RetryWaiter(),
+	})
+	worker.Start()
+	projection := mustTransitionT078(t, mustTransitionT078(t, mustNewT078Projection(t), ScoreProjectionStatusSending), ScoreProjectionStatusSent)
+	if got := worker.Enqueue(projection); got.Status != ScoreProjectionStatusFailedPermanent {
+		t.Fatalf("Enqueue(sent projection) status = %q, want failed_permanent", got.Status)
+	}
+	select {
+	case sent := <-sender.started:
+		t.Fatalf("terminal projection was sent again: %#v", sent)
+	default:
+	}
+	shutdownT080Worker(t, worker)
+}
+
+func TestScoreWorkerQueueFullRemainsNonBlockingWithBlockedDiagnostic(t *testing.T) {
+	callbackStarted := make(chan ScoreWorkerTransition, 1)
+	releaseCallback := make(chan struct{})
+	sender := newT080Sender()
+	worker := newT080Worker(t, ScoreWorkerConfig{
+		QueueCapacity: 1, MaxAttempts: 1, InitialBackoff: time.Second, MaxBackoff: time.Second,
+		Sender: sender, Waiter: newT080RetryWaiter(),
+		OnTransition: func(transition ScoreWorkerTransition) {
+			select {
+			case callbackStarted <- transition:
+				<-releaseCallback
+			default:
+			}
+		},
+	})
+	worker.Enqueue(mustNewT078Projection(t))
+	result := make(chan ScoreProjection, 1)
+	go func() { result <- worker.Enqueue(mustNewT080Projection(t, "sample-t080-blocked-diagnostic")) }()
+	if got := receiveT080(t, result); got.Status != ScoreProjectionStatusDroppedQueueFull {
+		t.Fatalf("Enqueue() status = %q, want dropped_queue_full", got.Status)
+	}
+	select {
+	case <-callbackStarted:
+		t.Fatal("enqueue path must not synchronously invoke transition diagnostics")
+	default:
+	}
+	worker.Start()
+	if got := receiveT080(t, callbackStarted); got.Status != ScoreProjectionStatusDroppedQueueFull {
+		t.Fatalf("async diagnostic status = %q, want dropped_queue_full", got.Status)
+	}
+	close(releaseCallback)
+	_ = receiveT080(t, sender.started)
+	sender.results <- nil
+	shutdownT080Worker(t, worker)
+}
+
+func TestNewScoreWorkerRejectsExcessiveQueueCapacity(t *testing.T) {
+	_, err := NewScoreWorker(ScoreWorkerConfig{
+		QueueCapacity: maxScoreWorkerQueueCapacity + 1, MaxAttempts: 1,
+		InitialBackoff: time.Second, MaxBackoff: time.Second, Sender: newT080Sender(),
+	})
+	if !errors.Is(err, errInvalidScoreWorkerConfig) {
+		t.Fatalf("NewScoreWorker() error = %v, want bounded configuration rejection", err)
+	}
+}
+
+func TestScoreWorkerContainsDependencyPanicsAsPermanentFailures(t *testing.T) {
+	tests := []struct {
+		name   string
+		sender ScoreSender
+		waiter ScoreRetryWaiter
+	}{
+		{name: "sender panic", sender: t080PanicSender{}, waiter: newT080RetryWaiter()},
+		{name: "waiter panic", sender: t080ErrorSender{err: ErrScoreUpstream}, waiter: t080PanicWaiter{}},
+		{name: "waiter error", sender: t080ErrorSender{err: ErrScoreUpstream}, waiter: t080ErrorWaiter{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transitions := newT080TransitionRecorder()
+			worker := newT080Worker(t, ScoreWorkerConfig{
+				QueueCapacity: 1, MaxAttempts: 1, InitialBackoff: time.Second, MaxBackoff: time.Second,
+				Sender: tt.sender, Waiter: tt.waiter, OnTransition: transitions.Record,
+			})
+			worker.Start()
+			worker.Enqueue(mustNewT078Projection(t))
+			_ = assertT080TransitionStatus(t, transitions, ScoreProjectionStatusFailedPermanent)
+			shutdownT080Worker(t, worker)
+		})
+	}
+}
+
 func mustNewT080Projection(t *testing.T, sampleID string) ScoreProjection {
 	t.Helper()
 	evidence := newT078Evidence(t, "answer_relevance")
@@ -470,6 +565,26 @@ type t080Sender struct {
 
 	mu       sync.Mutex
 	received []ScoreProjection
+}
+
+type t080PanicSender struct{}
+
+func (t080PanicSender) Create(context.Context, ScoreProjection) error {
+	panic("synthetic sender panic")
+}
+
+type t080ErrorSender struct{ err error }
+
+func (sender t080ErrorSender) Create(context.Context, ScoreProjection) error { return sender.err }
+
+type t080PanicWaiter struct{}
+
+func (t080PanicWaiter) Wait(context.Context, time.Duration) error { panic("synthetic waiter panic") }
+
+type t080ErrorWaiter struct{}
+
+func (t080ErrorWaiter) Wait(context.Context, time.Duration) error {
+	return errors.New("synthetic waiter failure")
 }
 
 func newT080Sender() *t080Sender {
