@@ -35,7 +35,7 @@ var (
 	allowedEvaluators         = metricLabelSet("deterministic", "llm_judge")
 	allowedEvalStatus         = metricLabelSet("passed", "failed", "skipped", "error")
 	allowedBackends           = metricLabelSet("langfuse")
-	allowedProjectionStatuses = metricLabelSet("queued", "sent", "failed", "dropped")
+	allowedProjectionStatuses = metricLabelSet("queued", "sent", "failed", "dropped", "not_configured")
 )
 
 var ErrInvalidMetricValue = errors.New("invalid metric value")

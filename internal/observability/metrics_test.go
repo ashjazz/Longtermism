@@ -139,6 +139,35 @@ func TestMetricsCoarsensUnknownLabels(t *testing.T) {
 	}
 }
 
+func TestMetricsPreservesExplicitNotConfiguredScoreStatus(t *testing.T) {
+	reader := metric.NewManualReader()
+	provider := metric.NewMeterProvider(metric.WithReader(reader))
+	metrics, err := NewMetrics(provider.Meter("t101-not-configured"))
+	if err != nil {
+		t.Fatalf("NewMetrics() error = %v", err)
+	}
+	if err := metrics.RecordScoreProjection(context.Background(), ScoreProjectionMetric{
+		Backend: "langfuse", Status: "not_configured",
+	}); err != nil {
+		t.Fatalf("RecordScoreProjection() error = %v", err)
+	}
+
+	var collected metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &collected); err != nil {
+		t.Fatalf("Collect() error = %v", err)
+	}
+	want := metricAttributes("backend", "langfuse", "status", "not_configured")
+	for _, scopeMetrics := range collected.ScopeMetrics {
+		for _, collectedMetric := range scopeMetrics.Metrics {
+			if collectedMetric.Name == metricScoreProjection {
+				assertMetricDataPointAttributes(t, collectedMetric.Data, []map[string]string{want})
+				return
+			}
+		}
+	}
+	t.Fatal("score projection metric was not collected")
+}
+
 func TestMetricsRejectsInvalidMeasurements(t *testing.T) {
 	tests := []struct {
 		name   string

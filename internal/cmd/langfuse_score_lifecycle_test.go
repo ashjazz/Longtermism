@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +15,11 @@ import (
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
 
-const t081LangfuseSecret = "T081_LANGFUSE_SECRET_MUST_NOT_LEAK"
+const (
+	t081LangfuseSecret      = "T081_LANGFUSE_SECRET_MUST_NOT_LEAK"
+	t081PlatformTraceID     = "1234567890abcdef1234567890abcdef"
+	t081PlatformObservation = "1234567890abcdef"
+)
 
 func TestBuildLangfuseScoreLifecycleLeavesEvidenceProjectionAvailableWhenUnconfigured(t *testing.T) {
 	metrics := &t081MetricsRecorder{}
@@ -133,8 +139,7 @@ func TestLangfuseScoreLifecycleRecordsBoundedQueueMetricsWithoutIdentityLabels(t
 }
 
 func TestLangfuseScoreLifecycleEnqueueDoesNotBlockAnHTTPRequestOnWorkerDelivery(t *testing.T) {
-	worker := &t081Worker{enqueueStarted: make(chan struct{}), releaseEnqueue: make(chan struct{})}
-	t.Cleanup(worker.releaseDelivery)
+	worker := &t081Worker{enqueueStarted: make(chan struct{})}
 	lifecycle := newT081ConfiguredLifecycle(t, worker, &t081MetricsRecorder{})
 	result := make(chan langfuse.ScoreProjection, 1)
 	go func() { result <- lifecycle.Enqueue(mustNewT081Projection(t)) }()
@@ -150,17 +155,142 @@ func TestLangfuseScoreLifecycleEnqueueDoesNotBlockAnHTTPRequestOnWorkerDelivery(
 	}
 	select {
 	case <-worker.enqueueStarted:
-		// fake worker仍卡在投递端口；HTTP-facing Enqueue 已先返回才证明 command lifecycle
-		// 不会把网络投递或重试反压给 handler。
+		// T100 worker 的 Enqueue 契约只做同步有界 admission；网络投递与重试
+		// 已留在其后台 goroutine，因此 lifecycle 不需要再创建第二层 goroutine。
 	case <-time.After(time.Second):
 		t.Fatal("worker did not receive the queued projection")
 	}
 
-	worker.releaseDelivery()
 	shutdownContext, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := lifecycle.Shutdown(shutdownContext); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestBuildLangfuseScoreLifecycleRejectsPartialOrFailedConfigurationWithoutSecrets(t *testing.T) {
+	tests := []struct {
+		name  string
+		input LangfuseScoreLifecycleInput
+		deps  LangfuseScoreLifecycleDependencies
+	}{
+		{name: "partial configuration", input: LangfuseScoreLifecycleInput{BaseURL: "https://langfuse.example.test"}},
+		{name: "excessive retry budget", input: func() LangfuseScoreLifecycleInput {
+			input := newT081LifecycleInput()
+			input.MaxAttempts = maxLangfuseScoreAttempts + 1
+			return input
+		}()},
+		{name: "excessive retry backoff", input: func() LangfuseScoreLifecycleInput {
+			input := newT081LifecycleInput()
+			input.MaxBackoff = maxLangfuseScoreBackoff + time.Nanosecond
+			return input
+		}()},
+		{
+			name: "client construction failure", input: newT081LifecycleInput(),
+			deps: LangfuseScoreLifecycleDependencies{NewClient: func(langfuse.ScoreClientConfig) (langfuse.ScoreSender, error) {
+				return nil, errors.New(t081LangfuseSecret)
+			}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.deps.state = &langfuseScoreLifecycleState{}
+			_, err := BuildLangfuseScoreLifecycle(context.Background(), tt.input, tt.deps)
+			if !errors.Is(err, errInvalidLangfuseScoreLifecycle) || strings.Contains(err.Error(), t081LangfuseSecret) {
+				t.Fatalf("BuildLangfuseScoreLifecycle() error = %v, want sanitized configuration failure", err)
+			}
+		})
+	}
+}
+
+func TestLangfuseScoreLifecycleCoarsensWorkerTransitionsAndRejectsPostShutdownEnqueue(t *testing.T) {
+	metrics := &t081MetricsRecorder{}
+	worker := &t081Worker{}
+	var transition func(langfuse.ScoreWorkerTransition)
+	lifecycle, err := BuildLangfuseScoreLifecycle(context.Background(), newT081LifecycleInput(), LangfuseScoreLifecycleDependencies{
+		NewClient: func(langfuse.ScoreClientConfig) (langfuse.ScoreSender, error) { return t081Sender{}, nil },
+		NewWorker: func(config langfuse.ScoreWorkerConfig) (LangfuseScoreWorker, error) {
+			transition = config.OnTransition
+			return worker, nil
+		},
+		Metrics: metrics,
+		state:   &langfuseScoreLifecycleState{},
+	})
+	if err != nil || transition == nil {
+		t.Fatalf("BuildLangfuseScoreLifecycle() = (%#v, %v), want metrics-enabled lifecycle", lifecycle, err)
+	}
+	for _, status := range []langfuse.ScoreProjectionStatus{
+		langfuse.ScoreProjectionStatusSending,
+		langfuse.ScoreProjectionStatusRetryWait,
+		langfuse.ScoreProjectionStatusSent,
+		langfuse.ScoreProjectionStatusDroppedQueueFull,
+		langfuse.ScoreProjectionStatusFailedPermanent,
+	} {
+		transition(langfuse.ScoreWorkerTransition{Status: status})
+	}
+	wantStatuses := []string{"sent", "dropped", "failed"}
+	got := metrics.projectionSnapshots()
+	if len(got) != len(wantStatuses) {
+		t.Fatalf("projection metrics = %#v, want only terminal/coarse transition facts", got)
+	}
+	for index, want := range wantStatuses {
+		if got[index].Backend != langfuseScoreBackend || got[index].Status != want {
+			t.Fatalf("projection metric %d = %#v, want backend langfuse status %q", index, got[index], want)
+		}
+	}
+	worker.mu.Lock()
+	worker.queueDepth = 0
+	worker.mu.Unlock()
+	transition(langfuse.ScoreWorkerTransition{Status: langfuse.ScoreProjectionStatusSent})
+	queues := metrics.queueSnapshots()
+	if len(queues) == 0 || queues[len(queues)-1].Depth != 0 {
+		t.Fatalf("transition queue metrics = %#v, want terminal depth refreshed to zero", queues)
+	}
+	if err := lifecycle.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	result := lifecycle.Enqueue(mustNewT081Projection(t))
+	if result.Status != langfuse.ScoreProjectionStatusFailedShutdownTimeout {
+		t.Fatalf("post-shutdown Enqueue() status = %q, want failed_shutdown_timeout", result.Status)
+	}
+}
+
+func TestLangfuseScoreLifecycleRejectsNilOrCanceledContexts(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, ctx := range []context.Context{nil, canceled} {
+		_, err := BuildLangfuseScoreLifecycle(ctx, newT081LifecycleInput(), LangfuseScoreLifecycleDependencies{
+			state: &langfuseScoreLifecycleState{},
+		})
+		if !errors.Is(err, errInvalidLangfuseScoreLifecycle) {
+			t.Fatalf("BuildLangfuseScoreLifecycle(%v) error = %v, want invalid context", ctx, err)
+		}
+	}
+	lifecycle := newT081ConfiguredLifecycle(t, &t081Worker{}, &t081MetricsRecorder{})
+	if err := lifecycle.Shutdown(nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Shutdown(nil) error = %v, want context.Canceled", err)
+	}
+	if lifecycle.Status().Shutdown {
+		t.Fatal("Shutdown(nil) must not report a successful flush")
+	}
+}
+
+func TestBuildLangfuseScoreLifecycleDoesNotStartAfterConstructionContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	workerCalls := 0
+	_, err := BuildLangfuseScoreLifecycle(ctx, newT081LifecycleInput(), LangfuseScoreLifecycleDependencies{
+		NewClient: func(langfuse.ScoreClientConfig) (langfuse.ScoreSender, error) {
+			cancel()
+			return t081Sender{}, nil
+		},
+		NewWorker: func(langfuse.ScoreWorkerConfig) (LangfuseScoreWorker, error) {
+			workerCalls++
+			return &t081Worker{}, nil
+		},
+		state: &langfuseScoreLifecycleState{},
+	})
+	if !errors.Is(err, errInvalidLangfuseScoreLifecycle) || workerCalls != 0 {
+		t.Fatalf("BuildLangfuseScoreLifecycle() error=%v worker_calls=%d, want canceled construction before worker start", err, workerCalls)
 	}
 }
 
@@ -194,7 +324,7 @@ func newT081ConfiguredLifecycle(t *testing.T, worker *t081Worker, metrics *t081M
 func mustNewT081Projection(t *testing.T) langfuse.ScoreProjection {
 	t.Helper()
 	evidence, err := aieval.NewEvaluationEvidence(aieval.EvaluationEvidenceInput{
-		Identity:   obs.NewCorrelationIdentity("req-t081", obs.WithServiceSpan("trace-t081", "span-t081"), obs.WithAITraceID("ai-t081"), obs.WithEvalRunID("eval-t081")),
+		Identity:   obs.NewCorrelationIdentity("req-t081", obs.WithServiceSpan(t081PlatformTraceID, "span-t081"), obs.WithAITraceID("ai-t081"), obs.WithEvalRunID("eval-t081")),
 		Dataset:    aieval.DatasetIdentity{Name: "chat-golden", Version: "v1"},
 		SampleID:   "sample-t081",
 		MetricName: "answer_relevance",
@@ -205,8 +335,8 @@ func mustNewT081Projection(t *testing.T) langfuse.ScoreProjection {
 	}
 	trace, err := langfuse.MapTraceToProjection(langfuse.TraceMapperInput{
 		Span: langfuse.OTLPSpanSnapshot{
-			TraceID:         "platform-trace-t081",
-			SpanID:          "platform-observation-t081",
+			TraceID:         t081PlatformTraceID,
+			SpanID:          t081PlatformObservation,
 			Name:            "ai.generation",
 			ObservationType: obs.ObservationTypeGeneration,
 			Attributes: map[string]string{
@@ -255,7 +385,6 @@ type t081Worker struct {
 	flushed        bool
 	queueDepth     int
 	enqueueStarted chan struct{}
-	releaseEnqueue chan struct{}
 	releaseOnce    sync.Once
 }
 
@@ -267,16 +396,9 @@ func (worker *t081Worker) Start() {
 
 func (worker *t081Worker) Enqueue(projection langfuse.ScoreProjection) langfuse.ScoreProjection {
 	if worker.enqueueStarted != nil {
-		close(worker.enqueueStarted)
-		<-worker.releaseEnqueue
+		worker.releaseOnce.Do(func() { close(worker.enqueueStarted) })
 	}
 	return projection
-}
-
-func (worker *t081Worker) releaseDelivery() {
-	if worker.releaseEnqueue != nil {
-		worker.releaseOnce.Do(func() { close(worker.releaseEnqueue) })
-	}
 }
 
 func (worker *t081Worker) Shutdown(context.Context) error {

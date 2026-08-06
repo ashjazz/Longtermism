@@ -181,7 +181,7 @@
 - [X] T098 [US2] 在 `internal/observability/langfuse/projection.go` 实现不可变 score projection 与稳定幂等键；质量门控：使 T078 GREEN，缺真实 platform identity 时 fail-fast，不通过名称/时间窗口猜测。
 - [X] T099 [US2] 在 `internal/observability/langfuse/client.go` 实现 score API client；质量门控：使 T079 GREEN，context timeout、分类重试、response body 上限、credential 只在 Authorization header。
 - [X] T100 [US2] 在 `internal/observability/langfuse/worker.go` 实现有界异步队列与指标；质量门控：使 T080 GREEN，`go test -race` 通过，queue full/shutdown timeout 形成明确 projection 状态且 chat enqueue 非阻塞。
-- [ ] T101 [US2] 在 `internal/cmd/langfuse_score_lifecycle.go` 装配 score worker lifecycle；质量门控：使 T081 GREEN，evidence 必须先持久化，worker 未配置时返回 not_configured 而非丢弃事实。
+- [X] T101 [US2] 在 `internal/cmd/langfuse_score_lifecycle.go` 装配 score worker lifecycle；质量门控：使 T081 GREEN，evidence 必须先持久化，worker 未配置时返回 not_configured 而非丢弃事实。
 - [ ] T102 [US2] 在 `deploy/observability/collector/collector-grafana.yaml` 完成 Langfuse AI downstream exporter/transform；质量门控：使 T082 GREEN，只导出带 marker 的 root/bridge 与 semantic spans，infra-only marker 查询为 0。
 - [ ] T103 [US2] 在 `deploy/observability/compose.grafana.yaml` 完成固定版本 Langfuse self-hosted 服务与 retention/volume；质量门控：使 T083 GREEN，不创建 raw debug volume，凭据只经 env/secret 注入。
 - [ ] T104 [US2] 在 `deploy/observability/grafana/dashboards/observability-overview.json` 增加 AI/eval/score 面板；质量门控：使 T084 GREEN，同步覆盖 token/cost/eval，不能用高基数 ID 做 metrics labels。
