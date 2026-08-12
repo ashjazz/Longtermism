@@ -36,11 +36,11 @@ func TestScoreSmokeRunnerContract(t *testing.T) {
 			}},
 			wantReportStatus: "passed",
 			wantCheckStatus:  "passed",
-			wantQueryCount:   2,
+			wantQueryCount:   3,
 		},
 		{
 			name:             "treats not configured projection as an explicit skipped backend state",
-			store:            fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}},
+			store:            fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{{EvalRunID: evidence.EvalRunID, RequestID: evidence.RequestID, AITraceID: evidence.AITraceID}}},
 			backend:          fakeScoreSmokeBackend{notConfigured: true},
 			wantReportStatus: "skipped",
 			wantCheckStatus:  "skipped",
@@ -55,7 +55,7 @@ func TestScoreSmokeRunnerContract(t *testing.T) {
 			}},
 			wantReportStatus: "passed",
 			wantCheckStatus:  "passed",
-			wantQueryCount:   2,
+			wantQueryCount:   3,
 		},
 		{
 			name:             "records permanent projection failure without erasing local evidence",
@@ -199,6 +199,158 @@ func TestScoreSmokeRunnerRejectsForeignProjectionAlongsideTheExpectedScore(t *te
 	assertScoreSmokeFailure(t, document.Checks, scoreSmokeFailure{backend: "langfuse_score", stage: "query", class: "unexpected_evidence"})
 }
 
+func TestScoreSmokeRunnerRejectsDuplicateThatAppearsAfterFirstSentSnapshot(t *testing.T) {
+	startedAt := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+	evidence := ScoreSmokeEvidence{EvalRunID: "eval-run-delayed-duplicate", ProjectionID: "projection-delayed-duplicate", RequestID: "request-delayed-duplicate", AITraceID: "ai-trace-delayed-duplicate", PlatformTraceID: "platform-trace-delayed-duplicate"}
+	store := fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}
+	backend := fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{
+		{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "sent", ObservedAt: startedAt}}},
+		{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "sent", ObservedAt: startedAt}, {ProjectionID: evidence.ProjectionID, Status: "sent", ObservedAt: startedAt.Add(time.Second)}}},
+	}}
+	order := &scoreSmokeEventOrder{}
+	store.order, backend.order = order, order
+	report, err := RunScoreSmoke(context.Background(), ScoreSmokeRequest{Deadline: startedAt.Add(time.Minute), Profile: "grafana"}, ScoreSmokeRunnerDependencies{
+		EvidenceStore: &store, Backend: &backend, Clock: newPollerTestClock(startedAt), PollInterval: time.Second,
+		IdentityFactory: func(context.Context) (ScoreSmokeIdentity, error) {
+			return ScoreSmokeIdentity{RunID: "score-run-delayed-duplicate", Marker: "score-marker-delayed-duplicate"}, nil
+		},
+	})
+	if err != nil || report == nil {
+		t.Fatalf("RunScoreSmoke() = (%#v, %v), want duplicate diagnosis", report, err)
+	}
+	assertScoreSmokeFailure(t, validateScoreSmokeReport(t, report).Checks, scoreSmokeFailure{backend: "langfuse_score", stage: "query", class: "unexpected_evidence"})
+}
+
+func TestScoreSmokeRunnerDoesNotConfirmChangingSentSnapshots(t *testing.T) {
+	startedAt := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+	evidence := ScoreSmokeEvidence{EvalRunID: "eval-run-changing-sent", ProjectionID: "projection-changing-sent", RequestID: "request-changing-sent", AITraceID: "ai-trace-changing-sent", PlatformTraceID: "platform-trace-changing-sent"}
+	store := fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}
+	backend := fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{
+		{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "sent", ObservedAt: startedAt}}},
+		{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "sent", ObservedAt: startedAt.Add(time.Second)}}},
+		{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "sent", ObservedAt: startedAt.Add(2 * time.Second)}}},
+	}}
+	order := &scoreSmokeEventOrder{}
+	store.order, backend.order = order, order
+	report, err := RunScoreSmoke(context.Background(), ScoreSmokeRequest{Deadline: startedAt.Add(2 * time.Second), Profile: "grafana"}, ScoreSmokeRunnerDependencies{
+		EvidenceStore: &store, Backend: &backend, Clock: newPollerTestClock(startedAt), PollInterval: time.Second,
+		IdentityFactory: func(context.Context) (ScoreSmokeIdentity, error) {
+			return ScoreSmokeIdentity{RunID: "score-run-changing-sent", Marker: "score-marker-changing-sent"}, nil
+		},
+	})
+	if err != nil || report == nil {
+		t.Fatalf("RunScoreSmoke() = (%#v, %v), want report-owned timeout", report, err)
+	}
+	assertScoreSmokeFailure(t, validateScoreSmokeReport(t, report).Checks, scoreSmokeFailure{backend: "langfuse_score", stage: "query", class: "backend_timeout"})
+}
+
+func TestScoreSmokeRunnerClassifiesRecoveredQueryThenTimeoutAsBackendTimeout(t *testing.T) {
+	startedAt := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+	evidence := ScoreSmokeEvidence{EvalRunID: "eval-run-query-recovery", ProjectionID: "projection-query-recovery", RequestID: "request-query-recovery", AITraceID: "ai-trace-query-recovery", PlatformTraceID: "platform-trace-query-recovery"}
+	store := fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}
+	backend := fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{{err: errors.New("transient query failure")}, {}}}
+	order := &scoreSmokeEventOrder{}
+	store.order, backend.order = order, order
+	report, err := RunScoreSmoke(context.Background(), ScoreSmokeRequest{Deadline: startedAt.Add(time.Second), Profile: "grafana"}, ScoreSmokeRunnerDependencies{
+		EvidenceStore: &store, Backend: &backend, Clock: newPollerTestClock(startedAt), PollInterval: time.Second,
+		IdentityFactory: func(context.Context) (ScoreSmokeIdentity, error) {
+			return ScoreSmokeIdentity{RunID: "score-run-query-recovery", Marker: "score-marker-query-recovery"}, nil
+		},
+	})
+	if err != nil || report == nil {
+		t.Fatalf("RunScoreSmoke() = (%#v, %v), want report-owned timeout", report, err)
+	}
+	assertScoreSmokeFailure(t, validateScoreSmokeReport(t, report).Checks, scoreSmokeFailure{backend: "langfuse_score", stage: "query", class: "backend_timeout"})
+}
+
+// TestScoreSmokeRunnerBoundaries protects the preflight boundary: invalid orchestration input
+// must fail before an external query, while local evidence faults remain report-owned facts.
+func TestScoreSmokeRunnerBoundaries(t *testing.T) {
+	startedAt := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+	identity := ScoreSmokeIdentity{RunID: "score-run-boundary", Marker: "score-marker-boundary"}
+	evidence := ScoreSmokeEvidence{EvalRunID: "eval-run-boundary", ProjectionID: "projection-boundary", RequestID: "request-boundary", AITraceID: "ai-trace-boundary", PlatformTraceID: "platform-trace-boundary", PlatformObservationID: "platform-observation-boundary"}
+	validDeps := func(store *fakeScoreSmokeEvidenceStore, backend *fakeScoreSmokeBackend) ScoreSmokeRunnerDependencies {
+		return ScoreSmokeRunnerDependencies{EvidenceStore: store, Backend: backend, Clock: newPollerTestClock(startedAt), PollInterval: time.Second, IdentityFactory: func(context.Context) (ScoreSmokeIdentity, error) { return identity, nil }}
+	}
+
+	tests := []struct {
+		name      string
+		ctx       context.Context
+		deadline  time.Time
+		store     fakeScoreSmokeEvidenceStore
+		mutate    func(*ScoreSmokeRunnerDependencies)
+		wantErr   bool
+		wantClass string
+	}{
+		{name: "nil context", ctx: nil, deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}, wantErr: true},
+		{name: "window exceeds limit", ctx: context.Background(), deadline: startedAt.Add(maximumScoreSmokeWindow + time.Nanosecond), store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}, wantErr: true},
+		{name: "identity factory fails", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}, mutate: func(deps *ScoreSmokeRunnerDependencies) {
+			deps.IdentityFactory = func(context.Context) (ScoreSmokeIdentity, error) {
+				return ScoreSmokeIdentity{}, errors.New("identity unavailable")
+			}
+		}, wantErr: true},
+		{name: "evidence store fails", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{err: errors.New("storage unavailable")}, wantClass: "storage_unavailable"},
+		{name: "evidence is missing", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{}, wantClass: "unexpected_evidence"},
+		{name: "not configured still rejects an empty local record", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{{}}}, mutate: func(deps *ScoreSmokeRunnerDependencies) {
+			deps.Backend = &fakeScoreSmokeBackend{notConfigured: true, order: &scoreSmokeEventOrder{}}
+		}, wantClass: "unexpected_evidence"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := tt.store
+			backend := fakeScoreSmokeBackend{order: &scoreSmokeEventOrder{}}
+			store.order = backend.order
+			deps := validDeps(&store, &backend)
+			if tt.mutate != nil {
+				tt.mutate(&deps)
+			}
+			report, err := RunScoreSmoke(tt.ctx, ScoreSmokeRequest{Deadline: tt.deadline, Profile: "grafana"}, deps)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("RunScoreSmoke() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantClass != "" {
+				if report == nil {
+					t.Fatal("RunScoreSmoke() report = nil, want report-owned preflight failure")
+				}
+				assertScoreSmokeFailure(t, validateScoreSmokeReport(t, report).Checks, scoreSmokeFailure{backend: "langfuse_score", stage: "preflight", class: tt.wantClass})
+			}
+		})
+	}
+}
+
+func TestScoreSmokeProjectionInspectionBoundaries(t *testing.T) {
+	startedAt := time.Now().UTC().Truncate(time.Second)
+	target := ScoreSmokeProjectionTarget{ProjectionID: "projection-inspection", StartedAt: startedAt, Deadline: startedAt.Add(time.Minute)}
+	tests := []struct {
+		name        string
+		observation ScoreSmokeProjectionObservation
+		lastAttempt int
+		wantStatus  string
+		wantClass   string
+	}{
+		{name: "sending continues", observation: ScoreSmokeProjectionObservation{ProjectionID: target.ProjectionID, Status: "sending", ObservedAt: startedAt}, wantStatus: ""},
+		{name: "deadline is inclusive", observation: ScoreSmokeProjectionObservation{ProjectionID: target.ProjectionID, Status: "sent", Attempt: 2, ObservedAt: target.Deadline}, lastAttempt: 1, wantStatus: "candidate"},
+		{name: "attempt cannot regress", observation: ScoreSmokeProjectionObservation{ProjectionID: target.ProjectionID, Status: "retry_wait", Attempt: 1, ObservedAt: startedAt}, lastAttempt: 2, wantStatus: "failed", wantClass: "unexpected_evidence"},
+		{name: "shutdown failure is terminal", observation: ScoreSmokeProjectionObservation{ProjectionID: target.ProjectionID, Status: "failed_shutdown_timeout", ObservedAt: startedAt}, wantStatus: "failed", wantClass: "export_failed"},
+		{name: "unknown status is rejected", observation: ScoreSmokeProjectionObservation{ProjectionID: target.ProjectionID, Status: "unknown", ObservedAt: startedAt}, wantStatus: "failed", wantClass: "unexpected_evidence"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attempt := tt.lastAttempt
+			check, candidate := inspectScoreObservations([]ScoreSmokeProjectionObservation{tt.observation}, target, &attempt)
+			if tt.wantStatus == "" || tt.wantStatus == "candidate" {
+				if check != nil || (candidate != nil) != (tt.observation.Status == "sent") {
+					t.Fatalf("inspectScoreObservations() = %#v, want polling to continue", check)
+				}
+				return
+			}
+			if check == nil || check.Status != tt.wantStatus || check.ErrorClass != tt.wantClass {
+				t.Fatalf("inspectScoreObservations() = %#v, want status=%q class=%q", check, tt.wantStatus, tt.wantClass)
+			}
+		})
+	}
+}
+
 type scoreSmokeFailure struct{ backend, stage, class string }
 
 type scoreSmokeQueryResponse struct {
@@ -212,6 +364,7 @@ type fakeScoreSmokeEvidenceStore struct {
 	readCalls int
 	readOrder int
 	findRunID string
+	err       error
 	order     *scoreSmokeEventOrder
 }
 
@@ -221,7 +374,7 @@ func (f *fakeScoreSmokeEvidenceStore) Find(_ context.Context, runID string) ([]S
 	f.readCalls++
 	f.readOrder = f.order.nextEvent()
 	f.findRunID = runID
-	return append([]ScoreSmokeEvidence(nil), f.evidence...), nil
+	return append([]ScoreSmokeEvidence(nil), f.evidence...), f.err
 }
 
 func (f *fakeScoreSmokeEvidenceStore) readBeforeBackend(backend scoreSmokeBackendSnapshot) bool {
