@@ -4,9 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gogf/gf/v2/util/gvalid"
+)
+
+const (
+	wantChatSmokeRunIDHeader         = "X-Observability-Smoke-Run-ID"
+	wantChatSmokeAuthorizationHeader = "X-Observability-Smoke-Authorization"
 )
 
 func TestChatRequestDTOContract(t *testing.T) {
@@ -67,5 +73,32 @@ func TestChatResponseDTOContract(t *testing.T) {
 				t.Fatalf("error data = %s, want null", envelope["data"])
 			}
 		})
+	}
+}
+
+// Smoke admission is expressed exclusively through protected headers. Keeping it out of ChatReq
+// prevents ordinary API clients from persisting a privileged marker in the public JSON model.
+func TestChatSmokeContractKeepsPublicDTOsUnprivileged(t *testing.T) {
+	requestType := reflect.TypeFor[ChatReq]()
+	for _, forbidden := range []string{"SmokeRunID", "SmokeAuthorization", "ServiceTraceID", "SpanID"} {
+		if _, ok := requestType.FieldByName(forbidden); ok {
+			t.Fatalf("ChatReq must not expose privileged field %q", forbidden)
+		}
+	}
+
+	payload, err := json.Marshal(ChatSuccessMeta{RequestID: "req-t177", AITraceID: "ai-t177"})
+	if err != nil {
+		t.Fatalf("marshal public chat metadata: %v", err)
+	}
+	for _, forbidden := range []string{"smoke_run_id", "service_trace_id", "span_id", "authorization"} {
+		if strings.Contains(strings.ToLower(string(payload)), forbidden) {
+			t.Fatalf("public chat metadata leaked %q: %s", forbidden, payload)
+		}
+	}
+
+	// These constants are owned by the HTTP contract rather than the request DTO. Their absence is
+	// the intentional RED signal until T182 implements the protected admission boundary.
+	if ChatSmokeRunIDHeader != wantChatSmokeRunIDHeader || ChatSmokeAuthorizationHeader != wantChatSmokeAuthorizationHeader {
+		t.Fatal("chat smoke header constants do not match the public contract")
 	}
 }

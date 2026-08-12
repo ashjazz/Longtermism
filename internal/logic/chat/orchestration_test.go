@@ -48,6 +48,11 @@ func TestChatUsecaseOrchestratesEvidencePipelineInOrderWithoutMutatingFacts(t *t
 		Usage:        llm.Usage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7},
 	}
 	responseBefore := *response
+	generationObserver := &recordingGenerationObserver{
+		events:   &events,
+		identity: appobs.PlatformSpanIdentity{TraceID: t090PlatformTraceID, SpanID: t090GenerationSpanID, Projectable: true},
+	}
+	evaluatorObserver := &recordingEvaluatorObserver{events: &events}
 
 	usecase := NewChatUsecase(ChatUsecaseDependencies{
 		Provider: &scriptedProvider{chat: func(ctx context.Context, _ *llm.ChatRequest) (*llm.ChatResponse, error) {
@@ -74,15 +79,12 @@ func TestChatUsecaseOrchestratesEvidencePipelineInOrderWithoutMutatingFacts(t *t
 				obs.WithAITraceID("ai-t090-order"),
 			),
 		},
-		GenerationObserver: &recordingGenerationObserver{
-			events:   &events,
-			identity: appobs.PlatformSpanIdentity{TraceID: t090PlatformTraceID, SpanID: t090GenerationSpanID, Projectable: true},
-		},
-		Evaluator:         trackedEvaluator,
-		EvaluatorObserver: &recordingEvaluatorObserver{events: &events},
-		EvidenceStore:     store,
-		ProjectionQueue:   projection,
-		Now:               monotonicChatClock(),
+		GenerationObserver: generationObserver,
+		Evaluator:          trackedEvaluator,
+		EvaluatorObserver:  evaluatorObserver,
+		EvidenceStore:      store,
+		ProjectionQueue:    projection,
+		Now:                monotonicChatClock(),
 	})
 	inbound := obs.NewCorrelationIdentity(
 		"req-t090-order",
@@ -90,7 +92,7 @@ func TestChatUsecaseOrchestratesEvidencePipelineInOrderWithoutMutatingFacts(t *t
 		obs.WithAITraceID("stale-ai"),
 		obs.WithEvalRunID("stale-eval"),
 	)
-	command := ChatCommand{Message: "raw message must stay outside evaluation facts"}
+	command := ChatCommand{Message: "raw message must stay outside evaluation facts", SmokeRunID: "run-t177-orchestration"}
 	commandBefore := command
 
 	result, executeErr := usecase.Execute(
@@ -131,6 +133,9 @@ func TestChatUsecaseOrchestratesEvidencePipelineInOrderWithoutMutatingFacts(t *t
 	}
 	if projection.input.Generation != (appobs.PlatformSpanIdentity{TraceID: t090PlatformTraceID, SpanID: t090GenerationSpanID, Projectable: true}) {
 		t.Fatalf("projection target = %#v, want real generation platform identity", projection.input.Generation)
+	}
+	if generationObserver.input.SmokeRunID != command.SmokeRunID || evaluatorObserver.input.SmokeRunID != command.SmokeRunID {
+		t.Fatalf("semantic observer markers = generation:%q evaluator:%q, want %q", generationObserver.input.SmokeRunID, evaluatorObserver.input.SmokeRunID, command.SmokeRunID)
 	}
 	if projection.input.Evidence.Threshold == nil || *projection.input.Evidence.Threshold != threshold {
 		t.Fatalf("projection evidence threshold = %#v, want defensive copy", projection.input.Evidence.Threshold)
@@ -480,10 +485,12 @@ func (bridge *failingChatBridge) Start(ctx context.Context, identity obs.Correla
 type recordingGenerationObserver struct {
 	events   *[]string
 	identity appobs.PlatformSpanIdentity
+	input    appobs.GenerationSpanInput
 	err      error
 }
 
-func (observer *recordingGenerationObserver) RecordGeneration(_ context.Context, _ appobs.GenerationSpanInput) (appobs.PlatformSpanIdentity, error) {
+func (observer *recordingGenerationObserver) RecordGeneration(_ context.Context, input appobs.GenerationSpanInput) (appobs.PlatformSpanIdentity, error) {
+	observer.input = input
 	if observer.events != nil {
 		*observer.events = append(*observer.events, "generation_observation")
 	}
@@ -532,10 +539,12 @@ func (evaluator mismatchedEvidenceEvaluator) Evaluate(
 
 type recordingEvaluatorObserver struct {
 	events *[]string
+	input  appobs.EvaluatorSpanInput
 	err    error
 }
 
-func (observer *recordingEvaluatorObserver) RecordEvaluator(_ context.Context, _ appobs.EvaluatorSpanInput) (appobs.PlatformSpanIdentity, error) {
+func (observer *recordingEvaluatorObserver) RecordEvaluator(_ context.Context, input appobs.EvaluatorSpanInput) (appobs.PlatformSpanIdentity, error) {
+	observer.input = input
 	if observer.events != nil {
 		*observer.events = append(*observer.events, "evaluator_observation")
 	}

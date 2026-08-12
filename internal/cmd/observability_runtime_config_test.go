@@ -2,11 +2,52 @@ package cmd
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 )
+
+func TestResolveChatSmokeRuntimeConfigRequiresCompleteProtectedAdmission(t *testing.T) {
+	const credential = "t177-runtime-short-lived-credential"
+	tests := []struct {
+		name      string
+		input     ChatSmokeRuntimeConfigInput
+		wantErr   bool
+		wantReady bool
+	}{
+		{name: "disabled needs no credential", input: ChatSmokeRuntimeConfigInput{}},
+		{name: "enabled complete", input: ChatSmokeRuntimeConfigInput{Enabled: true, AuthorizationEnvName: "LONGTERMISM_CHAT_SMOKE_AUTHORIZATION", AuthorizationValue: credential, ReplayCapacity: 64, ReplayTTL: time.Minute}, wantReady: true},
+		{name: "enabled missing env reference", input: ChatSmokeRuntimeConfigInput{Enabled: true, AuthorizationValue: credential, ReplayCapacity: 64, ReplayTTL: time.Minute}, wantErr: true},
+		{name: "enabled missing credential", input: ChatSmokeRuntimeConfigInput{Enabled: true, AuthorizationEnvName: "LONGTERMISM_CHAT_SMOKE_AUTHORIZATION", ReplayCapacity: 64, ReplayTTL: time.Minute}, wantErr: true},
+		{name: "enabled unbounded replay capacity", input: ChatSmokeRuntimeConfigInput{Enabled: true, AuthorizationEnvName: "LONGTERMISM_CHAT_SMOKE_AUTHORIZATION", AuthorizationValue: credential, ReplayTTL: time.Minute}, wantErr: true},
+		{name: "enabled unbounded replay ttl", input: ChatSmokeRuntimeConfigInput{Enabled: true, AuthorizationEnvName: "LONGTERMISM_CHAT_SMOKE_AUTHORIZATION", AuthorizationValue: credential, ReplayCapacity: 64}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResolveChatSmokeRuntimeConfig(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ResolveChatSmokeRuntimeConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err == nil && got.Ready != tt.wantReady {
+				t.Fatalf("Ready = %v, want %v", got.Ready, tt.wantReady)
+			}
+			rendered := fmt.Sprintf("config=%#v error=%v", got, err)
+			if strings.Contains(rendered, credential) {
+				t.Fatal("chat smoke runtime snapshot/error leaked the credential value")
+			}
+			if err == nil && tt.wantReady {
+				value := reflect.ValueOf(got)
+				if field := value.FieldByName("Authorization"); field.IsValid() {
+					t.Fatal("safe runtime snapshot must not retain an authorization field")
+				}
+			}
+		})
+	}
+}
 
 func TestResolveObservabilityRuntimeConfig(t *testing.T) {
 	const syntheticHeaderValue = "Bearer t011-synthetic-header-value"

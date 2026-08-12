@@ -57,6 +57,25 @@ This is a shape contract, not a ready-to-use secret file. Checked-in defaults ke
 
 `enabled` 与 `mode` 不得形成两套可解释路径：当 `enabled=false` 且 mode 省略或为 `noop` 时，配置加载层规范化为 `mode=noop`；若使用者同时给出 `enabled=false` 与非 `noop` mode，则启动失败。`signals` 只决定 trace/metric provider 是否装配，`smoke.enabled` 只决定 infra-smoke 路由是否注册。
 
+### Protected live chat smoke admission
+
+`observability.smoke.enabled` 是 infra 与 live-chat smoke 的共同总开关；关闭时携带任一
+chat smoke header 的请求必须在 handler/provider 前统一拒绝，普通 chat 行为不变。开启
+live-chat smoke 还必须配置独立的短期 credential 引用（例如
+`observability.smoke.chat.authorization_env`），运行时安全快照只保存引用名与
+`credential_present`，绝不保存 credential 值。
+
+- 仅接受 loopback peer；代理头不能把远端请求伪装成本机请求。
+- `X-Observability-Smoke-Run-ID` 与 `X-Observability-Smoke-Authorization` 必须同时出现；
+  任一出现即进入受保护 admission，不能降级为普通 chat。
+- 短期共享 credential 使用恒时比较但不由单次请求消费；经鉴权的 marker 才被原子地
+  一次性消费。相同 secret 可服务多个不同 run，而同一 marker 的并发或串行 replay
+  最多一个请求进入 handler。registry 必须有明确 TTL/容量，不能成为无界身份存储。
+- disabled、remote、缺字段、非法 marker、错误 credential 与 replay 使用同一低敏拒绝
+  语义，避免暴露开关或 credential oracle；错误、日志与配置快照不得包含输入值。
+- admission 成功后立即删除 authorization header，只把已验证 marker 放入本地 context；
+  auth secret 不进入 DTO、command、baggage、span、log、metric、manifest 或 report。
+
 ## 3. Fail-fast matrix
 
 | Condition | Required behavior |
@@ -70,6 +89,8 @@ This is a shape contract, not a ready-to-use secret file. Checked-in defaults ke
 | `content_raw` outside `local`/`test`, without `raw_content_enabled=true`, or `raw_content_enabled=true` for another mode | startup error |
 | another unknown payload mode | startup error |
 | smoke disabled | infra-smoke route absent or returns 404 |
+| a chat request carries smoke headers while smoke is disabled, remote, incomplete, invalid, unauthenticated or replayed | reject before handler/provider with one stable low-sensitive response |
+| live chat smoke enabled without its credential reference/value or bounded replay registry | startup error; do not register a partially protected admission path |
 | Langfuse score not configured | evidence persists; projection status `not_configured` |
 | backend profile missing credentials | affected real smoke fails before sending |
 | Collector pipeline references an unknown component or has an invalid graph | `obs-config-check` fails before Compose starts, with file path and stable `invalid_collector_pipeline` category |

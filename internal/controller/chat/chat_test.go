@@ -49,6 +49,37 @@ func TestChatControllerRejectsInvalidRequestsBeforeUsecase(t *testing.T) {
 	}
 }
 
+// Authentication belongs to the route admission middleware. The controller receives only the
+// already-trusted marker from context and must never accept or retain the credential itself.
+func TestChatControllerForwardsOnlyTrustedSmokeMarker(t *testing.T) {
+	const marker = "run-t177-controller"
+	usecase := &chatUsecaseStub{result: logicchat.ChatResult{
+		Identity: obs.NewCorrelationIdentity("req-t177-controller", obs.WithAITraceID("ai-t177-controller")),
+	}}
+	controller := NewV1(ChatControllerDependencies{
+		Usecase:               usecase,
+		RequestIDFromContext:  func(context.Context) string { return "req-t177-controller" },
+		SmokeRunIDFromContext: func(context.Context) string { return marker },
+	})
+
+	response, err := controller.Chat(context.Background(), &v1.ChatReq{Message: "controlled smoke"})
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	if usecase.command.SmokeRunID != marker {
+		t.Fatalf("command smoke marker = %q, want trusted context marker", usecase.command.SmokeRunID)
+	}
+	payload, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal chat response: %v", err)
+	}
+	for _, forbidden := range []string{marker, "smoke_run_id", "service_trace_id", "span_id", "authorization"} {
+		if strings.Contains(strings.ToLower(string(payload)), strings.ToLower(forbidden)) {
+			t.Fatalf("public response leaked protected smoke fact %q: %s", forbidden, payload)
+		}
+	}
+}
+
 func TestChatControllerMapsUsecaseResultAndServerDebugPolicy(t *testing.T) {
 	identity := obs.NewCorrelationIdentity(
 		"req-t075-success",

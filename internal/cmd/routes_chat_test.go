@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	v1chat "github.com/ashjazz/Longtermism/api/v1/chat"
+	appobservability "github.com/ashjazz/Longtermism/internal/observability"
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 	"github.com/ashjazz/Longtermism/pkg/ai/ratelimit"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -177,6 +179,160 @@ func TestRegisterChatRoutesClearsUntrustedInboundAIPlaneMarker(t *testing.T) {
 	}
 }
 
+// Any smoke header opts the request into protected admission. All rejected variants share one
+// low-sensitive response and stop before the product handler, preventing configuration and
+// credential probing through observable response differences.
+func TestRegisterChatRoutesProtectsLiveSmokeAdmission(t *testing.T) {
+	const marker = "run-t177-route"
+	const credential = "t177-short-lived-credential"
+	tests := []struct {
+		name          string
+		smokeEnabled  bool
+		remoteAddr    string
+		marker        string
+		authorization string
+		wantCode      int
+		wantCalls     int
+	}{
+		{name: "ordinary chat remains public", remoteAddr: "198.51.100.10:43100", wantCode: http.StatusOK, wantCalls: 1},
+		{name: "disabled", remoteAddr: "127.0.0.1:43100", marker: marker, authorization: credential, wantCode: http.StatusNotFound},
+		{name: "remote peer", smokeEnabled: true, remoteAddr: "198.51.100.10:43100", marker: marker, authorization: credential, wantCode: http.StatusNotFound},
+		{name: "ipv6 loopback", smokeEnabled: true, remoteAddr: "[::1]:43100", marker: marker, authorization: credential, wantCode: http.StatusOK, wantCalls: 1},
+		{name: "missing authorization", smokeEnabled: true, remoteAddr: "127.0.0.1:43100", marker: marker, wantCode: http.StatusNotFound},
+		{name: "missing marker", smokeEnabled: true, remoteAddr: "127.0.0.1:43100", authorization: credential, wantCode: http.StatusNotFound},
+		{name: "invalid marker", smokeEnabled: true, remoteAddr: "127.0.0.1:43100", marker: "bad marker", authorization: credential, wantCode: http.StatusNotFound},
+		{name: "wrong credential", smokeEnabled: true, remoteAddr: "127.0.0.1:43100", marker: marker, authorization: "wrong-short-lived-credential", wantCode: http.StatusNotFound},
+		{name: "authenticated loopback", smokeEnabled: true, remoteAddr: "127.0.0.1:43100", marker: marker, authorization: credential, wantCode: http.StatusOK, wantCalls: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := newChatRouteTestServer(t)
+			handler := &chatRouteHandlerStub{}
+			input := newChatRoutesInput(true, handler.handle, ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}), &chatRoutesState{})
+			input.SmokeEnabled = tt.smokeEnabled
+			input.SmokeAdmission = NewChatSmokeAdmission(ChatSmokeAdmissionConfig{
+				Authorization: credential,
+				Capacity:      16,
+				TTL:           time.Minute,
+			})
+			if err := RegisterChatRoutes(server, input); err != nil {
+				t.Fatalf("RegisterChatRoutes() error = %v", err)
+			}
+
+			response := serveProtectedChatRoute(server, tt.remoteAddr, tt.marker, tt.authorization)
+			if response.Code != tt.wantCode || handler.calls() != tt.wantCalls {
+				t.Fatalf("admission = status:%d handler_calls:%d, want %d/%d", response.Code, handler.calls(), tt.wantCode, tt.wantCalls)
+			}
+			if tt.wantCalls == 1 && tt.marker != "" {
+				if handler.smokeRunID() != marker || handler.smokeAuthorization() != "" {
+					t.Fatalf("trusted context/header = marker:%q authorization:%q", handler.smokeRunID(), handler.smokeAuthorization())
+				}
+			}
+			for _, forbidden := range []string{credential, tt.authorization, marker, "service_trace_id", "span_id"} {
+				if forbidden != "" && strings.Contains(response.Body.String(), forbidden) {
+					t.Fatalf("rejection/public response leaked protected value %q: %s", forbidden, response.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestChatSmokeAdmissionIgnoresProxyHeadersAndRejectsSerialReplay(t *testing.T) {
+	const marker = "run-t177-serial-replay"
+	const credential = "t177-shared-admission-secret"
+	server := newChatRouteTestServer(t)
+	handler := &chatRouteHandlerStub{}
+	input := newChatRoutesInput(true, handler.handle, ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}), &chatRoutesState{})
+	input.SmokeEnabled = true
+	input.SmokeAdmission = NewChatSmokeAdmission(ChatSmokeAdmissionConfig{Authorization: credential, Capacity: 16, TTL: time.Minute})
+	if err := RegisterChatRoutes(server, input); err != nil {
+		t.Fatalf("RegisterChatRoutes() error = %v", err)
+	}
+
+	spoofed := newProtectedChatRequest("198.51.100.10:43100", marker, credential)
+	spoofed.Header.Set("Forwarded", "for=127.0.0.1")
+	spoofed.Header.Set("X-Forwarded-For", "127.0.0.1")
+	spoofed.Header.Set("X-Real-IP", "127.0.0.1")
+	spoofedResponse := httptest.NewRecorder()
+	server.ServeHTTP(spoofedResponse, spoofed)
+	if spoofedResponse.Code != http.StatusNotFound || handler.calls() != 0 {
+		t.Fatalf("proxy spoof = status:%d calls:%d, want rejected before handler", spoofedResponse.Code, handler.calls())
+	}
+
+	first := serveProtectedChatRoute(server, "127.0.0.1:43100", marker, credential)
+	second := serveProtectedChatRoute(server, "127.0.0.1:43100", marker, credential)
+	thirdDifferentRun := serveProtectedChatRoute(server, "127.0.0.1:43100", marker+"-next", credential)
+	if first.Code != http.StatusOK || second.Code != http.StatusNotFound || thirdDifferentRun.Code != http.StatusOK || handler.calls() != 2 {
+		t.Fatalf("serial replay/shared secret = %d,%d,%d calls:%d", first.Code, second.Code, thirdDifferentRun.Code, handler.calls())
+	}
+}
+
+func TestChatRouteWiresOnlyAuthenticatedMarkerIntoHTTPCompletion(t *testing.T) {
+	const marker = "run-t177-completion-wiring"
+	const credential = "t177-completion-shared-secret"
+	server := newChatRouteTestServer(t)
+	handler := &chatRouteHandlerStub{}
+	logs := &chatCompletionLogRecorder{}
+	input := newChatRoutesInput(true, handler.handle, ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}), &chatRoutesState{})
+	input.SmokeEnabled = true
+	input.SmokeAdmission = NewChatSmokeAdmission(ChatSmokeAdmissionConfig{Authorization: credential, Capacity: 16, TTL: time.Minute})
+	input.CompletionLoggingMiddleware = appobservability.NewHTTPCompletionLoggingMiddleware(appobservability.HTTPLoggingDependencies{
+		CompletionLogger: logs,
+		Identify: func(request *http.Request) appobservability.HTTPRequestIdentity {
+			smokeRunID := ChatSmokeRunIDFromContext(request.Context())
+			return appobservability.HTTPRequestIdentity{RequestID: RequestIDFromContext(request.Context()), RouteTemplate: chatHTTPPath, IsAIRequest: true, IsSmokeRun: smokeRunID != "", SmokeRunID: smokeRunID}
+		},
+	})
+	if err := RegisterChatRoutes(server, input); err != nil {
+		t.Fatalf("RegisterChatRoutes() error = %v", err)
+	}
+
+	serveChatRoute(server)
+	serveProtectedChatRoute(server, "198.51.100.10:43100", marker+"-remote", credential)
+	serveProtectedChatRoute(server, "127.0.0.1:43100", marker+"-wrong", "wrong-completion-secret")
+	serveProtectedChatRoute(server, "127.0.0.1:43100", marker, credential)
+	serveProtectedChatRoute(server, "127.0.0.1:43100", marker, credential)
+
+	if logs.markerCount(marker) != 1 || logs.nonEmptyMarkerCount() != 1 {
+		t.Fatalf("completion markers = %#v, want only authenticated non-replayed marker", logs.markers())
+	}
+}
+
+func TestChatSmokeAdmissionAtomicallyRejectsReplay(t *testing.T) {
+	const marker = "run-t177-replay"
+	const credential = "t177-replay-credential"
+	server := newChatRouteTestServer(t)
+	handler := &chatRouteHandlerStub{}
+	input := newChatRoutesInput(true, handler.handle, ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{}), &chatRoutesState{})
+	input.SmokeEnabled = true
+	input.SmokeAdmission = NewChatSmokeAdmission(ChatSmokeAdmissionConfig{Authorization: credential, Capacity: 16, TTL: time.Minute})
+	if err := RegisterChatRoutes(server, input); err != nil {
+		t.Fatalf("RegisterChatRoutes() error = %v", err)
+	}
+
+	const requests = 2
+	statuses := make(chan int, requests)
+	var start sync.WaitGroup
+	start.Add(1)
+	for range requests {
+		go func() {
+			start.Wait()
+			statuses <- serveProtectedChatRoute(server, "127.0.0.1:43100", marker, credential).Code
+		}()
+	}
+	start.Done()
+	passed := 0
+	for range requests {
+		if <-statuses == http.StatusOK {
+			passed++
+		}
+	}
+	if passed != 1 || handler.calls() != 1 {
+		t.Fatalf("concurrent replay = passed:%d handler_calls:%d, want exactly one", passed, handler.calls())
+	}
+}
+
 func TestRegisterChatRoutesIsIdempotentAndValidatesEnabledDependencies(t *testing.T) {
 	server := newChatRouteTestServer(t)
 	handler := &chatRouteHandlerStub{}
@@ -309,6 +465,27 @@ func serveChatRouteWithBaggageHeader(server *ghttp.Server, baggageHeader string)
 	return response
 }
 
+func serveProtectedChatRoute(server *ghttp.Server, remoteAddr, marker, authorization string) *httptest.ResponseRecorder {
+	request := newProtectedChatRequest(remoteAddr, marker, authorization)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	return response
+}
+
+func newProtectedChatRequest(remoteAddr, marker, authorization string) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, chatHTTPPath, strings.NewReader(`{"message":"`+chatRouteTestInput+`"}`))
+	request.RemoteAddr = remoteAddr
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(RequestIDHeader, chatRouteTestRequestID)
+	if marker != "" {
+		request.Header.Set(v1chat.ChatSmokeRunIDHeader, marker)
+	}
+	if authorization != "" {
+		request.Header.Set(v1chat.ChatSmokeAuthorizationHeader, authorization)
+	}
+	return request
+}
+
 func countChatRoutes(routes []ghttp.RouterItem) int {
 	count := 0
 	for _, route := range routes {
@@ -331,6 +508,50 @@ type chatRouteHandlerStub struct {
 	startedIdentity           obs.CorrelationIdentity
 	startedAIPlaneMarkerValue string
 	startAIUsecase            bool
+	smokeRunIDValue           string
+	smokeAuthorizationValue   string
+}
+
+type chatCompletionLogRecorder struct {
+	mu      sync.Mutex
+	entries []appobservability.HTTPCompletionLog
+}
+
+func (recorder *chatCompletionLogRecorder) Write(_ context.Context, entry appobservability.HTTPCompletionLog) error {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	recorder.entries = append(recorder.entries, entry)
+	return nil
+}
+
+func (recorder *chatCompletionLogRecorder) markers() []string {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	markers := make([]string, len(recorder.entries))
+	for index, entry := range recorder.entries {
+		markers[index] = entry.SmokeRunID
+	}
+	return markers
+}
+
+func (recorder *chatCompletionLogRecorder) markerCount(marker string) int {
+	count := 0
+	for _, current := range recorder.markers() {
+		if current == marker {
+			count++
+		}
+	}
+	return count
+}
+
+func (recorder *chatCompletionLogRecorder) nonEmptyMarkerCount() int {
+	count := 0
+	for _, marker := range recorder.markers() {
+		if marker != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func (h *chatRouteHandlerStub) handle(request *ghttp.Request) {
@@ -341,6 +562,8 @@ func (h *chatRouteHandlerStub) handle(request *ghttp.Request) {
 	h.preIdentity, h.preIdentityOK = obs.CorrelationIdentityFromContext(request.GetCtx())
 	h.preAIPlaneMarker = baggage.FromContext(request.GetCtx()).Member(observabilityPlaneBaggageKey).Value()
 	h.preBaggageRequestID = baggage.FromContext(request.GetCtx()).Member(obs.BaggageRequestID).Value()
+	h.smokeRunIDValue = ChatSmokeRunIDFromContext(request.GetCtx())
+	h.smokeAuthorizationValue = request.Header.Get(v1chat.ChatSmokeAuthorizationHeader)
 	if h.startAIUsecase {
 		// 模拟真实 usecase 开始 AI 调用时才写入的 AI 平面标记；路由层在此之前不能猜测。
 		marker, err := baggage.NewMemberRaw(observabilityPlaneBaggageKey, "ai")
@@ -410,6 +633,18 @@ func (h *chatRouteHandlerStub) aiStarts() int {
 		return 1
 	}
 	return 0
+}
+
+func (h *chatRouteHandlerStub) smokeRunID() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.smokeRunIDValue
+}
+
+func (h *chatRouteHandlerStub) smokeAuthorization() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.smokeAuthorizationValue
 }
 
 func mustAppendBaggage(member baggage.Member, current baggage.Baggage) baggage.Baggage {

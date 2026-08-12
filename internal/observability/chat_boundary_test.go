@@ -51,6 +51,32 @@ func TestChatAIExecutionBoundaryCreatesOwnedBridgeBelowActiveRoot(t *testing.T) 
 	assertT090ChatBoundaryAttributes(t, ended[0])
 }
 
+func TestChatAIExecutionBoundaryRecordsTrustedSmokeMarker(t *testing.T) {
+	const marker = "run-t177-chat-bridge"
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	tracer := provider.Tracer("t177-chat-bridge")
+	rootContext, root := tracer.Start(context.Background(), "HTTP POST /api/v1/chat")
+	defer root.End()
+
+	trustedContext := ContextWithChatSmokeRunID(rootContext, marker)
+	_, _, end, err := NewChatAIExecutionBoundary(tracer).Start(
+		trustedContext,
+		obs.NewCorrelationIdentity("req-t177-bridge", obs.WithAITraceID("ai-t177-bridge")),
+	)
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if err := end(ChatAIExecutionOutcome{Outcome: "success"}); err != nil {
+		t.Fatalf("end bridge: %v", err)
+	}
+	attributes := semanticSpanAttributesByKey(recorder.Ended()[0].Attributes())
+	if got := attributes["longtermism.smoke.run_id"].AsString(); got != marker {
+		t.Fatalf("bridge smoke marker = %q, want %q", got, marker)
+	}
+}
+
 func TestChatAIExecutionBoundaryKeepsNativeIdentityWhenHeadSamplerDropsSpan(t *testing.T) {
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.NeverSample()))
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })

@@ -10,6 +10,33 @@ paths:
     post:
       summary: Run one server-configured non-streaming AI chat
       operationId: chat
+      description: >-
+        Ordinary callers send no smoke headers. A live smoke runner may send both protected
+        headers below only from a loopback connection while observability.smoke.enabled is true.
+        The server authenticates the short-lived shared admission secret and atomically consumes
+        the one-time run marker before accepting it; every rejection happens before the usecase.
+      parameters:
+        - name: X-Observability-Smoke-Run-ID
+          in: header
+          required: false
+          description: >-
+            Low-sensitive runner-owned marker. Supplying either smoke header opts this request
+            into protected smoke admission; it is never returned in the public chat envelope.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: '^[A-Za-z0-9._-]+$'
+        - name: X-Observability-Smoke-Authorization
+          in: header
+          required: false
+          description: >-
+            Independent short-lived shared admission secret. Its value is removed at admission
+            and never enters a DTO, command, span, log, metric, manifest, report or error.
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 512
       requestBody:
         required: true
         content:
@@ -193,7 +220,10 @@ components:
         ai_trace_id: { type: string }
         eval_summary:
           $ref: '#/components/schemas/EvalSummary'
-      description: eval_summary is debug-only; smoke_run_id is never part of chat metadata.
+      description: >-
+        eval_summary is debug-only. smoke_run_id, service_trace_id, span_id and smoke
+        authorization are never part of public chat metadata; native OTel identity is handed to
+        the local runner only through the protected run manifest.
     ChatPreAIErrorEnvelope:
       type: object
       additionalProperties: false

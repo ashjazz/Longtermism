@@ -78,6 +78,40 @@ func TestHTTPCompletionLoggingMiddlewareWritesInfraSmokeCompletion(t *testing.T)
 	}
 }
 
+func TestHTTPCompletionLoggingMiddlewareWritesAuthenticatedChatSmokeMarker(t *testing.T) {
+	const marker = "run-t177-http-chat"
+	const credential = "t177-forbidden-admission-secret"
+	writer := &httpCompletionLogWriterStub{}
+	spanExporter := tracetest.NewInMemoryExporter()
+	provider := trace.NewTracerProvider(trace.WithSyncer(spanExporter))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	middleware := NewHTTPCompletionLoggingMiddleware(HTTPLoggingDependencies{
+		Tracer: provider.Tracer("t177-http-chat"), CompletionLogger: writer,
+		Identify: func(*http.Request) HTTPRequestIdentity {
+			return HTTPRequestIdentity{RequestID: "req-t177-http-chat", RouteTemplate: "/api/v1/chat", IsAIRequest: true, AITraceID: "ai-t177-http-chat", IsSmokeRun: true, SmokeRunID: marker}
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/chat", nil)
+	request.Header.Set("X-Observability-Smoke-Authorization", credential)
+	response := httptest.NewRecorder()
+	middleware(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusOK) })).ServeHTTP(response, request)
+
+	if len(writer.entries) != 1 || writer.entries[0].SmokeRunID != marker || len(spanExporter.GetSpans()) != 1 {
+		t.Fatalf("chat completion = logs:%#v spans:%d", writer.entries, len(spanExporter.GetSpans()))
+	}
+	attributes := attributesByKey(spanExporter.GetSpans()[0].Attributes)
+	if got := attributes["longtermism.smoke.run_id"].AsString(); got != marker {
+		t.Fatalf("HTTP root smoke marker = %q, want %q", got, marker)
+	}
+	encoded, err := json.Marshal(writer.entries[0])
+	if err != nil {
+		t.Fatalf("marshal completion log: %v", err)
+	}
+	if strings.Contains(string(encoded), credential) || strings.Contains(fmt.Sprintf("%+v", spanExporter.GetSpans()[0]), credential) {
+		t.Fatal("chat completion telemetry leaked the admission secret")
+	}
+}
+
 func TestHTTPCompletionLoggingMiddlewareDoesNotBlockResponsesWhenWriterFails(t *testing.T) {
 	writer := &httpCompletionLogWriterStub{err: errors.New("synthetic-t041-log-file-unavailable")}
 	diagnostics := &httpCompletionLogDiagnosticsStub{}

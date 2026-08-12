@@ -46,6 +46,11 @@ Future retriever/tool/agent spans reuse the 002 observation type contract but ar
 - `ai.feature=chat`
 - result/outcome and stable failure class
 
+For an authenticated live-chat smoke, the same runner marker is copied from the trusted local
+context to the HTTP root, `ai.chat`, `ai.generation`, `ai.evaluator`, and the controlled HTTP
+completion log. It is never inferred from a route, request ID, AI trace ID or caller baggage.
+Ordinary chat requests do not acquire a marker.
+
 ### Generation
 
 - AI plane marker and correlation attributes
@@ -67,6 +72,13 @@ Future retriever/tool/agent spans reuse the 002 observation type contract but ar
 | AI domain trace | `longtermism.ai.trace_id` | opaque domain identity |
 | eval run | `longtermism.eval.run_id` | evidence/report only |
 | smoke run | `longtermism.smoke.run_id` | span/log/report, not metrics |
+
+The live runner receives native service TraceID/SpanID only from the active `SpanContext`. After
+the request completes, the application atomically writes request ID, AI trace ID, service
+TraceID/SpanID and smoke run identity to a contained mode-0600 local run manifest. The manifest is
+single-consumer and must not contain the smoke credential, payload, endpoint or provider body.
+Public chat response metadata remains limited to request ID, AI trace ID and the optional safe
+evaluation summary; adapters must never derive native identity from `ai_trace_id`.
 
 ## 5. Metrics
 

@@ -89,6 +89,25 @@ func TestGenerationSpanAdapterRecordsNativeParentageAndExplicitFacts(t *testing.
 	}
 }
 
+func TestGenerationSpanAdapterRecordsTrustedSmokeMarker(t *testing.T) {
+	const marker = "run-t177-generation"
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	registerTracerProviderCleanup(t, provider)
+	tracer := provider.Tracer("t177-generation")
+	parentContext, parent := tracer.Start(context.Background(), "ai.chat")
+	input := newGenerationSpanInput(nil, "success", "", obs.PayloadModeMetadataOnly, false)
+	input.SmokeRunID = marker
+	if _, err := NewGenerationSpanAdapter(tracer).RecordGeneration(parentContext, input); err != nil {
+		t.Fatalf("RecordGeneration() error = %v", err)
+	}
+	parent.End()
+	attributes := semanticSpanAttributesByKey(recorder.Ended()[0].Attributes())
+	if got := attributes["longtermism.smoke.run_id"].AsString(); got != marker {
+		t.Fatalf("generation smoke marker = %q, want %q", got, marker)
+	}
+}
+
 func TestGenerationSpanAdapterMarksUnexportedIdentityAsNotProjectable(t *testing.T) {
 	tests := []struct {
 		name    string

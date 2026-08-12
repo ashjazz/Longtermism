@@ -85,6 +85,44 @@ func TestEvaluatorSpanAdapterRecordsEvidenceWithNativeParentage(t *testing.T) {
 	assertDoesNotLeakForgedDomainPlatformIDs(t, evaluator)
 }
 
+func TestEvaluatorSpanAdapterRecordsTrustedSmokeMarker(t *testing.T) {
+	const marker = "run-t177-evaluator"
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	registerTracerProviderCleanup(t, provider)
+	tracer := provider.Tracer("t177-evaluator")
+	parentContext, parent := tracer.Start(context.Background(), "ai.generation")
+	threshold := 0.5
+	evidence, err := aieval.NewEvaluationEvidence(aieval.EvaluationEvidenceInput{
+		Identity: obs.NewCorrelationIdentity(
+			"req-t177-evaluator",
+			obs.WithServiceSpan("0123456789abcdef0123456789abcdef", "0123456789abcdef"),
+			obs.WithAITraceID("ai-t177-evaluator"),
+			obs.WithEvalRunID("eval-t177-evaluator"),
+		),
+		Dataset: aieval.DatasetIdentity{Name: "chat", Version: "v1"}, SampleID: "sample-t177-evaluator",
+		MetricName: "completion_contract", Score: 1, Threshold: &threshold,
+	})
+	if err != nil {
+		t.Fatalf("NewEvaluationEvidence() error = %v", err)
+	}
+	input := EvaluatorSpanInput{
+		Feature:     "chat",
+		StartedAt:   time.Date(2026, time.July, 28, 11, 0, 0, 0, time.UTC),
+		CompletedAt: time.Date(2026, time.July, 28, 11, 0, 0, int(time.Millisecond), time.UTC),
+		Evidence:    evidence,
+		SmokeRunID:  marker,
+	}
+	if _, err := NewEvaluatorSpanAdapter(tracer).RecordEvaluator(parentContext, input); err != nil {
+		t.Fatalf("RecordEvaluator() error = %v", err)
+	}
+	parent.End()
+	attributes := semanticSpanAttributesByKey(recorder.Ended()[0].Attributes())
+	if got := attributes["longtermism.smoke.run_id"].AsString(); got != marker {
+		t.Fatalf("evaluator smoke marker = %q, want %q", got, marker)
+	}
+}
+
 func TestEvaluatorSpanAdapterRejectsSensitiveOrIncompleteEvidence(t *testing.T) {
 	threshold := 0.8
 	evaluatorStartedAt := time.Date(2026, time.July, 28, 11, 30, 0, 0, time.UTC)

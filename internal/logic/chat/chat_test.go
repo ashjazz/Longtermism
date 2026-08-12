@@ -13,8 +13,11 @@ import (
 	"strings"
 	"testing"
 
+	appobs "github.com/ashjazz/Longtermism/internal/observability"
 	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	traceapi "go.opentelemetry.io/otel/trace"
 )
 
 func TestChatUsecaseReturnsProviderFactsAndCreatesAIIdentityBeforeProviderCall(t *testing.T) {
@@ -88,6 +91,123 @@ func TestChatUsecaseReturnsProviderFactsAndCreatesAIIdentityBeforeProviderCall(t
 	if result.Identity != wantIdentity {
 		t.Fatalf("result identity = %#v, want %#v", result.Identity, wantIdentity)
 	}
+}
+
+// The trusted marker is an execution fact shared by semantic observers, while native service
+// identity remains sourced from the active bridge SpanContext and is handed only to the local
+// manifest writer. Neither identity may be guessed from ai_trace_id.
+func TestChatUsecaseHandsTrustedSmokeIdentityToTelemetryAndManifest(t *testing.T) {
+	const marker = "run-t177-usecase"
+	manifestWriter := &recordingChatRunManifestWriter{}
+	var providerSpanContext traceapi.SpanContext
+	providerRuntime := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { _ = providerRuntime.Shutdown(context.Background()) })
+	tracer := providerRuntime.Tracer("t177-chat-manifest")
+	rootContext, root := tracer.Start(context.Background(), "HTTP POST /api/v1/chat")
+	rootSpanContext := root.SpanContext()
+	defer root.End()
+	provider := &scriptedProvider{chat: func(ctx context.Context, _ *llm.ChatRequest) (*llm.ChatResponse, error) {
+		providerSpanContext = traceapi.SpanContextFromContext(ctx)
+		if got := SmokeRunIDFromContext(ctx); got != marker {
+			t.Fatalf("provider smoke marker = %q, want %q", got, marker)
+		}
+		return &llm.ChatResponse{Content: "ok", Model: "provider-model", FinishReason: llm.FinishStop}, nil
+	}}
+	usecase := NewChatUsecase(ChatUsecaseDependencies{
+		Provider:                provider,
+		RequestedModel:          "server-model",
+		NewAITraceID:            func() string { return "ai-t177-domain" },
+		CanonicalizeActualModel: allowActualModels("provider-model"),
+		Bridge:                  appobs.NewChatAIExecutionBoundary(tracer),
+		RunManifestWriter:       manifestWriter,
+	})
+	ctx := obs.ContextWithCorrelationIdentity(rootContext, obs.NewCorrelationIdentity(
+		"req-t177-usecase",
+		obs.WithServiceSpan("forged-domain-trace", "forged-domain-span"),
+	))
+
+	result, err := usecase.Execute(ctx, ChatCommand{Message: "controlled smoke", SmokeRunID: marker})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Identity.AITraceID != "ai-t177-domain" || manifestWriter.calls != 1 {
+		t.Fatalf("result/manifest = identity:%#v calls:%d", result.Identity, manifestWriter.calls)
+	}
+	if manifestWriter.input.ServiceTraceID != rootSpanContext.TraceID().String() {
+		t.Fatalf("manifest trace = %q, want active native trace %s", manifestWriter.input.ServiceTraceID, rootSpanContext.TraceID())
+	}
+	if !providerSpanContext.IsValid() || manifestWriter.input.SpanID != providerSpanContext.SpanID().String() {
+		t.Fatalf("manifest span = %q, want active bridge span %s", manifestWriter.input.SpanID, providerSpanContext.SpanID())
+	}
+	want := ChatRunManifestInput{
+		SmokeRunID:     marker,
+		RequestID:      "req-t177-usecase",
+		AITraceID:      "ai-t177-domain",
+		ServiceTraceID: manifestWriter.input.ServiceTraceID,
+		SpanID:         manifestWriter.input.SpanID,
+	}
+	if manifestWriter.input != want {
+		t.Fatalf("manifest input = %#v, want native identities %#v", manifestWriter.input, want)
+	}
+	if manifestWriter.input.ServiceTraceID == result.Identity.AITraceID || manifestWriter.input.ServiceTraceID == "forged-domain-trace" || manifestWriter.input.SpanID == "forged-domain-span" {
+		t.Fatal("manifest native identity must not be copied or derived from domain identity")
+	}
+}
+
+func TestOrdinaryChatDoesNotWriteSmokeRunManifest(t *testing.T) {
+	writer := &recordingChatRunManifestWriter{}
+	usecase := NewChatUsecase(ChatUsecaseDependencies{
+		Provider: &scriptedProvider{chat: func(context.Context, *llm.ChatRequest) (*llm.ChatResponse, error) {
+			return &llm.ChatResponse{Model: "provider-model", FinishReason: llm.FinishStop}, nil
+		}},
+		RequestedModel:          "server-model",
+		NewAITraceID:            func() string { return "ai-t177-ordinary" },
+		CanonicalizeActualModel: allowActualModels("provider-model"),
+		RunManifestWriter:       writer,
+	})
+	ctx := obs.ContextWithCorrelationIdentity(context.Background(), obs.NewCorrelationIdentity("req-t177-ordinary"))
+	if _, err := usecase.Execute(ctx, ChatCommand{Message: "ordinary chat"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if writer.calls != 0 {
+		t.Fatalf("ordinary chat manifest writes = %d, want zero", writer.calls)
+	}
+}
+
+func TestChatSmokeManifestRejectsBridgeIdentityWithoutActiveSpanContext(t *testing.T) {
+	writer := &recordingChatRunManifestWriter{}
+	usecase := NewChatUsecase(ChatUsecaseDependencies{
+		Provider: &scriptedProvider{chat: func(context.Context, *llm.ChatRequest) (*llm.ChatResponse, error) {
+			return &llm.ChatResponse{Model: "provider-model", FinishReason: llm.FinishStop}, nil
+		}},
+		RequestedModel:          "server-model",
+		NewAITraceID:            func() string { return "ai-t177-no-native-span" },
+		CanonicalizeActualModel: allowActualModels("provider-model"),
+		Bridge: &recordingChatBridge{identity: obs.NewCorrelationIdentity(
+			"req-t177-no-native-span",
+			obs.WithAITraceID("ai-t177-no-native-span"),
+			obs.WithServiceSpan("0123456789abcdef0123456789abcdef", "0123456789abcdef"),
+		)},
+		RunManifestWriter: writer,
+	})
+	ctx := obs.ContextWithCorrelationIdentity(context.Background(), obs.NewCorrelationIdentity("req-t177-no-native-span"))
+	if _, err := usecase.Execute(ctx, ChatCommand{Message: "controlled smoke", SmokeRunID: "run-t177-no-native-span"}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if writer.calls != 0 {
+		t.Fatalf("manifest writes without active native SpanContext = %d, want zero", writer.calls)
+	}
+}
+
+type recordingChatRunManifestWriter struct {
+	calls int
+	input ChatRunManifestInput
+}
+
+func (writer *recordingChatRunManifestWriter) Write(_ context.Context, input ChatRunManifestInput) error {
+	writer.calls++
+	writer.input = input
+	return nil
 }
 
 // Provider failures happen after the usecase has created its domain identity. Keeping both the
