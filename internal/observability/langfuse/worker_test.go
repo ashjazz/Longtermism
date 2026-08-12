@@ -43,6 +43,146 @@ func TestScoreWorkerEnqueueIsNonBlocking(t *testing.T) {
 	shutdownT080Worker(t, worker)
 }
 
+// TestScoreWorkerReliablyRecordsImmutableProjectionTransitions 将耐久状态与现有
+// best-effort metrics diagnostics 分离。每个外部动作前必须先记录完整 projection
+// snapshot；否则应用重开后无法知道同一个幂等 score 到底处于哪个状态。
+func TestScoreWorkerReliablyRecordsImmutableProjectionTransitions(t *testing.T) {
+	sender := newT080Sender()
+	recorder := newT179ProjectionRecorder()
+	worker := newT080Worker(t, ScoreWorkerConfig{
+		QueueCapacity: 1, MaxAttempts: 1, InitialBackoff: time.Second, MaxBackoff: time.Second,
+		Sender: sender, Waiter: newT080RetryWaiter(), ProjectionRecorder: recorder,
+	})
+	worker.Start()
+	projection := mustNewT078Projection(t)
+	if got := worker.Enqueue(projection); got.Status != ScoreProjectionStatusQueued {
+		t.Fatalf("enqueue status = %q", got.Status)
+	}
+	sending := receiveT179Projection(t, recorder.recorded)
+	if sending.Status != ScoreProjectionStatusSending {
+		t.Fatalf("first persisted status = %q", sending.Status)
+	}
+	select {
+	case sent := <-sender.started:
+		if sent.ProjectionID != sending.ProjectionID {
+			t.Fatal("sender identity differs from persisted snapshot")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sender did not start after persistence")
+	}
+	sender.results <- nil
+	terminal := receiveT179Projection(t, recorder.recorded)
+	if terminal.Status != ScoreProjectionStatusSent || terminal.ProjectionID != projection.ProjectionID || terminal.Attempt != sending.Attempt || !reflect.DeepEqual(terminal.Evidence, projection.Evidence) {
+		t.Fatalf("terminal snapshot = %#v, want immutable same projection", terminal)
+	}
+	shutdownT080Worker(t, worker)
+}
+
+// 持久化失败不能被当作 metrics 丢包继续执行。若 sending 状态没有落盘，worker
+// 必须禁止真实平台副作用，且 evidence 原值保持不变。
+func TestScoreWorkerStopsBeforeSendWhenProjectionPersistenceFails(t *testing.T) {
+	sender := newT080Sender()
+	recorder := newT179ProjectionRecorder()
+	recorder.err = errors.New("raw-t179-storage-error")
+	recorder.called = make(chan struct{}, 1)
+	failures := make(chan ScoreProjectionPersistenceFailure, 1)
+	worker := newT080Worker(t, ScoreWorkerConfig{QueueCapacity: 1, MaxAttempts: 1, InitialBackoff: time.Second, MaxBackoff: time.Second, Sender: sender, Waiter: newT080RetryWaiter(), ProjectionRecorder: recorder, OnPersistenceFailure: func(failure ScoreProjectionPersistenceFailure) { failures <- failure }})
+	worker.Start()
+	projection := mustNewT078Projection(t)
+	if got := worker.Enqueue(projection); got.Status != ScoreProjectionStatusQueued {
+		t.Fatalf("enqueue status = %q", got.Status)
+	}
+	select {
+	case <-recorder.called:
+	case <-time.After(time.Second):
+		t.Fatal("recorder was not called")
+	}
+	select {
+	case <-sender.started:
+		t.Fatal("sender started although sending transition was not durable")
+	default:
+	}
+	failure := receiveT179Failure(t, failures)
+	if failure.Class != "projection_persistence_failed" || failure.Status != ScoreProjectionStatusSending || strings.Contains(fmt.Sprint(failure), "raw-t179") {
+		t.Fatalf("low-sensitivity failure = %#v", failure)
+	}
+	shutdownT080Worker(t, worker)
+	select {
+	case <-sender.started:
+		t.Fatal("sender started after shutdown despite persistence failure")
+	default:
+	}
+}
+
+func receiveT179Failure(t *testing.T, values <-chan ScoreProjectionPersistenceFailure) ScoreProjectionPersistenceFailure {
+	t.Helper()
+	select {
+	case value := <-values:
+		return value
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for persistence failure")
+		return ScoreProjectionPersistenceFailure{}
+	}
+}
+
+func TestScoreWorkerReliablyRecordsRetrySequence(t *testing.T) {
+	sender, waiter, recorder := newT080Sender(), newT080RetryWaiter(), newT179ProjectionRecorder()
+	worker := newT080Worker(t, ScoreWorkerConfig{QueueCapacity: 1, MaxAttempts: 1, InitialBackoff: time.Second, MaxBackoff: time.Second, Sender: sender, Waiter: waiter, ProjectionRecorder: recorder})
+	worker.Start()
+	projection := mustNewT078Projection(t)
+	_ = worker.Enqueue(projection)
+	first := receiveT179Projection(t, recorder.recorded)
+	_ = receiveT080(t, sender.started)
+	sender.results <- ErrScoreUpstream
+	retry := receiveT179Projection(t, recorder.recorded)
+	if retry.Status != ScoreProjectionStatusRetryWait || retry.Attempt != 1 {
+		t.Fatalf("retry=%#v", retry)
+	}
+	_ = receiveT080(t, waiter.started)
+	waiter.release <- struct{}{}
+	queued := receiveT179Projection(t, recorder.recorded)
+	second := receiveT179Projection(t, recorder.recorded)
+	if first.ProjectionID != projection.ProjectionID || queued.Status != ScoreProjectionStatusQueued || second.Status != ScoreProjectionStatusSending || second.Attempt != 1 || !reflect.DeepEqual(second.Evidence, projection.Evidence) {
+		t.Fatalf("durable retry sequence invalid: %#v %#v %#v", first, queued, second)
+	}
+	_ = receiveT080(t, sender.started)
+	sender.results <- nil
+	_ = receiveT179Projection(t, recorder.recorded)
+	shutdownT080Worker(t, worker)
+}
+
+type t179ProjectionRecorder struct {
+	recorded chan ScoreProjection
+	err      error
+	called   chan struct{}
+}
+
+func newT179ProjectionRecorder() *t179ProjectionRecorder {
+	return &t179ProjectionRecorder{recorded: make(chan ScoreProjection, 16)}
+}
+
+func (recorder *t179ProjectionRecorder) Record(_ context.Context, projection ScoreProjection) error {
+	if recorder.called != nil {
+		recorder.called <- struct{}{}
+	}
+	if recorder.err != nil {
+		return recorder.err
+	}
+	recorder.recorded <- projection.Snapshot()
+	return nil
+}
+
+func receiveT179Projection(t *testing.T, values <-chan ScoreProjection) ScoreProjection {
+	t.Helper()
+	select {
+	case value := <-values:
+		return value
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for persisted transition")
+		return ScoreProjection{}
+	}
+}
+
 func TestScoreWorkerEnqueueDropsWhenQueueIsFullWithoutChangingEvidence(t *testing.T) {
 	worker := newT080Worker(t, ScoreWorkerConfig{
 		QueueCapacity:  1,
