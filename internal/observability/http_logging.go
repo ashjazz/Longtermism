@@ -23,8 +23,8 @@ type HTTPRequestIdentity struct {
 	SmokeRunID    string
 }
 
-// HTTPCompletionLogWriter is the controlled JSONL output port. Its concrete GoFrame glog
-// writer is supplied at application wiring, keeping this hook deterministic and backend-free.
+// HTTPCompletionLogWriter 是受控 completion fact 出口。生产 composition root 注入 OTLP
+// writer；JSONL 仅作为显式启用的本地诊断副本，middleware 本身始终保持 backend-free。
 type HTTPCompletionLogWriter interface {
 	Write(context.Context, HTTPCompletionLog) error
 }
@@ -51,7 +51,7 @@ type HTTPLoggingDependencies struct {
 // NewHTTPCompletionLoggingMiddleware records a request only after its business handler has
 // completed. It never buffers or reads request/response bodies; sink failures are isolated
 // from the caller-visible HTTP payload. The concrete local JSONL sink is wired in T055 and
-// collected asynchronously by filelog, so this hook never calls or waits for Loki.
+// emitted asynchronously by the OTel Logs SDK, so this hook never calls or waits for Loki.
 func NewHTTPCompletionLoggingMiddleware(dependencies HTTPLoggingDependencies) func(http.Handler) http.Handler {
 	now := dependencies.Now
 	if now == nil {

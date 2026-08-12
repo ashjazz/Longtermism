@@ -267,6 +267,11 @@ func TestBuildHTTPCompletionOTLPRecordRejectsUnsafeIdentityValuesWithoutEcho(t *
 	}
 	for _, field := range identityFields {
 		for _, unsafe := range unsafeValues {
+			// request_id 的唯一事实边界是 transport opaque-ID grammar；不能在日志出口
+			// 因业务上合法的单词子串而丢弃已经接纳的 completion fact。
+			if field.name == "request_id" && unsafe.name == "credential text" {
+				continue
+			}
 			t.Run(field.name+" rejects "+unsafe.name, func(t *testing.T) {
 				entry, err := BuildHTTPCompletionLog(newHTTPCompletionLogInput(false, true, true))
 				if err != nil {
@@ -296,6 +301,21 @@ func TestBuildHTTPCompletionOTLPRecordRejectsUnsafeIdentityValuesWithoutEcho(t *
 			}
 			tt.mutate(&entry)
 			assertUnsafeOTLPRecordRejected(t, entry)
+		})
+	}
+}
+
+func TestBuildHTTPCompletionOTLPRecordAcceptsTransportValidRequestIDs(t *testing.T) {
+	for _, requestID := range []string{"a", "req.1", "token-abc", "authorization-1", "req-secret-1"} {
+		t.Run(requestID, func(t *testing.T) {
+			entry, err := BuildHTTPCompletionLog(newHTTPCompletionLogInput(false, false, false))
+			if err != nil {
+				t.Fatalf("BuildHTTPCompletionLog() error = %v", err)
+			}
+			entry.RequestID = requestID
+			if _, err := BuildHTTPCompletionOTLPRecord(entry); err != nil {
+				t.Fatalf("transport-valid request ID rejected at OTLP boundary: %v", err)
+			}
 		})
 	}
 }

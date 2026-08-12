@@ -131,6 +131,7 @@ func buildDefaultObservabilityBootstrap(ctx context.Context) (*ObservabilityBoot
 		Signals: ObservabilitySignalPolicy{
 			TracesEnabled:  g.Cfg().MustGet(ctx, "observability.signals.traces_enabled", false).Bool(),
 			MetricsEnabled: g.Cfg().MustGet(ctx, "observability.signals.metrics_enabled", false).Bool(),
+			LogsTransport:  g.Cfg().MustGet(ctx, "observability.signals.logs_transport", "").String(),
 		},
 		SmokeEnabled: g.Cfg().MustGet(ctx, "observability.smoke.enabled", false).Bool(),
 	}, ObservabilityBootstrapDependencies{})
@@ -179,9 +180,31 @@ func newHTTPCompletionLoggingMiddleware(
 	if bootstrap == nil || !isHTTPObservationEnabled {
 		return nil, nil
 	}
+	writers := []appobservability.HTTPCompletionLogWriter{bootstrap.CompletionLogger}
+	if g.Cfg().MustGet(ctx, "observability.signals.local_jsonl_enabled", false).Bool() {
+		writer, closer, err := newLocalJSONLCompletionLogWriter(ctx)
+		if err != nil {
+			return nil, err
+		}
+		bootstrap.completionCloser = closer
+		writers = append(writers, writer)
+	}
+	completionLogger := appobservability.NewHTTPCompletionLogFanoutWriter(writers...)
+	if completionLogger == nil {
+		return nil, nil
+	}
+	return appobservability.NewHTTPCompletionLoggingMiddleware(appobservability.HTTPLoggingDependencies{
+		Tracer: otel.Tracer("github.com/ashjazz/Longtermism/internal/observability/http"), CompletionLogger: completionLogger,
+		Identify: func(request *http.Request) appobservability.HTTPRequestIdentity {
+			return httpCompletionIdentity(request)
+		},
+	}), nil
+}
+
+func newLocalJSONLCompletionLogWriter(ctx context.Context) (appobservability.HTTPCompletionLogWriter, *os.File, error) {
 	config, err := gcfg.NewAdapterFile("manifest/config/glog-observability.yaml")
 	if err != nil {
-		return nil, fmt.Errorf("load observability glog config: %w", err)
+		return nil, nil, fmt.Errorf("load observability glog config: %w", err)
 	}
 	loggerConfig := gcfg.NewWithAdapter(config)
 	// Compose keeps the profile default under /var/log, while a host-run application must use a
@@ -192,28 +215,22 @@ func newHTTPCompletionLoggingMiddleware(
 		loggerConfig.MustGet(ctx, "logger.path").String(),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	file, err := resolveHTTPCompletionLogFile(loggerConfig.MustGet(ctx, "logger.file").String())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	output, err := openHTTPCompletionLog(path, file)
 	if err != nil {
-		return nil, fmt.Errorf("open observability JSONL file: %w", err)
+		return nil, nil, fmt.Errorf("open observability JSONL file: %w", err)
 	}
 	writer, err := appobservability.NewJSONLHTTPCompletionLogWriter(output)
 	if err != nil {
 		_ = output.Close()
-		return nil, err
+		return nil, nil, err
 	}
-	return appobservability.NewHTTPCompletionLoggingMiddleware(appobservability.HTTPLoggingDependencies{
-		Tracer:           otel.Tracer("github.com/ashjazz/Longtermism/internal/observability/http"),
-		CompletionLogger: writer,
-		Identify: func(request *http.Request) appobservability.HTTPRequestIdentity {
-			return httpCompletionIdentity(request)
-		},
-	}), nil
+	return writer, output, nil
 }
 
 // httpCompletionIdentity is intentionally derived at the HTTP boundary. The marker is accepted
@@ -337,9 +354,8 @@ func newInfraSmokeHTTPHandler(controller *controllerobservability.ControllerV1) 
 func shutdownObservabilityBootstrap(bootstrap *ObservabilityBootstrap) {
 	shutdownContext, cancel := context.WithTimeout(context.Background(), observabilityShutdownTimeout)
 	defer cancel()
-	if err := bootstrap.Flush(shutdownContext); err != nil {
-		g.Log().Error(shutdownContext, "observability flush failed", "error_class", "telemetry_export_failed")
-	}
+	// SDK provider Shutdown already drains buffered signals. A separate pre-flush with the same
+	// deadline lets an unavailable trace exporter consume the budget before logs can close.
 	if err := bootstrap.Shutdown(shutdownContext); err != nil {
 		g.Log().Error(shutdownContext, "observability shutdown failed", "error_class", "telemetry_export_failed")
 	}

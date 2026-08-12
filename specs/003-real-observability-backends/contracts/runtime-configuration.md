@@ -32,7 +32,8 @@ observability:
   signals:
     traces_enabled: true
     metrics_enabled: true
-    logs_transport: glog_file
+    logs_transport: otlp
+    local_jsonl_enabled: false
   tracing:
     sampling_ratio: 1.0
   payload:

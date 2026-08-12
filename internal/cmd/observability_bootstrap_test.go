@@ -55,6 +55,15 @@ func TestBuildObservabilityBootstrapNormalizesRuntimeOwnership(t *testing.T) {
 			wantMode: ObservabilityRuntimeModeLocal,
 		},
 		{
+			name: "local mode rejects OTLP logs instead of silently dropping completion facts",
+			input: ObservabilityBootstrapInput{
+				Enabled: true,
+				Runtime: ObservabilityRuntimeConfigInput{Mode: ObservabilityRuntimeModeLocal, Environment: "test"},
+				Signals: ObservabilitySignalPolicy{TracesEnabled: true, MetricsEnabled: true, LogsTransport: "otlp"},
+			},
+			wantErr: true,
+		},
+		{
 			name: "signals are the only provider creation gate and smoke does not override them",
 			input: ObservabilityBootstrapInput{
 				Enabled: true,
@@ -154,6 +163,26 @@ func TestBuildObservabilityBootstrapFailsFastBeforeGlobalInstallation(t *testing
 	}
 	if dependencies.collectorCalls != 1 || dependencies.providerCalls != 0 || installer.calls != 0 {
 		t.Fatal("failed collector initialization created providers or installed global state")
+	}
+}
+
+func TestNormalizeObservabilityBootstrapInputValidatesSharedOTLPLogsLifecycle(t *testing.T) {
+	tests := []struct {
+		name    string
+		signals ObservabilitySignalPolicy
+		wantErr bool
+	}{
+		{name: "shared three signal lifecycle", signals: ObservabilitySignalPolicy{TracesEnabled: true, MetricsEnabled: true, LogsTransport: "otlp"}},
+		{name: "logs cannot silently use an unknown transport", signals: ObservabilitySignalPolicy{TracesEnabled: true, MetricsEnabled: true, LogsTransport: "glog_file"}, wantErr: true},
+		{name: "logs cannot create a second provider lifecycle", signals: ObservabilitySignalPolicy{LogsTransport: "otlp"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := normalizeObservabilityBootstrapInput(ObservabilityBootstrapInput{Enabled: true, Runtime: ObservabilityRuntimeConfigInput{Mode: ObservabilityRuntimeModeCollector}, Signals: tt.signals})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("normalizeObservabilityBootstrapInput() error = %v, wantErr %t", err, tt.wantErr)
+			}
+		})
 	}
 }
 

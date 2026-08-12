@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	appobservability "github.com/ashjazz/Longtermism/internal/observability"
 	"go.opentelemetry.io/otel"
 )
 
@@ -56,8 +57,8 @@ func TestNewObservabilityOTLPExporterBuildsSharedTraceAndMetricProvidersWithoutI
 				_ = exporter.Shutdown(shutdownContext)
 			})
 
-			if exporter.TracerProvider() == nil || exporter.MeterProvider() == nil {
-				t.Fatal("OTLP exporter did not create both signal providers")
+			if exporter.TracerProvider() == nil || exporter.MeterProvider() == nil || exporter.LoggerProvider() == nil {
+				t.Fatal("OTLP exporter did not create trace, metric, and log providers")
 			}
 			if err := exporter.Initialize(context.Background()); err != nil {
 				t.Fatalf("Initialize() error = %v", err)
@@ -200,14 +201,25 @@ func TestObservabilityOTLPHTTPExporterDeliversBothSignalsToCollectorPaths(t *tes
 		t.Fatalf("Int64Counter() error = %v", err)
 	}
 	counter.Add(context.Background(), 1)
+	completionWriter, err := appobservability.NewOTLPHTTPCompletionLogWriter(exporter.LoggerProvider().Logger("t026-test"))
+	if err != nil {
+		t.Fatalf("NewOTLPHTTPCompletionLogWriter() error = %v", err)
+	}
+	if err := completionWriter.Write(context.Background(), appobservability.HTTPCompletionLog{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Level: "info", Message: "http request completed",
+		RequestID: "req-t026", TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef",
+		Route: "/api/v1/health/ping", Method: "GET", Status: 200, DurationMS: 1,
+	}); err != nil {
+		t.Fatalf("completion log Write() error = %v", err)
+	}
 	if err := exporter.ForceFlush(context.Background()); err != nil {
 		t.Fatalf("ForceFlush() error = %v", err)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
-	if requests["/v1/traces"] != 1 || requests["/v1/metrics"] != 1 {
-		t.Fatalf("Collector paths = %#v, want one trace and one metric request", requests)
+	if requests["/v1/traces"] != 1 || requests["/v1/metrics"] != 1 || requests["/v1/logs"] != 1 {
+		t.Fatalf("Collector paths = %#v, want one trace, metric, and log request", requests)
 	}
 	if rendered := fmt.Sprintf("%#v", exporter); strings.Contains(rendered, headerValue) || strings.Contains(rendered, "Bearer t026-synthetic+header") {
 		t.Fatal("exporter wrapper retained the raw authorization header")

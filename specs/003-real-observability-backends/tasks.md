@@ -308,7 +308,7 @@
 
 ### Implementation - GREEN/REFACTOR
 
-- [ ] T173 [US1] 在 `internal/observability/http_logging.go`、`internal/cmd/cmd.go` 与 `internal/logic/observability/infra_smoke.go` 实现受控 completion OTLP log emitter 的 composition-root 装配；质量门控：使 T170 GREEN，应用只连接 Collector，日志写入与 trace/metrics 使用同一 provider lifecycle，JSONL writer 改为显式本地诊断 opt-in 而非 smoke 必经路径。
+- [X] T173 [US1] 在 `internal/observability/http_logging.go`、`internal/cmd/cmd.go` 与 `internal/logic/observability/infra_smoke.go` 实现受控 completion OTLP log emitter 的 composition-root 装配；质量门控：使 T170 GREEN，应用只连接 Collector，日志写入与 trace/metrics 使用同一 provider lifecycle，JSONL writer 改为显式本地诊断 opt-in 而非 smoke 必经路径。
 - [ ] T174 [US1] 在 `deploy/observability/collector/collector-grafana.yaml`、`deploy/observability/compose.grafana.yaml`、`deploy/observability/prometheus/prometheus.yaml` 实现 OTLP logs→Loki 和 Collector self-telemetry 可查询配置；质量门控：使 T171 GREEN，不发布额外公网端口、不删除 named volumes、不把 request/trace/run identity 升格为 Loki index label。
 - [ ] T175 [US1] 在 `internal/observability/backend/grafana_smoke_adapter.go`、`internal/observability/smoke/poller.go` 完成 Tempo/Loki transient-query retry 与真实响应解码；质量门控：使 T172 GREEN，任何最终失败仍产生 schema-valid、低敏 report，并准确区分 timeout、authentication、malformed response 与 marker missing。
 - [ ] T176 [US1] 在 `cmd/obs-smoke/main.go`、`Makefile`、`deploy/observability/README.md` 与 `specs/003-real-observability-backends/checklists/real-backend-acceptance.md` 完成去 bind-mount 后的真实 infra smoke 验收与运行手册；质量门控：以新的 passed report 关闭对应未完成项，明确 `obs-infra-smoke` 只查询已运行服务，删除已失效的宿主机 JSONL 同步说明，未取得报告不得勾选验收项。

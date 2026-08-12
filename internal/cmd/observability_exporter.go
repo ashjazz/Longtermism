@@ -10,11 +10,15 @@ import (
 	"strings"
 	"time"
 
+	appobservability "github.com/ashjazz/Longtermism/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
@@ -57,6 +61,7 @@ type ObservabilityOTLPExporterConfig struct {
 type ObservabilityOTLPExporter struct {
 	tracerProvider *trace.TracerProvider
 	meterProvider  *metric.MeterProvider
+	loggerProvider *sdklog.LoggerProvider
 	grpcConnection *grpc.ClientConn
 }
 
@@ -74,6 +79,20 @@ func (e *ObservabilityOTLPExporter) MeterProvider() *metric.MeterProvider {
 	return e.meterProvider
 }
 
+func (e *ObservabilityOTLPExporter) LoggerProvider() *sdklog.LoggerProvider {
+	if e == nil {
+		return nil
+	}
+	return e.loggerProvider
+}
+
+func (e *ObservabilityOTLPExporter) CompletionLogger() (appobservability.HTTPCompletionLogWriter, error) {
+	if e == nil || e.loggerProvider == nil {
+		return nil, fmt.Errorf("completion logger is unavailable")
+	}
+	return appobservability.NewOTLPHTTPCompletionLogWriter(e.loggerProvider.Logger("github.com/ashjazz/Longtermism/internal/observability/http-completion"))
+}
+
 // Initialize 满足 lifecycle 的窄接口。SDK provider 与 exporter 已在构造时完成，
 // 此处不拨号；实际网络连接延迟到首批信号发送，避免启动阶段被 Collector 短暂故障阻塞。
 func (e *ObservabilityOTLPExporter) Initialize(context.Context) error {
@@ -86,8 +105,13 @@ func (e *ObservabilityOTLPExporter) ForceFlush(ctx context.Context) error {
 		return nil
 	}
 	var firstErr error
+	if e.loggerProvider != nil {
+		firstErr = e.loggerProvider.ForceFlush(ctx)
+	}
 	if e.tracerProvider != nil {
-		firstErr = e.tracerProvider.ForceFlush(ctx)
+		if err := e.tracerProvider.ForceFlush(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	if e.meterProvider != nil {
 		if err := e.meterProvider.ForceFlush(ctx); err != nil && firstErr == nil {
@@ -104,8 +128,15 @@ func (e *ObservabilityOTLPExporter) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	var firstErr error
+	// Logs are the final completion fact for a request. Drain them before slower trace/metric
+	// exporters can consume the caller's shutdown budget; the shared connection closes last.
+	if e.loggerProvider != nil {
+		firstErr = e.loggerProvider.Shutdown(ctx)
+	}
 	if e.tracerProvider != nil {
-		firstErr = e.tracerProvider.Shutdown(ctx)
+		if err := e.tracerProvider.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	if e.meterProvider != nil {
 		if err := e.meterProvider.Shutdown(ctx); err != nil && firstErr == nil {
@@ -176,7 +207,7 @@ func newObservabilityOTLPExporterFromConfig(ctx context.Context, config Observab
 		return nil, err
 	}
 	sdkResource := newOTLPResource(config.Resource)
-	traceExporter, metricExporter, grpcConnection, err := newOTLPExporters(ctx, config, headers)
+	traceExporter, metricExporter, logExporter, grpcConnection, err := newOTLPExporters(ctx, config, headers)
 	if err != nil {
 		return nil, err
 	}
@@ -191,6 +222,10 @@ func newObservabilityOTLPExporterFromConfig(ctx context.Context, config Observab
 		meterProvider: metric.NewMeterProvider(
 			metric.WithResource(sdkResource),
 			metric.WithReader(metric.NewPeriodicReader(metricExporter, metric.WithTimeout(config.Timeout))),
+		),
+		loggerProvider: sdklog.NewLoggerProvider(
+			sdklog.WithResource(sdkResource),
+			sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
 		),
 	}
 	return provider, nil
@@ -215,42 +250,55 @@ func newOTLPResource(input ObservabilityResource) *resource.Resource {
 	return resource.NewWithAttributes("", attributes...)
 }
 
-func newOTLPExporters(ctx context.Context, config ObservabilityOTLPExporterConfig, headers map[string]string) (trace.SpanExporter, metric.Exporter, *grpc.ClientConn, error) {
+func newOTLPExporters(ctx context.Context, config ObservabilityOTLPExporterConfig, headers map[string]string) (trace.SpanExporter, metric.Exporter, sdklog.Exporter, *grpc.ClientConn, error) {
 	switch config.Protocol {
 	case ObservabilityOTLPProtocolGRPC:
 		connection, err := newDirectOTLPGRPCConnection(config)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		traceExporter, err := otlptracegrpc.New(ctx, grpcTraceOptions(config, headers, connection)...)
 		if err != nil {
 			_ = connection.Close()
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		metricExporter, err := otlpmetricgrpc.New(ctx, grpcMetricOptions(config, headers, connection)...)
 		if err != nil {
 			_ = traceExporter.Shutdown(ctx)
 			_ = connection.Close()
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
-		return traceExporter, metricExporter, connection, nil
+		logExporter, err := otlploggrpc.New(ctx, grpcLogOptions(config, headers, connection)...)
+		if err != nil {
+			_ = metricExporter.Shutdown(ctx)
+			_ = traceExporter.Shutdown(ctx)
+			_ = connection.Close()
+			return nil, nil, nil, nil, err
+		}
+		return traceExporter, metricExporter, logExporter, connection, nil
 	case ObservabilityOTLPProtocolHTTPProtobuf:
 		endpoint, err := url.Parse(config.Endpoint)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("collector endpoint is invalid")
+			return nil, nil, nil, nil, fmt.Errorf("collector endpoint is invalid")
 		}
 		traceExporter, err := otlptracehttp.New(ctx, httpTraceOptions(config, endpoint, headers)...)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		metricExporter, err := otlpmetrichttp.New(ctx, httpMetricOptions(config, endpoint, headers)...)
 		if err != nil {
 			_ = traceExporter.Shutdown(ctx)
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
-		return traceExporter, metricExporter, nil, nil
+		logExporter, err := otlploghttp.New(ctx, httpLogOptions(config, endpoint, headers)...)
+		if err != nil {
+			_ = metricExporter.Shutdown(ctx)
+			_ = traceExporter.Shutdown(ctx)
+			return nil, nil, nil, nil, err
+		}
+		return traceExporter, metricExporter, logExporter, nil, nil
 	default:
-		return nil, nil, nil, fmt.Errorf("collector protocol is unsupported")
+		return nil, nil, nil, nil, fmt.Errorf("collector protocol is unsupported")
 	}
 }
 
@@ -272,6 +320,10 @@ func grpcMetricOptions(config ObservabilityOTLPExporterConfig, headers map[strin
 	return []otlpmetricgrpc.Option{otlpmetricgrpc.WithGRPCConn(connection), otlpmetricgrpc.WithTimeout(config.Timeout), otlpmetricgrpc.WithHeaders(headers)}
 }
 
+func grpcLogOptions(config ObservabilityOTLPExporterConfig, headers map[string]string, connection *grpc.ClientConn) []otlploggrpc.Option {
+	return []otlploggrpc.Option{otlploggrpc.WithGRPCConn(connection), otlploggrpc.WithTimeout(config.Timeout), otlploggrpc.WithHeaders(headers)}
+}
+
 func httpTraceOptions(config ObservabilityOTLPExporterConfig, endpoint *url.URL, headers map[string]string) []otlptracehttp.Option {
 	options := []otlptracehttp.Option{otlptracehttp.WithEndpoint(endpoint.Host), otlptracehttp.WithURLPath("/v1/traces"), otlptracehttp.WithTimeout(config.Timeout), otlptracehttp.WithHeaders(headers), otlptracehttp.WithProxy(noOTLPHTTPProxy)}
 	if config.Insecure {
@@ -288,6 +340,16 @@ func httpMetricOptions(config ObservabilityOTLPExporterConfig, endpoint *url.URL
 		options = append(options, otlpmetrichttp.WithInsecure())
 	} else {
 		options = append(options, otlpmetrichttp.WithTLSClientConfig(&tls.Config{}))
+	}
+	return options
+}
+
+func httpLogOptions(config ObservabilityOTLPExporterConfig, endpoint *url.URL, headers map[string]string) []otlploghttp.Option {
+	options := []otlploghttp.Option{otlploghttp.WithEndpoint(endpoint.Host), otlploghttp.WithURLPath("/v1/logs"), otlploghttp.WithTimeout(config.Timeout), otlploghttp.WithHeaders(headers), otlploghttp.WithProxy(noOTLPHTTPProxy)}
+	if config.Insecure {
+		options = append(options, otlploghttp.WithInsecure())
+	} else {
+		options = append(options, otlploghttp.WithTLSClientConfig(&tls.Config{}))
 	}
 	return options
 }

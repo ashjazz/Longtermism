@@ -39,7 +39,9 @@ type HTTPMetrics interface {
 	RecordHTTP(context.Context, appobservability.HTTPMetric) error
 }
 
-// HTTPCompletionLogWriter writes the already-redacted completion-log projection.
+// HTTPCompletionLogWriter writes an already-redacted completion projection. Production HTTP
+// composition intentionally leaves this nil because the outer completion middleware is the sole
+// owner of one log per request; tests may inject it to verify usecase-level failure isolation.
 type HTTPCompletionLogWriter interface {
 	Write(context.Context, appobservability.HTTPCompletionLog) error
 }

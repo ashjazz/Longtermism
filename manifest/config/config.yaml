@@ -101,7 +101,9 @@ observability:
   signals:
     traces_enabled: false
     metrics_enabled: false
-    logs_transport: "glog_file"
+    logs_transport: "otlp"
+    # 本地 JSONL 仅用于人工诊断；真实 smoke/Loki 证据不得依赖宿主机文件挂载。
+    local_jsonl_enabled: false
   tracing:
     sampling_ratio: 1.0
   payload:

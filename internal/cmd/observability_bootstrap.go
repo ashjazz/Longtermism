@@ -3,8 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
+
+	appobservability "github.com/ashjazz/Longtermism/internal/observability"
 
 	metricAPI "go.opentelemetry.io/otel/metric"
 	traceAPI "go.opentelemetry.io/otel/trace"
@@ -15,6 +18,7 @@ import (
 type ObservabilitySignalPolicy struct {
 	TracesEnabled  bool
 	MetricsEnabled bool
+	LogsTransport  string
 }
 
 // ObservabilityBootstrapInput 是 composition root 消费的原始运行时输入。HeaderValue
@@ -32,11 +36,15 @@ type ObservabilityBootstrapInput struct {
 // ObservabilityBootstrap 是启动入口稍后消费的纯装配结果。它不注册路由、不启动 server，
 // 也不保存任何凭据；T052 才负责把 Middleware 和 smoke gate 接入 HTTP 应用。
 type ObservabilityBootstrap struct {
-	Runtime           ObservabilityRuntimeConfig
-	InfraSmokeEnabled bool
-	Lifecycle         *ObservabilityProviderLifecycle
-	Middleware        func(http.Handler) http.Handler
-	Propagator        ObservabilityIngressPropagator
+	Runtime             ObservabilityRuntimeConfig
+	InfraSmokeEnabled   bool
+	Lifecycle           *ObservabilityProviderLifecycle
+	Middleware          func(http.Handler) http.Handler
+	Propagator          ObservabilityIngressPropagator
+	CompletionLogger    appobservability.HTTPCompletionLogWriter
+	completionCloser    io.Closer
+	completionCloseOnce sync.Once
+	completionCloseErr  error
 }
 
 func (b *ObservabilityBootstrap) Flush(ctx context.Context) error {
@@ -47,10 +55,20 @@ func (b *ObservabilityBootstrap) Flush(ctx context.Context) error {
 }
 
 func (b *ObservabilityBootstrap) Shutdown(ctx context.Context) error {
-	if b == nil || b.Lifecycle == nil {
+	if b == nil {
 		return nil
 	}
-	return b.Lifecycle.Shutdown(ctx)
+	var firstErr error
+	if b.Lifecycle != nil {
+		firstErr = b.Lifecycle.Shutdown(ctx)
+	}
+	if b.completionCloser != nil {
+		b.completionCloseOnce.Do(func() { b.completionCloseErr = b.completionCloser.Close() })
+		if b.completionCloseErr != nil && firstErr == nil {
+			firstErr = b.completionCloseErr
+		}
+	}
+	return firstErr
 }
 
 // ObservabilityBootstrapDependencies 将网络 bundle 与 HTTP middleware 留在可注入边界。
@@ -60,6 +78,10 @@ type ObservabilityBootstrapDependencies struct {
 	BuildProviders  func(ObservabilityLifecycleExporter) (traceAPI.TracerProvider, metricAPI.MeterProvider, error)
 	BuildMiddleware func() func(http.Handler) http.Handler
 	state           *observabilityBootstrapState
+}
+
+type observabilityCompletionLoggerProvider interface {
+	CompletionLogger() (appobservability.HTTPCompletionLogWriter, error)
 }
 
 type observabilityBootstrapState struct {
@@ -150,6 +172,19 @@ func BuildObservabilityBootstrap(ctx context.Context, input ObservabilityBootstr
 		ExporterOwnsTracerProvider: true,
 		ExporterOwnsMeterProvider:  true,
 	})
+	// 先完成所有可能失败的 capability 发现与 writer 构造，再安装全局 provider。
+	// 否则失败会把进程全局状态留在一个已经关闭、无法重试的 provider 上。
+	if input.Signals.LogsTransport == "otlp" {
+		provider, ok := exporter.(observabilityCompletionLoggerProvider)
+		if !ok {
+			return nil, fmt.Errorf("collector bundle must provide completion logs")
+		}
+		writer, writerErr := provider.CompletionLogger()
+		if writerErr != nil {
+			return nil, fmt.Errorf("build completion logger: %w", writerErr)
+		}
+		bootstrap.CompletionLogger = writer
+	}
 	if err := lifecycle.Initialize(ctx); err != nil {
 		return nil, fmt.Errorf("initialize observability lifecycle: %w", err)
 	}
@@ -175,6 +210,15 @@ func normalizeObservabilityBootstrapInput(input ObservabilityBootstrapInput) (Ob
 		}
 		runtime.Mode = ObservabilityRuntimeModeNoop
 		return runtime, nil
+	}
+	if input.Signals.LogsTransport != "" && input.Signals.LogsTransport != "otlp" {
+		return ObservabilityRuntimeConfigInput{}, fmt.Errorf("logs transport is unsupported")
+	}
+	if input.Signals.LogsTransport == "otlp" && !input.Signals.TracesEnabled {
+		return ObservabilityRuntimeConfigInput{}, fmt.Errorf("OTLP logs require the shared provider lifecycle")
+	}
+	if input.Signals.LogsTransport == "otlp" && runtime.Mode != ObservabilityRuntimeModeCollector {
+		return ObservabilityRuntimeConfigInput{}, fmt.Errorf("OTLP logs require collector mode")
 	}
 	if runtime.Mode == "" || runtime.Mode == ObservabilityRuntimeModeNoop {
 		return ObservabilityRuntimeConfigInput{}, fmt.Errorf("enabled observability requires local or collector mode")
