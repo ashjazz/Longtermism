@@ -135,6 +135,41 @@ func TestHTTPCompletionLoggingMiddlewareDoesNotBlockResponsesWhenWriterFails(t *
 	assertHTTPCompletionWriterFailureDiagnostic(t, diagnostics.failures)
 }
 
+// middleware 只负责生成并接纳 OTLP-safe record；Go OTel 的 Logger.Emit 不返回异步
+// exporter 错误，因此 Collector/flush 失败应由 T173 的 provider lifecycle 诊断，不能
+// 在这里伪造成同步业务错误。通用 writer-failure 用例继续保护同步接纳失败隔离。
+func TestHTTPCompletionLoggingMiddlewareProjectsOTLPSafeRecordWithoutChangingResponse(t *testing.T) {
+	writer := &otlpRecordCapturingWriter{}
+	middleware := NewHTTPCompletionLoggingMiddleware(HTTPLoggingDependencies{
+		CompletionLogger: writer,
+		Identify: func(*http.Request) HTTPRequestIdentity {
+			return HTTPRequestIdentity{RequestID: "req-t170", RouteTemplate: infraSmokeLogRoute, IsSmokeRun: true, SmokeRunID: "run-t170-otlp"}
+		},
+	})
+	handler := middleware(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusAccepted)
+		_, _ = response.Write([]byte("business-response-t170"))
+	}))
+	request := httptest.NewRequest(http.MethodPost, infraSmokeLogRoute, strings.NewReader("synthetic-t170-raw-prompt"))
+	request.Header.Set("Authorization", "Bearer synthetic-t170-secret")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusAccepted || response.Body.String() != "business-response-t170" || writer.calls != 1 || len(writer.records) != 1 {
+		t.Fatalf("OTLP admission changed business result: status=%d body=%q calls=%d records=%d", response.Code, response.Body.String(), writer.calls, len(writer.records))
+	}
+	encoded, err := json.Marshal(writer.records)
+	if err != nil {
+		t.Fatalf("marshal low-sensitive OTLP facts: %v", err)
+	}
+	for _, forbidden := range []string{"synthetic-t170-secret", "synthetic-t170-raw-prompt", "business-response-t170"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("OTLP completion telemetry leaked %q", forbidden)
+		}
+	}
+}
+
 func TestHTTPCompletionLoggingMiddlewareRejectsRawRouteFallback(t *testing.T) {
 	writer := &httpCompletionLogWriterStub{}
 	spanExporter := tracetest.NewInMemoryExporter()
@@ -362,6 +397,21 @@ type httpCompletionLogWriterStub struct {
 	entries []HTTPCompletionLog
 	err     error
 	calls   int
+}
+
+type otlpRecordCapturingWriter struct {
+	records []HTTPCompletionOTLPRecord
+	calls   int
+}
+
+func (w *otlpRecordCapturingWriter) Write(_ context.Context, entry HTTPCompletionLog) error {
+	w.calls++
+	record, err := BuildHTTPCompletionOTLPRecord(entry)
+	if err != nil {
+		return err
+	}
+	w.records = append(w.records, record)
+	return nil
 }
 
 type httpCompletionFlushingResponseWriter struct {

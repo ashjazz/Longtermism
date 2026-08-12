@@ -176,6 +176,139 @@ func TestBuildHTTPCompletionLogRejectsUntrustedRouteAndErrorClass(t *testing.T) 
 	}
 }
 
+// OTLP logs 与本地 JSONL 复用同一个低敏事实模型，但不能直接序列化整个领域对象。
+// 这个契约先固定 SDK 无关的 record 投影；T173 再负责把它交给 OTel LoggerProvider。
+func TestBuildHTTPCompletionOTLPRecordUsesExactAllowlist(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      HTTPCompletionLogInput
+		severity   string
+		body       string
+		attributes map[string]any
+	}{
+		{
+			name:  "ordinary completion excludes conditional identities",
+			input: newHTTPCompletionLogInput(false, false, false), severity: "INFO", body: "http request completed",
+			attributes: map[string]any{
+				"request_id": "req-t018", "trace_id": "0123456789abcdef0123456789abcdef", "span_id": "0123456789abcdef",
+				"route": "/api/v1/chat", "method": "POST", "status": int64(200), "duration_ms": int64(120),
+			},
+		},
+		{
+			name:  "failed AI smoke completion retains stable structured metadata",
+			input: newHTTPCompletionLogInput(true, true, true), severity: "ERROR", body: "http request failed",
+			attributes: map[string]any{
+				"request_id": "req-t018", "trace_id": "0123456789abcdef0123456789abcdef", "span_id": "0123456789abcdef",
+				"route": "/api/v1/chat", "method": "POST", "status": int64(502), "duration_ms": int64(120),
+				"error_class": "upstream_unavailable", "ai_trace_id": "ai-t018", "smoke_run_id": "smoke-t018",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, err := BuildHTTPCompletionLog(tt.input)
+			if err != nil {
+				t.Fatalf("BuildHTTPCompletionLog() error = %v", err)
+			}
+			record, err := BuildHTTPCompletionOTLPRecord(entry)
+			if err != nil {
+				t.Fatalf("BuildHTTPCompletionOTLPRecord() error = %v", err)
+			}
+			if !record.Timestamp.Equal(tt.input.Timestamp.UTC()) || record.Severity != tt.severity || record.Body != tt.body {
+				t.Fatalf("OTLP record envelope = %#v, want UTC timestamp, severity %q and stable body %q", record, tt.severity, tt.body)
+			}
+			recordType := reflect.TypeOf(record)
+			if recordType.Kind() != reflect.Struct || recordType.NumField() != 4 {
+				t.Fatalf("HTTPCompletionOTLPRecord fields = %v, want timestamp/severity/body/attributes only", recordType)
+			}
+			for index, name := range []string{"Timestamp", "Severity", "Body", "Attributes"} {
+				if field := recordType.Field(index); field.Name != name || !field.IsExported() {
+					t.Fatalf("HTTPCompletionOTLPRecord field %d = %#v, want exported %s", index, field, name)
+				}
+			}
+			if !reflect.DeepEqual(record.Attributes, tt.attributes) {
+				t.Fatalf("OTLP record attributes = %#v, want exact low-sensitive allowlist %#v", record.Attributes, tt.attributes)
+			}
+			if _, duplicated := record.Attributes["message"]; duplicated || strings.Contains(record.Body, "smoke-t018") {
+				t.Fatal("OTLP body duplicated structured metadata")
+			}
+			encoded, err := json.Marshal(record)
+			if err != nil {
+				t.Fatalf("marshal OTLP-safe record: %v", err)
+			}
+			assertHTTPCompletionLogDoesNotContainSensitiveInput(t, string(encoded))
+
+			// 返回值必须拥有自己的 attribute map，避免 exporter 或测试调用方修改后污染后续记录。
+			record.Attributes["route"] = "mutated"
+			fresh, err := BuildHTTPCompletionOTLPRecord(entry)
+			if err != nil || fresh.Attributes["route"] != "/api/v1/chat" {
+				t.Fatal("OTLP record projection retained mutable attribute state")
+			}
+		})
+	}
+}
+
+// Allowlist 也必须约束值。否则上游身份边界一旦失守，攻击者仍可借合法属性名把
+// credential、换行或自由文本送入 OTLP/Loki，绕过“字段名安全”的表面保护。
+func TestBuildHTTPCompletionOTLPRecordRejectsUnsafeIdentityValuesWithoutEcho(t *testing.T) {
+	identityFields := []struct {
+		name string
+		set  func(*HTTPCompletionLog, string)
+	}{
+		{name: "request_id", set: func(entry *HTTPCompletionLog, value string) { entry.RequestID = value }},
+		{name: "ai_trace_id", set: func(entry *HTTPCompletionLog, value string) { entry.AITraceID = value }},
+		{name: "smoke_run_id", set: func(entry *HTTPCompletionLog, value string) { entry.SmokeRunID = value }},
+	}
+	unsafeValues := []struct{ name, value string }{
+		{name: "control characters", value: "identity\nsecret"},
+		{name: "credential text", value: "Bearer-synthetic-t170-secret"},
+		{name: "free text", value: "identity synthetic-t170-secret"},
+	}
+	for _, field := range identityFields {
+		for _, unsafe := range unsafeValues {
+			t.Run(field.name+" rejects "+unsafe.name, func(t *testing.T) {
+				entry, err := BuildHTTPCompletionLog(newHTTPCompletionLogInput(false, true, true))
+				if err != nil {
+					t.Fatalf("BuildHTTPCompletionLog() error = %v", err)
+				}
+				field.set(&entry, unsafe.value)
+				assertUnsafeOTLPRecordRejected(t, entry)
+			})
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*HTTPCompletionLog)
+	}{
+		{name: "trace identity must be fixed hex", mutate: func(entry *HTTPCompletionLog) { entry.TraceID = "synthetic-t170-secret" }},
+		{name: "span identity must be fixed hex", mutate: func(entry *HTTPCompletionLog) { entry.SpanID = "not-otel-hex" }},
+		{name: "stable body cannot be replaced", mutate: func(entry *HTTPCompletionLog) { entry.Message = "synthetic-t170-secret" }},
+		{name: "severity cannot be replaced", mutate: func(entry *HTTPCompletionLog) { entry.Level = "synthetic-t170-secret" }},
+		{name: "method cannot be replaced", mutate: func(entry *HTTPCompletionLog) { entry.Method = "synthetic-t170-secret" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry, err := BuildHTTPCompletionLog(newHTTPCompletionLogInput(false, true, true))
+			if err != nil {
+				t.Fatalf("BuildHTTPCompletionLog() error = %v", err)
+			}
+			tt.mutate(&entry)
+			assertUnsafeOTLPRecordRejected(t, entry)
+		})
+	}
+}
+
+func assertUnsafeOTLPRecordRejected(t *testing.T, entry HTTPCompletionLog) {
+	t.Helper()
+	if _, err := BuildHTTPCompletionOTLPRecord(entry); err == nil {
+		t.Fatal("BuildHTTPCompletionOTLPRecord() accepted unsafe record data")
+	} else if strings.Contains(err.Error(), "synthetic-t170-secret") || strings.ContainsAny(err.Error(), "\r\n") {
+		t.Fatal("OTLP record validation reflected rejected data")
+	}
+}
+
 func newHTTPCompletionLogInput(isFailed, isAI, isSmoke bool) HTTPCompletionLogInput {
 	input := HTTPCompletionLogInput{
 		Timestamp:     time.Date(2026, time.July, 13, 9, 2, 3, 456000000, time.FixedZone("CST", 8*60*60)),
