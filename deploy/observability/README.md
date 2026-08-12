@@ -57,13 +57,12 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
 填入 `LANGFUSE_*` 的自托管运行配置。`make` 在该文件存在时自动读取它；也可以继续只在
 当前 shell export 变量。不要提交 `.env.local`，不要把真实值填回 example。
 
-### 首次冷启动：先创建 Langfuse project key
+### 首次冷启动：headless 创建 14 天 retention 项目
 
-1. 只配置模板中 bootstrap 所需的 `LANGFUSE_POSTGRES_PASSWORD`、数据库/Redis/ClickHouse
-   connection string、`LANGFUSE_CLICKHOUSE_USER`、`LANGFUSE_CLICKHOUSE_PASSWORD`、
-   `LANGFUSE_MINIO_ROOT_USER`、`LANGFUSE_MINIO_ROOT_PASSWORD`、`LANGFUSE_S3_EVENT_UPLOAD_BUCKET`、
-   `LANGFUSE_SALT`、`LANGFUSE_ENCRYPTION_KEY`、`LANGFUSE_NEXTAUTH_SECRET` 和
-   `LANGFUSE_NEXTAUTH_URL`；此时不需要 Grafana 管理员信息或 Collector OTLP 变量。
+1. 填写 `.env.local.example` 中首次 bootstrap 分组的所有空值，包括数据库/Redis/ClickHouse
+   connection string、普通与管理员 ClickHouse 密码、MinIO root 与应用身份、加密/会话密钥、
+   `LANGFUSE_EE_LICENSE_KEY` 及全部 `LANGFUSE_INIT_*` identity/credential；此时不需要
+   Grafana 管理员信息或 Collector OTLP 变量。
 
    本地 Compose 网络中请使用服务 DNS，而不是容器名称或宿主机端口。例如：
 
@@ -87,7 +86,7 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
    MinIO root
    凭据只交给初始化任务；Langfuse web/worker 只使用独立的
    `LANGFUSE_MINIO_ACCESS_KEY_ID`/`LANGFUSE_MINIO_SECRET_ACCESS_KEY`，其策略限制为该 bucket 的
-   `events/` 前缀。`langfuse-minio` 不发布宿主机端口，bootstrap 会通过
+   `events/` 前缀，并包含 retention 清理所需的 `DeleteObject`。`langfuse-minio` 不发布宿主机端口，bootstrap 会通过
    one-shot initializer 自动、幂等地创建 `LANGFUSE_S3_EVENT_UPLOAD_BUCKET`，无需手工打开
    MinIO Console 或创建桶。另一个 one-shot initializer 会以同样的幂等方式创建/授权
    `langfuse` ClickHouse 用户，因此即使先前失败的冷启动已留下 ClickHouse 数据卷，也不要
@@ -97,6 +96,14 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
 
    `LANGFUSE_ENCRYPTION_KEY` 必须用 `openssl rand -hex 32` 生成一次并长期保留；它同时注入
    Langfuse web 与 worker，用于解密既有数据中的加密字段，不能在已有数据卷上随意更换。
+   Headless project key 必须保留 Langfuse 识别的前缀，可分别生成：
+
+   ```bash
+   printf 'lf_pk_%s\n' "$(openssl rand -hex 24)"
+   printf 'lf_sk_%s\n' "$(openssl rand -hex 24)"
+   ```
+
+   将结果只写入被忽略的 `.env.local`，不要复制到命令历史、日志或本模板。
 2. 执行 `make obs-langfuse-bootstrap-up`。它只启动 Langfuse web/worker 与它们依赖的
    Postgres、ClickHouse、Redis、MinIO 及一次性建桶任务，并等待可验证的健康检查完成。
    Langfuse `3.185.0` 的 worker 镜像未提供稳定 HTTP 或脚本 health endpoint，因此不为它
@@ -105,13 +112,16 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
    web 容器预留 `2GiB` 内存，并将 Node 堆限制为 `1536MiB`；这是为了容纳首次 model catalogue
    与 migration，避免 Node 在默认 cgroup heap 上限触发 `JavaScript heap out of memory`。因此本机
    Docker 可用内存需要覆盖整个 profile 声明的 `12GiB` 上限。
-3. 打开 `http://127.0.0.1:3001`，完成自托管实例的首个用户/组织/项目初始化，并在该项目的
-   **Settings → API Keys** 创建 public/secret key 对。
+3. bootstrap 会按显式 `LANGFUSE_INIT_*` identity 幂等创建首个用户、组织、项目和 API key，
+   并在新项目上设置 14 天 retention。该策略依赖 Langfuse EE license；没有 license 时不能
+   用无限保留冒充成功。对于已存在于 named volumes 的项目，headless 初始化不会回写 retention，
+   必须在项目设置中显式迁移并核验 14 天策略。可打开 `http://127.0.0.1:3001` 检查结果。
 4. 在被忽略的 `.env.local`（或当前 shell）中填写 `GRAFANA_ADMIN_USER`、
    `GRAFANA_ADMIN_PASSWORD`、`LANGFUSE_OTLP_AUTHORIZATION` 和
    `LANGFUSE_OTEL_INGESTION_VERSION`，然后执行 `make obs-grafana-up`。
 
-`LANGFUSE_OTLP_AUTHORIZATION` 是 Collector 写入 header，格式为 `Basic <base64(public:secret)>`；
+`LANGFUSE_OTLP_AUTHORIZATION` 使用 headless 初始化的 project public/secret key，由 Collector
+写入 header，格式为 `Basic <base64(public:secret)>`；
 
 ```bash
 printf '%s:%s' '<Public Key>' '<Secret Key>' | base64

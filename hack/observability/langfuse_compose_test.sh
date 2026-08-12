@@ -118,6 +118,18 @@ end
   [web, worker].each { |service| fail_check("missing_langfuse_initializer:#{initializer}") unless service.dig("depends_on", initializer, "condition") == "service_completed_successfully" }
 end
 
+# Project retention removes event blobs as well as database rows. The scoped MinIO
+# identity needs delete permission on events only; root credentials must not reach web/worker.
+minio_init = required_hash(services["langfuse-minio-init"], "missing_langfuse_minio_initializer")
+minio_policy = Array(minio_init["entrypoint"]).join(" ")
+scoped_delete = /"Action":\["s3:GetObject","s3:PutObject","s3:DeleteObject"\],"Resource":\["arn:aws:s3:::.*LANGFUSE_S3_EVENT_UPLOAD_BUCKET.*\/events\/\*"\]/
+fail_check("missing_langfuse_retention_delete_permission") unless minio_policy.match?(scoped_delete)
+fail_check("unsafe_langfuse_bucket_permission") if minio_policy.match?(/"Action":\["s3:\*"\]/)
+%w[langfuse-web langfuse-worker].each do |service_name|
+  environment = required_hash(services.fetch(service_name)["environment"], "missing_credential_environment:#{service_name}")
+  fail_check("unsafe_langfuse_root_credential:#{service_name}") if environment.key?("MINIO_ROOT_USER") || environment.key?("MINIO_ROOT_PASSWORD")
+end
+
 # Langfuse retention is a project-level policy. Pin it at 14 days during headless
 # initialization and require the EE entitlement rather than silently retaining forever.
 web_environment = required_hash(web["environment"], "missing_langfuse_web_environment")

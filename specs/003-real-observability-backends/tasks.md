@@ -183,7 +183,7 @@
 - [X] T100 [US2] 在 `internal/observability/langfuse/worker.go` 实现有界异步队列与指标；质量门控：使 T080 GREEN，`go test -race` 通过，queue full/shutdown timeout 形成明确 projection 状态且 chat enqueue 非阻塞。
 - [X] T101 [US2] 在 `internal/cmd/langfuse_score_lifecycle.go` 装配 score worker lifecycle；质量门控：使 T081 GREEN，evidence 必须先持久化，worker 未配置时返回 not_configured 而非丢弃事实。
 - [X] T102 [US2] 在 `deploy/observability/collector/collector-grafana.yaml` 完成 Langfuse AI downstream exporter/transform；质量门控：使 T082 GREEN，只导出带 marker 的 root/bridge 与 semantic spans，infra-only marker 查询为 0。
-- [ ] T103 [US2] 在 `deploy/observability/compose.grafana.yaml` 完成固定版本 Langfuse self-hosted 服务与 retention/volume；质量门控：使 T083 GREEN，不创建 raw debug volume，凭据只经 env/secret 注入。
+- [X] T103 [US2] 在 `deploy/observability/compose.langfuse.yaml` 完成固定版本 Langfuse self-hosted 服务与 retention/volume；质量门控：使 T083 GREEN，不创建 raw debug volume，凭据只经 env/secret 注入。
 - [ ] T104 [US2] 在 `deploy/observability/grafana/dashboards/observability-overview.json` 增加 AI/eval/score 面板；质量门控：使 T084 GREEN，同步覆盖 token/cost/eval，不能用高基数 ID 做 metrics labels。
 - [ ] T105 [US2] 在 `internal/observability/smoke/chat_runner.go` 实现真实 chat 双平面查询；质量门控：使 T085 GREEN，按响应 identity+run window 查询 Tempo/Loki/Prometheus/Langfuse，业务失败保留原始错误域。
 - [ ] T106 [US2] 在 `internal/observability/smoke/score_runner.go` 实现 evidence/score 投影查询；质量门控：使 T086 GREEN，120 秒边界内确认 sent 或稳定 failure，不把 delayed/duplicate score 误判为新成功。

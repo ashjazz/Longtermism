@@ -125,7 +125,7 @@ services:
         mc alias set local http://langfuse-minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
         mc mb --ignore-existing "local/$${LANGFUSE_S3_EVENT_UPLOAD_BUCKET}";
         mc admin user add local "$${LANGFUSE_MINIO_ACCESS_KEY_ID}" "$${LANGFUSE_MINIO_SECRET_ACCESS_KEY}" || true;
-        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::'"$${LANGFUSE_S3_EVENT_UPLOAD_BUCKET}"'"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject"],"Resource":["arn:aws:s3:::'"$${LANGFUSE_S3_EVENT_UPLOAD_BUCKET}"'/events/*"]}]}' > /tmp/langfuse-events-policy.json;
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::'"$${LANGFUSE_S3_EVENT_UPLOAD_BUCKET}"'"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"],"Resource":["arn:aws:s3:::'"$${LANGFUSE_S3_EVENT_UPLOAD_BUCKET}"'/events/*"]}]}' > /tmp/langfuse-events-policy.json;
         mc admin policy create local langfuse-events /tmp/langfuse-events-policy.json || true;
         mc admin policy attach local langfuse-events --user "$${LANGFUSE_MINIO_ACCESS_KEY_ID}"
     environment:
@@ -154,6 +154,16 @@ services:
       ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?set LANGFUSE_ENCRYPTION_KEY}
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?set LANGFUSE_NEXTAUTH_SECRET}
       NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:?set LANGFUSE_NEXTAUTH_URL}
+      # Retention is a project-level EE policy. Headless initialization keeps its
+      # identity explicit and idempotent; existing resources are never guessed.
+      LANGFUSE_EE_LICENSE_KEY: ${LANGFUSE_EE_LICENSE_KEY:?set LANGFUSE_EE_LICENSE_KEY}
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:?set LANGFUSE_INIT_ORG_ID}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:?set LANGFUSE_INIT_PROJECT_ID}
+      LANGFUSE_INIT_PROJECT_RETENTION: 14
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:?set LANGFUSE_INIT_PROJECT_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:?set LANGFUSE_INIT_PROJECT_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:?set LANGFUSE_INIT_USER_EMAIL}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:?set LANGFUSE_INIT_USER_PASSWORD}
       TELEMETRY_ENABLED: "false"
       REDIS_CONNECTION_STRING: ${LANGFUSE_REDIS_CONNECTION_STRING:?set LANGFUSE_REDIS_CONNECTION_STRING}
       CLICKHOUSE_URL: ${LANGFUSE_CLICKHOUSE_URL:?set LANGFUSE_CLICKHOUSE_URL}
@@ -206,6 +216,7 @@ services:
       SALT: ${LANGFUSE_SALT:?set LANGFUSE_SALT}
       ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?set LANGFUSE_ENCRYPTION_KEY}
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?set LANGFUSE_NEXTAUTH_SECRET}
+      LANGFUSE_EE_LICENSE_KEY: ${LANGFUSE_EE_LICENSE_KEY:?set LANGFUSE_EE_LICENSE_KEY}
       REDIS_CONNECTION_STRING: ${LANGFUSE_REDIS_CONNECTION_STRING:?set LANGFUSE_REDIS_CONNECTION_STRING}
       CLICKHOUSE_URL: ${LANGFUSE_CLICKHOUSE_URL:?set LANGFUSE_CLICKHOUSE_URL}
       CLICKHOUSE_MIGRATION_URL: ${LANGFUSE_CLICKHOUSE_MIGRATION_URL:?set LANGFUSE_CLICKHOUSE_MIGRATION_URL}
