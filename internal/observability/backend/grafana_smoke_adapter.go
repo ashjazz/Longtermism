@@ -20,6 +20,7 @@ var (
 )
 
 const maximumSmokeQueryWindow = time.Minute
+const maximumSmokeMarkerObservations = 100
 
 // GrafanaSmokeEvidenceAdapter is the only boundary allowed to decode T063 query documents for
 // an infrastructure smoke. It deliberately projects just marker timestamps, counters and health
@@ -68,8 +69,8 @@ func (a *GrafanaSmokeEvidenceAdapter) QueryTempoMarker(ctx context.Context, targ
 	return decodeTempoMarkerObservations(result, target)
 }
 
-// QueryLokiMarker uses the same target window as Tempo. The line filter is intentionally exact
-// and marker-only; raw log text is parsed only enough to read the entry timestamp, then discarded.
+// QueryLokiMarker uses the same target window as Tempo. The structured-metadata predicate is
+// intentionally exact and marker-only; raw log text is discarded after validating its type.
 func (a *GrafanaSmokeEvidenceAdapter) QueryLokiMarker(ctx context.Context, target smoke.PollMarkerTarget) ([]smoke.MarkerObservation, error) {
 	if !isSafeSmokeQueryTarget(target) {
 		return nil, errInvalidSmokeQueryTarget
@@ -150,6 +151,9 @@ func smokeReportErrorClass(err error) string {
 	if errors.Is(err, ErrStaleQueryWindow) {
 		return "invalid_query"
 	}
+	if errors.Is(err, errMalformedSmokeEvidence) {
+		return "malformed_response"
+	}
 	var queryError *BackendQueryError
 	if errors.As(err, &queryError) && isReportErrorClass(queryError.Class()) {
 		return queryError.Class()
@@ -167,7 +171,7 @@ type tempoSearchResponse struct {
 
 func decodeTempoMarkerObservations(result BackendQueryResult, target smoke.PollMarkerTarget) ([]smoke.MarkerObservation, error) {
 	var response tempoSearchResponse
-	if err := result.Decode(&response); err != nil || response.Traces == nil {
+	if err := result.Decode(&response); err != nil || response.Traces == nil || len(response.Traces) > maximumSmokeMarkerObservations {
 		return nil, errMalformedSmokeEvidence
 	}
 	return markerObservationsFromNanoseconds(response.Traces, target)
@@ -189,9 +193,14 @@ func decodeLokiMarkerObservations(result BackendQueryResult, target smoke.PollMa
 		return nil, errMalformedSmokeEvidence
 	}
 	var observations []smoke.MarkerObservation
+	entryCount := 0
 	for _, stream := range response.Data.Result {
 		for _, entry := range stream.Values {
-			if len(entry) != 2 {
+			entryCount++
+			if entryCount > maximumSmokeMarkerObservations {
+				return nil, errMalformedSmokeEvidence
+			}
+			if len(entry) != 3 {
 				return nil, errMalformedSmokeEvidence
 			}
 			var timestamp string
@@ -205,6 +214,12 @@ func decodeLokiMarkerObservations(result BackendQueryResult, target smoke.PollMa
 				return nil, errMalformedSmokeEvidence
 			}
 			_ = line
+			// Loki 的 native OTLP endpoint 将 log attributes 保存在 structured metadata。
+			// 必须从后端响应再次核对 marker；不能只凭查询参数就用 target 回填正证据。
+			var metadata map[string]string
+			if err := json.Unmarshal(entry[2], &metadata); err != nil || len(metadata) == 0 || metadata["smoke_run_id"] != target.Marker {
+				return nil, errMalformedSmokeEvidence
+			}
 			observedAt, err := parseUnixNanoseconds(timestamp)
 			if err != nil {
 				return nil, errMalformedSmokeEvidence
@@ -281,7 +296,8 @@ func traceQLMarkerQuery(marker string) string {
 }
 
 func lokiMarkerQuery(marker string) string {
-	return fmt.Sprintf(`{service_name="longtermism"} | json | smoke_run_id = %q`, marker)
+	// Native OTLP log attributes are Loki structured metadata, not JSON body fields.
+	return fmt.Sprintf(`{service_name="longtermism"} | smoke_run_id = %q`, marker)
 }
 
 // The runner also validates targets, but this adapter is a separate external-query boundary.
@@ -303,7 +319,7 @@ func isSafeSmokeQueryTarget(target smoke.PollMarkerTarget) bool {
 
 func isReportErrorClass(class string) bool {
 	switch class {
-	case "authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "invalid_query", "malformed_response", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing":
+	case "authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "invalid_query", "malformed_response", "marker_missing", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing":
 		return true
 	default:
 		return false

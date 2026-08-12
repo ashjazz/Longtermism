@@ -35,7 +35,7 @@ func TestGrafanaInfrastructureSmokeBackendDelegatesBoundedEvidence(t *testing.T)
 			if query.Get("start") != target.StartedAt.UTC().Format(time.RFC3339Nano) || query.Get("end") != target.Deadline.UTC().Format(time.RFC3339Nano) {
 				t.Errorf("Loki window = start:%q end:%q, want target window", query.Get("start"), query.Get("end"))
 			}
-			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"values":[["%d","raw-t065b-loki"]]}]}}`, startedAt.UnixNano())
+			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"values":[["%d","http request completed",{"smoke_run_id":"%s"}]]}]}}`, startedAt.UnixNano(), target.Marker)
 		case "/api/v1/query":
 			prometheusCalls++
 			assertInfraHTTPCountQuery(t, query.Get("query"))
@@ -82,6 +82,49 @@ func TestGrafanaInfrastructureSmokeBackendDelegatesBoundedEvidence(t *testing.T)
 	}
 	assertNoRawBackendDataProjected(t, tempo)
 	assertNoRawBackendDataProjected(t, loki)
+}
+
+func TestGrafanaInfrastructureSmokeBackendClassifiesMalformedMarkerResponses(t *testing.T) {
+	startedAt := time.Now().UTC().Add(-time.Second)
+	target := smoke.PollMarkerTarget{Marker: "infra-t175-malformed", StartedAt: startedAt, Deadline: startedAt.Add(time.Minute)}
+	tests := []struct {
+		name  string
+		path  string
+		query func(*GrafanaInfrastructureSmokeBackend) error
+	}{
+		{name: "Tempo", path: "/api/search", query: func(backend *GrafanaInfrastructureSmokeBackend) error {
+			_, err := backend.QueryTempo(context.Background(), target)
+			return err
+		}},
+		{name: "Loki", path: "/loki/api/v1/query_range", query: func(backend *GrafanaInfrastructureSmokeBackend) error {
+			_, err := backend.QueryLoki(context.Background(), target)
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != tt.path {
+					t.Errorf("query path = %q, want %q", request.URL.Path, tt.path)
+				}
+				_, _ = writer.Write([]byte(`{"raw":"raw-t175-malformed-response"}`))
+			}))
+			defer server.Close()
+
+			client := NewGrafanaQueryClient(GrafanaQueryConfig{PrometheusURL: server.URL, LokiURL: server.URL, TempoURL: server.URL, Timeout: time.Second})
+			backend, err := NewGrafanaInfrastructureSmokeBackend(GrafanaInfrastructureSmokeBackendConfig{Grafana: client, Langfuse: fakeNegativeMarkerCounter{}, AIPlane: fakeNegativeMarkerCounter{}})
+			if err != nil {
+				t.Fatalf("NewGrafanaInfrastructureSmokeBackend() error = %v", err)
+			}
+			err = tt.query(backend)
+			if errorClass(err) != "malformed_response" {
+				t.Fatalf("marker response error class = %q, want malformed_response", errorClass(err))
+			}
+			if strings.Contains(err.Error(), "raw-t175-malformed-response") {
+				t.Fatal("marker response error leaked raw backend data")
+			}
+		})
+	}
 }
 
 func TestGrafanaInfrastructureSmokeBackendFailsClosed(t *testing.T) {

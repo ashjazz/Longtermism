@@ -111,7 +111,7 @@ func TestBoundedMarkerPollerRejectsOtherAndOutOfWindowMarkers(t *testing.T) {
 			{Marker: target.Marker, ObservedAt: target.Deadline.Add(time.Nanosecond)},
 		}, nil
 	})
-	if !errors.Is(err, context.DeadlineExceeded) || queryCalls == 0 {
+	if markerErrorClass(err) != "marker_missing" || queryCalls == 0 {
 		t.Fatal("WaitForMarker() accepted another-run, old, or late marker")
 	}
 }
@@ -128,10 +128,54 @@ func TestBoundedMarkerPollerTimesOutWhenNoCurrentRunMarkerArrives(t *testing.T) 
 		assertPollTarget(t, got, target)
 		return nil, nil
 	})
-	if !errors.Is(err, context.DeadlineExceeded) || !clock.Now().Equal(target.Deadline) || clock.LastWaitDuration() != 2*time.Second || queryCalls != 2 {
+	if markerErrorClass(err) != "marker_missing" || !clock.Now().Equal(target.Deadline) || clock.LastWaitDuration() != 2*time.Second || queryCalls != 2 {
 		t.Fatal("WaitForMarker() did not stop at the configured deadline")
 	}
 }
+
+func TestBoundedMarkerPollerFailsFastForPermanentSafeQueryClasses(t *testing.T) {
+	tests := []string{"authentication_failed", "invalid_query", "malformed_response"}
+	for _, class := range tests {
+		t.Run(class, func(t *testing.T) {
+			clock := newPollerTestClock(time.Date(2026, time.July, 13, 1, 2, 3, 0, time.UTC))
+			target := newMarkerPollTarget(clock.Now())
+			queryCalls := 0
+			_, err := NewBoundedMarkerPoller(clock, time.Second).WaitForMarker(context.Background(), target, func(context.Context, PollMarkerTarget) ([]MarkerObservation, error) {
+				queryCalls++
+				return nil, permanentPollQueryError{class: class}
+			})
+			if markerErrorClass(err) != class || queryCalls != 1 || clock.WaitCount() != 0 {
+				t.Fatalf("permanent query result = class:%s calls:%d waits:%d err:%v", markerErrorClass(err), queryCalls, clock.WaitCount(), err)
+			}
+			if strings.Contains(err.Error(), "raw-permanent-response") {
+				t.Fatal("permanent query failure leaked the raw backend response")
+			}
+		})
+	}
+}
+
+func TestBoundedMarkerPollerRetriesTimeoutAndPreservesItsSafeClass(t *testing.T) {
+	clock := newPollerTestClock(time.Date(2026, time.August, 12, 1, 2, 3, 0, time.UTC))
+	target := newMarkerPollTarget(clock.Now())
+	target.Deadline = target.StartedAt.Add(2 * time.Second)
+	queryCalls := 0
+
+	_, err := NewBoundedMarkerPoller(clock, time.Second).WaitForMarker(context.Background(), target, func(context.Context, PollMarkerTarget) ([]MarkerObservation, error) {
+		queryCalls++
+		return nil, permanentPollQueryError{class: "backend_timeout"}
+	})
+	if markerErrorClass(err) != "backend_timeout" || queryCalls != 3 || !clock.Now().Equal(target.Deadline) {
+		t.Fatalf("timeout query result = class:%s calls:%d now:%s", markerErrorClass(err), queryCalls, clock.Now())
+	}
+	if strings.Contains(err.Error(), "raw-permanent-response") {
+		t.Fatal("timeout query failure leaked the raw backend response")
+	}
+}
+
+type permanentPollQueryError struct{ class string }
+
+func (e permanentPollQueryError) Error() string { return "raw-permanent-response" }
+func (e permanentPollQueryError) Class() string { return e.class }
 
 func TestBoundedMarkerPollerStopsBeforeQueryWhenContextIsCanceled(t *testing.T) {
 	clock := newPollerTestClock(time.Date(2026, time.July, 13, 1, 2, 3, 0, time.UTC))

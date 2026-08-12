@@ -73,6 +73,7 @@ func (p BoundedMarkerPoller) WaitForMarker(ctx context.Context, target PollMarke
 	boundedContext, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
 	var lastQueryErr error
+	hadSuccessfulQuery := false
 
 	for {
 		if err := boundedContext.Err(); err != nil {
@@ -92,15 +93,25 @@ func (p BoundedMarkerPoller) WaitForMarker(ctx context.Context, target PollMarke
 			// Backend indexes can briefly reject a just-arrived query while the same marker is
 			// already on its way through an asynchronous exporter. Preserve the failure only if
 			// the bounded window expires; do not let one transient response end the smoke early.
-			lastQueryErr = errSmokeMarkerQuery
-		} else if observation, found := currentRunObservation(observations, target); found {
-			return observation, nil
+			lastQueryErr = safeMarkerQueryError(err)
+			if !retryableMarkerQueryError(lastQueryErr) {
+				return MarkerObservation{}, lastQueryErr
+			}
+		} else {
+			hadSuccessfulQuery = true
+			lastQueryErr = nil
+			if observation, found := currentRunObservation(observations, target); found {
+				return observation, nil
+			}
 		}
 
 		remaining = target.Deadline.Sub(p.clock.Now())
 		if remaining <= 0 {
 			if lastQueryErr != nil {
 				return MarkerObservation{}, lastQueryErr
+			}
+			if hadSuccessfulQuery {
+				return MarkerObservation{}, classifiedMarkerQueryError{class: "marker_missing"}
 			}
 			return MarkerObservation{}, context.DeadlineExceeded
 		}
@@ -110,6 +121,43 @@ func (p BoundedMarkerPoller) WaitForMarker(ctx context.Context, target PollMarke
 			}
 			return MarkerObservation{}, errSmokeMarkerWait
 		}
+	}
+}
+
+func retryableMarkerQueryError(err error) bool {
+	var classified interface{ Class() string }
+	if !errors.As(err, &classified) {
+		return true
+	}
+	switch classified.Class() {
+	case "backend_unavailable", "backend_timeout", "query_failed":
+		return true
+	default:
+		return false
+	}
+}
+
+// classifiedMarkerQueryError deliberately keeps only the finite adapter class. The original
+// error may contain a backend response, query or credential and must not survive into reports.
+type classifiedMarkerQueryError struct{ class string }
+
+func (e classifiedMarkerQueryError) Error() string { return "smoke marker query failed: " + e.class }
+func (e classifiedMarkerQueryError) Class() string { return e.class }
+
+func safeMarkerQueryError(err error) error {
+	var classified interface{ Class() string }
+	if errors.As(err, &classified) && safeMarkerQueryErrorClass(classified.Class()) {
+		return classifiedMarkerQueryError{class: classified.Class()}
+	}
+	return errSmokeMarkerQuery
+}
+
+func safeMarkerQueryErrorClass(class string) bool {
+	switch class {
+	case "authentication_failed", "backend_timeout", "backend_unavailable", "invalid_query", "malformed_response", "query_failed":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -65,11 +65,19 @@ func NewGrafanaInfrastructureSmokeBackend(config GrafanaInfrastructureSmokeBacke
 }
 
 func (b *GrafanaInfrastructureSmokeBackend) QueryTempo(ctx context.Context, target smoke.PollMarkerTarget) ([]smoke.MarkerObservation, error) {
-	return b.evidence.QueryTempoMarker(ctx, target)
+	observations, err := b.evidence.QueryTempoMarker(ctx, target)
+	if err != nil {
+		return nil, newBackendQueryError("tempo", smokeReportErrorClass(err))
+	}
+	return observations, nil
 }
 
 func (b *GrafanaInfrastructureSmokeBackend) QueryLoki(ctx context.Context, target smoke.PollMarkerTarget) ([]smoke.MarkerObservation, error) {
-	return b.evidence.QueryLokiMarker(ctx, target)
+	observations, err := b.evidence.QueryLokiMarker(ctx, target)
+	if err != nil {
+		return nil, newBackendQueryError("loki", smokeReportErrorClass(err))
+	}
+	return observations, nil
 }
 
 func (b *GrafanaInfrastructureSmokeBackend) BaselineHTTPRequestCount(ctx context.Context) (int64, error) {

@@ -206,6 +206,33 @@ func TestGrafanaSmokeEvidenceAdapterRejectsMalformedMarkerDocuments(t *testing.T
 	}
 }
 
+func TestGrafanaSmokeEvidenceAdapterRejectsMarkerResultsBeyondClientLimit(t *testing.T) {
+	startedAt := time.Now().UTC()
+	target := smoke.PollMarkerTarget{Marker: "infra-t175-bounded", StartedAt: startedAt, Deadline: startedAt.Add(time.Minute)}
+
+	tempoTraces := make([]string, maximumSmokeMarkerObservations+1)
+	lokiValues := make([]string, maximumSmokeMarkerObservations+1)
+	for index := range tempoTraces {
+		tempoTraces[index] = fmt.Sprintf(`{"startTimeUnixNano":"%d"}`, startedAt.UnixNano())
+		lokiValues[index] = fmt.Sprintf(`["%d","http request completed",{"smoke_run_id":"%s"}]`, startedAt.UnixNano(), target.Marker)
+	}
+	tests := []struct {
+		name   string
+		decode func(BackendQueryResult, smoke.PollMarkerTarget) ([]smoke.MarkerObservation, error)
+		body   string
+	}{
+		{name: "Tempo", decode: decodeTempoMarkerObservations, body: `{"traces":[` + strings.Join(tempoTraces, ",") + `]}`},
+		{name: "Loki", decode: decodeLokiMarkerObservations, body: `{"status":"success","data":{"resultType":"streams","result":[{"values":[` + strings.Join(lokiValues, ",") + `]}]}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.decode(backendQueryResultForTest(tt.body), target); !errors.Is(err, errMalformedSmokeEvidence) {
+				t.Fatalf("decode oversized marker result error = %v, want malformed evidence", err)
+			}
+		})
+	}
+}
+
 func TestGrafanaSmokeEvidenceAdapterDecodesGrafanaHealthAndNegativeCounts(t *testing.T) {
 	adapter := NewGrafanaSmokeEvidenceAdapter(nil)
 
