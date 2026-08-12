@@ -296,6 +296,9 @@
 
 ## Phase 3A：US1 本地日志出口去 bind-mount 化（P1，插入真实后端验收前）
 
+> 本阶段以 append-only 方式取代早期 T053-T055/T058 中的 glog JSONL、shared-volume 与
+> filelog 生产路径；这些完成项保留为历史实施记录，不再代表当前运行架构。
+
 **用户故事目标**：本机运行的应用以 OTLP logs 将受控 completion 事实发送给 Collector，使 Loki 证据不依赖 Docker Desktop 对宿主机 JSONL bind mount 的可见性；JSONL 仅可作为本地诊断工件，不能再成为验收数据路径。
 
 **独立验收标准**：应用、Collector、Loki 均已启动时，触发唯一 smoke marker 后，Loki 在同一 bounded window 内查询到该 marker；停止或删除宿主机 JSONL bind mount 不改变此结论；raw body、request/trace identity 不成为 Loki index label。
@@ -309,7 +312,7 @@
 ### Implementation - GREEN/REFACTOR
 
 - [X] T173 [US1] 在 `internal/observability/http_logging.go`、`internal/cmd/cmd.go` 与 `internal/logic/observability/infra_smoke.go` 实现受控 completion OTLP log emitter 的 composition-root 装配；质量门控：使 T170 GREEN，应用只连接 Collector，日志写入与 trace/metrics 使用同一 provider lifecycle，JSONL writer 改为显式本地诊断 opt-in 而非 smoke 必经路径。
-- [ ] T174 [US1] 在 `deploy/observability/collector/collector-grafana.yaml`、`deploy/observability/compose.grafana.yaml`、`deploy/observability/prometheus/prometheus.yaml` 实现 OTLP logs→Loki 和 Collector self-telemetry 可查询配置；质量门控：使 T171 GREEN，不发布额外公网端口、不删除 named volumes、不把 request/trace/run identity 升格为 Loki index label。
+- [X] T174 [US1] 在 `deploy/observability/collector/collector-grafana.yaml`、`deploy/observability/compose.grafana.yaml`、`deploy/observability/prometheus/prometheus.yaml` 实现 OTLP logs→Loki 和 Collector self-telemetry 可查询配置；质量门控：使 T171 GREEN，不发布额外公网端口、不删除 named volumes、不把 request/trace/run identity 升格为 Loki index label。
 - [ ] T175 [US1] 在 `internal/observability/backend/grafana_smoke_adapter.go`、`internal/observability/smoke/poller.go` 完成 Tempo/Loki transient-query retry 与真实响应解码；质量门控：使 T172 GREEN，任何最终失败仍产生 schema-valid、低敏 report，并准确区分 timeout、authentication、malformed response 与 marker missing。
 - [ ] T176 [US1] 在 `cmd/obs-smoke/main.go`、`Makefile`、`deploy/observability/README.md` 与 `specs/003-real-observability-backends/checklists/real-backend-acceptance.md` 完成去 bind-mount 后的真实 infra smoke 验收与运行手册；质量门控：以新的 passed report 关闭对应未完成项，明确 `obs-infra-smoke` 只查询已运行服务，删除已失效的宿主机 JSONL 同步说明，未取得报告不得勾选验收项。
 

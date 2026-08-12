@@ -6,9 +6,8 @@ OBSERVABILITY_COMPOSE_PROJECT ?= longtermism-observability
 OBSERVABILITY_LOCAL_ENV_FILE ?= deploy/observability/.env.local
 OBSERVABILITY_LOCAL_ENV_OPTION := $(if $(wildcard $(OBSERVABILITY_LOCAL_ENV_FILE)),--env-file $(OBSERVABILITY_LOCAL_ENV_FILE),)
 OBS_LANGFUSE_COMPOSE = docker compose --project-name $(OBSERVABILITY_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml
-# Collector 的 non-root 进程必须读取宿主 JSONL 主组；所有 warm 命令（包括 ps/down）
-# 都需传同一 GID，否则 Compose 会在解析 collector.user 时失败。
-OBS_GRAFANA_COMPOSE = OBSERVABILITY_LOG_GID="$$(id -g)" $(OBS_LANGFUSE_COMPOSE) -f deploy/observability/compose.grafana.yaml
+# Collector 以固定 non-root 身份接收 OTLP logs；启动不再读取宿主 JSONL 或依赖宿主 GID。
+OBS_GRAFANA_COMPOSE = $(OBS_LANGFUSE_COMPOSE) -f deploy/observability/compose.grafana.yaml
 
 # Level 0 默认离线门禁：只运行本地 Go 检查，既不启动 Docker，也不要求 LLM/Langfuse 凭据。
 verify: vet test
@@ -79,13 +78,6 @@ obs-langfuse-bootstrap-down:
 # Level 1 是明确 opt-in 的本地 Grafana profile。默认 `verify` 绝不依赖 Docker 或
 # Langfuse 凭据；这些命令也不删除 named volumes，避免把诊断证据当作清理副作用丢失。
 obs-grafana-up:
-	@set -eu; \
-		for directory in resource resource/log resource/log/observability; do \
-			if [ -L "$$directory" ]; then echo "refusing symlinked local log directory: $$directory" >&2; exit 2; fi; \
-		done; \
-		mkdir -p resource/log/observability; \
-		chgrp "$$(id -g)" resource/log/observability; \
-		chmod 0750 resource/log/observability
 	$(OBS_GRAFANA_COMPOSE) up -d --wait --wait-timeout 180
 
 obs-grafana-down:

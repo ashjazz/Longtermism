@@ -159,6 +159,7 @@ fail_check("legacy_logs_resource_inference") if logs.fetch("processors", []).inc
 log_statements = Array(processors.dig("transform/redact-logs", "log_statements")).flat_map do |group|
   group.is_a?(Hash) ? Array(group["statements"]).map { |statement| statement.to_s.gsub(/\s+/, "") } : []
 end
+fail_check("unsafe_logs_redaction_error_mode") unless processors.dig("transform/redact-logs", "error_mode") == "propagate"
 expected_log_attributes = %w[request_id trace_id span_id route method status duration_ms error_class ai_trace_id smoke_run_id]
 keep_statement = log_statements.find { |statement| statement.start_with?("keep_keys(") }
 keep_match = /\Akeep_keys\((?:log\.)?attributes,\[(.*)\]\)\z/.match(keep_statement.to_s)

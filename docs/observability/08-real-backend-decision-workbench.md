@@ -57,7 +57,7 @@ GoFrame 与 OTel SDK 不是二选一关系。
 ### 实现细化项
 
 - **Trace 初始化优先复用 GoFrame contrib trace**。这与使用 OTel Go SDK 并不互斥：GoFrame contrib 本身也是围绕 OTel provider/exporter 做装配。实现上应采用 GoFrame-first 的启动路径；只有当 GoFrame contrib 无法表达必要配置、fan-out、resource 或测试替身时，才在 `internal/cmd` 封装窄接口补充 OTel SDK 装配。单个进程内必须避免重复注册多个互相竞争的全局 TracerProvider。
-- **Logs 第一阶段继续使用 GoFrame `glog` + trace id 关联**。OTel logs pipeline 暂不作为 v1 必做项；后续如果接入，应作为独立切片验证日志字段、trace correlation 和隐私边界。
+- **Logs 主路径已由 T170-T174 校准为 OTel Logs SDK + trace id 关联**。GoFrame `glog`/JSONL 只保留为显式本地诊断选项；OTLP logs 独立切片已验证字段、trace correlation 和隐私边界。
 - **Metrics 第一阶段先定义核心指标语义，不绑定 Prometheus 或任何具体后端**。指标可以包括 request latency、error rate、LLM token/cost、export failure、eval regression 等。业务代码只允许面向 OTel Metrics/Collector 规范暴露指标，绝不允许直接对接 Prometheus、SigNoz、Grafana stack 或其它后端 SDK/API。实际存储、查询和展示后端应在“基础设施观测后端服务”决策中确定，并由 Collector/exporter 层承接。
 
 ## 决策 2：基础设施观测后端服务
@@ -81,7 +81,7 @@ GoFrame 与 OTel SDK 不是二选一关系。
 1. **主线方案**：`OTel Collector + Prometheus + Loki + Tempo + Grafana`。
    - 这是本框架优先验证、优先文档化、优先提供 compose 示例和 dashboard 模板的经典路线。
    - 选择理由：组件职责边界清晰，能系统学习 metrics、logs、traces、dashboards、alerts 和 retention 的生产分工。
-   - 阶段边界：可观测基础设施与接入层面要在经典路线中扎实落地，包括 Collector、Tempo、Prometheus、Loki、Grafana、`glog` 到 Loki 的本地采集示例、首批 dashboard 和 smoke/checklist。业务能力的全面覆盖可以按 V1/V2 分阶段推进，但观测栈接入不能只停留在 trace demo。
+   - 阶段边界：可观测基础设施与接入层面要在经典路线中扎实落地，包括 Collector、Tempo、Prometheus、Loki、Grafana、OTLP logs 到 Loki 的本地接入、首批 dashboard 和 smoke/checklist。业务能力的全面覆盖可以按 V1/V2 分阶段推进，但观测栈接入不能只停留在 trace demo。
 
 2. **备选方案**：`OTel Collector + SigNoz`。
    - 这是受支持的用户备选路线，用于提供更一体化的 logs/metrics/traces 使用体验。
@@ -95,7 +95,7 @@ GoFrame 与 OTel SDK 不是二选一关系。
 - 仓库内提供两个 docker compose profile：`observability-grafana` 和 `observability-signoz`，方便用户在两种方案下小规模快速验证项目能力。
 - Grafana 主线首批 dashboard 同步覆盖基础设施指标和 AI 关键指标：request/error/latency、export failure、AI trace correlation、LLM token/cost、eval score/regression。
 - SigNoz 备选维护专门的 dashboard/checklist 和 smoke 验证，但实施排期低于 Grafana 经典主线。
-- Loki 日志接入第一阶段提供 `glog` 到 Loki 的本地采集示例，确保经典路线具备 logs/metrics/traces 的完整接入路径。
+- Loki 日志接入使用应用 OTel Logs SDK → Collector OTLP receiver → Loki native OTLP，确保经典路线具备 logs/metrics/traces 的完整接入路径。
 
 ## 决策 3：AI 语义观测后端服务
 
@@ -366,7 +366,7 @@ HTTP request
 ```text
 HTTP request
   -> request_id / service trace/span
-  -> glog / HTTP metrics
+  -> OTel completion logs / HTTP metrics
   -> unified response envelope
 ```
 
@@ -458,7 +458,8 @@ observability:
   signals:
     traces_enabled: true
     metrics_enabled: true
-    logs_transport: glog_file # glog_file / otlp
+    logs_transport: otlp
+    local_jsonl_enabled: false # 仅人工诊断时显式启用
 
   tracing:
     sampling_ratio: 1.0
@@ -478,7 +479,7 @@ observability:
 
 - 应用只有一个 Collector 地址，不包含 Tempo、Loki、Prometheus、Grafana、SigNoz 的地址。
 - `mode=local` 用于离线 sink/测试替身；`mode=collector` 才启用真实 OTLP 出口。使用 `collector` 比 `otlp` 更准确，因为 OTLP 是协议，不是运行模式。
-- v1 logs 仍走 `glog`；本地示例通过共享日志卷与 Collector `filelog` receiver 采集，再由 Collector 转成 OTLP logs 发往 Loki。
+- completion logs 通过应用 OTel Logs SDK 与 trace/metrics 共用 provider lifecycle，发送到唯一 Collector；JSONL 仅是显式本地诊断工件，不参与 smoke 或 Loki 验收。
 - `headers_env` 只记录环境变量名称或使用启动期环境插值，配置快照不得包含 header 原值。
 - 未知 payload mode 启动时 fail fast；`is_debug` 不直接授权内容外发。
 
@@ -565,7 +566,7 @@ ai:
 
 - **App -> Collector 默认使用 OTLP gRPC**，默认连接 `observability.collector.endpoint`；保留 `protocol=http_protobuf` override，用于网络代理、托管平台或仅开放 HTTP 的环境。
 - **本地 Prometheus 使用 pull 模式**，抓取 Collector Prometheus exporter；Prometheus Remote Write 不进入本地 v1 主线，只作为后续生产或远端托管指标后端的备选。
-- **`glog` 本地采集采用结构化 JSON 文件 + shared volume + Collector `filelog` receiver**。应用不直接调用 Loki API，Collector 负责解析、补充 resource/trace correlation 并通过 OTLP/HTTP 写入 Loki。
+- **completion logs 采用 App OTel Logs SDK → Collector OTLP receiver → 固定 body filter + 精确 allowlist → Loki native OTLP**。应用仍不直接调用 Loki API；Collector 在持久队列前完成第二道隐私收紧。
 
 ### Langfuse score adapter 共识
 
@@ -708,7 +709,7 @@ OTel trace/span context 通过标准 propagation 传播，不重复塞入 baggag
 - API 返回统一 envelope、`request_id` 和 `X-Request-ID`，不返回 `ai_trace_id`。
 - Tempo 能按 marker/request id 找到 HTTP root span。
 - Prometheus 中模板化 route/status 维度的 request counter 相对基线增加，latency histogram 新增样本；不使用 request id 或 run id 作为 metrics label。
-- Loki 能找到带 request id、trace id、method、route、status 和 duration 的结构化 `glog`。
+- Loki 能找到带 request id、trace id、method、route、status 和 duration 的结构化 OTLP completion log。
 - Langfuse 查询不到该 marker/request id。
 - 任何 span 都不包含 `longtermism.observability.plane=ai`。
 
@@ -913,9 +914,9 @@ GoFrame HTTP/API
 - 初始倾向：基础设施平面与 AI 语义平面分离；HTTP API 端点跟随 Harness 能力逐步增长，不在第一阶段塞满所有路径。
 - 补充讨论：GoFrame 和 OTel SDK 不是竞争关系。GoFrame 更像框架自动埋点来源；OTel SDK 是应用内遥测管道；OTel API 是库/业务埋点接口；Collector 是应用外遥测路由器。
 - 当前共识：应用内组件分工采用“GoFrame 基础设施自动埋点 + OTel API/SDK 标准遥测层 + `pkg/ai/obs.Trace` AI 语义源模型 + 平台 adapter 映射”的方案；不为新实现引入 `opentracing-go`。
-- 实现细化共识：Trace 初始化优先复用 GoFrame contrib trace；必要时再通过窄接口补充 OTel SDK 装配，但不能重复注册竞争性的全局 provider。Logs 先走 `glog` trace id 关联。Metrics 先定义语义，业务代码只面向 OTel Metrics/Collector，不直接对接任何具体后端；实际后端由基础设施观测后端决策决定。
+- 实现细化共识：Trace 初始化优先复用 GoFrame contrib trace；必要时再通过窄接口补充 OTel SDK 装配，但不能重复注册竞争性的全局 provider。Completion logs 与 trace/metrics 共用 OTel lifecycle并只连接 Collector。Metrics 先定义语义，业务代码只面向 OTel Metrics/Collector，不直接对接任何具体后端；实际后端由基础设施观测后端决策决定。
 - 基础设施后端共识：主线采用 `Prometheus + Loki + Tempo + Grafana` 经典方案，备选支持 `SigNoz`。两者都通过 OTel Collector 接入，应用层不出现任何后端专属埋点或 SDK。
-- 基础设施实现细化共识：提供 `observability-grafana` 与 `observability-signoz` 两个 docker compose profile。Grafana 主线优先实现，并同步覆盖基础设施指标、AI token/cost 和 eval 指标；经典路线需要提供 `glog` 到 Loki 的本地采集示例。SigNoz 也维护专门 dashboard/checklist，但实施优先级靠后。
+- 基础设施实现细化共识：提供 `observability-grafana` 与 `observability-signoz` 两个 docker compose profile。Grafana 主线优先实现，并同步覆盖基础设施指标、AI token/cost 和 eval 指标；completion logs 的正式路线为 OTLP→Collector→Loki，旧 glog/filelog 示例已由 T170-T174 取代。SigNoz 也维护专门 dashboard/checklist，但实施优先级靠后。
 - AI 语义后端共识：采用 Langfuse。正式链路通过 OTel Collector fan-out；另保留直连 Langfuse OTLP endpoint 的诊断 smoke，用来隔离验证 ingestion、属性映射、endpoint 和凭据。
 - Payload policy 共识：开发阶段允许经脱敏的受控内容帮助学习和追踪；完整原文只允许 `content_raw` 在 local/test 显式授权时作为不可序列化的 `LocalRawPayload` 本机调试工件查看。它不属于 exporter payload，也不得外发；应用内保护和 Collector 二次过滤共同构成出口边界。
 - 评估同步共识：本地 eval evidence 保持事实源，同时通过独立 Langfuse score adapter 同步为平台 score。OTLP 只承载 trace，score 通过 Langfuse API 投影；同步失败不影响业务和本地评估结果。
@@ -928,7 +929,7 @@ GoFrame HTTP/API
 - 真实 LLM 共识：复用现有 `pkg/ai/llm/openai` Chat Completions adapter，服务端配置 OpenAI-compatible base URL、API key 和默认 `gpt-5.5`；真实运行 fail fast，离线测试继续使用 deterministic fake provider。
 - Response metadata 共识：`request_id` 始终返回并写入 `X-Request-ID`，AI 请求始终返回 opaque `ai_trace_id`，有界低敏 `eval_summary` 仅 debug 返回。
 - 配置分层共识：应用只配置 Collector；Tempo/Loki/Prometheus/Langfuse/SigNoz 地址归 Collector 或后端 profile；Grafana 只配置 datasource；Langfuse score API 归 infrastructure adapter。
-- 传输与采集共识：App 默认 OTLP gRPC 并保留 HTTP/protobuf override；本地 Prometheus 使用 pull；`glog` 通过 JSON 文件、shared volume 和 Collector `filelog` receiver 进入 Loki。
+- 传输与采集共识：App 默认 OTLP gRPC 并保留 HTTP/protobuf override；本地 Prometheus 使用 pull；completion logs 通过同一 OTel lifecycle 发往 Collector OTLP receiver，再进入 Loki native OTLP。JSONL 仅显式诊断 opt-in。
 - Langfuse score 共识：第一阶段采用应用进程内有界异步 worker，本地 evidence 保持事实源；平台投影失败不影响业务，并明确接受进程崩溃时未发送 projection 可能丢失的 v1 边界。
 - 配置安全共识：非敏感 endpoint 可进入默认/profile 配置，环境专属本地文件不得上传；所有凭据仍必须通过环境变量、secret file 或密钥管理器注入。
 - 隐私与采样共识：生产默认低敏 metadata，开发按 payload policy 受控查看内容；baggage 使用低敏 allowlist，禁止项跨所有信号和 persistent queue 生效。local/smoke 全量采集，失败/降级/eval 等由 Collector tail sampling 全量保留，普通成功请求使用可配置比例。
@@ -951,7 +952,7 @@ GoFrame HTTP/API
 - [X] response metadata 是否采用 `request_id`/`ai_trace_id` 始终返回、`eval_summary` 仅 debug 返回？当前共识：采用。
 - [X] App -> Collector 使用何种协议？当前共识：默认 OTLP gRPC，保留 OTLP HTTP/protobuf override。
 - [X] 本地 Prometheus 使用 pull 还是 remote write？当前共识：使用 scrape Collector exporter 的 pull 模式，remote write 作为后续生产备选。
-- [X] `glog` 如何进入 Loki？当前共识：结构化 JSON 文件 + shared volume + Collector `filelog` receiver。
+- [X] completion logs 如何进入 Loki？早期 glog/shared-volume/filelog 方案已被 T170-T174 supersede；当前共识为应用 OTel Logs SDK → Collector OTLP receiver → filter/redact → Loki native OTLP。
 - [X] Langfuse score 第一阶段如何执行？当前共识：应用进程内受控异步 worker。
 - [X] endpoint 与凭据如何配置？当前共识：非敏感 endpoint 可写默认/profile 配置；本地 override 不上传；凭据始终使用环境变量、secret file 或密钥管理器。
 - [X] 隐私、采样与 retention 如何设计？当前共识：采用字段分级、payload policy、baggage allowlist、Collector tail sampling 和有界分层 retention 方案。

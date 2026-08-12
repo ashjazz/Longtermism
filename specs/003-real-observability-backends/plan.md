@@ -97,7 +97,7 @@ manifest/config/                     非敏感应用配置和本地 override 示
 1. App -> Collector 与 Collector -> 各后端的协议为何必须分层。
 2. GoFrame contrib 初始化能否满足 gRPC/HTTP override、resource、sampling、header、TLS 和测试替身；何时启用官方 SDK 回退。
 3. 方案 C 如何避免公共 processor 重复，同时保证纯 infra 请求不进入 Langfuse。
-4. glog JSON 文件如何经 filelog 与 Loki native OTLP 保留 trace correlation。
+4. completion logs 如何经应用 OTel Logs SDK 与 Collector OTLP receiver 写入 Loki native OTLP，同时保留 trace correlation。
 5. Langfuse OTLP trace 与 score API 如何分离，如何使用稳定幂等键。
 6. persistent queue、tail sampling、retention、版本 pin 和本地资源预算如何验证。
 7. 为什么 SigNoz 只替换基础设施后端且排在 Grafana 主线之后。
@@ -117,7 +117,7 @@ manifest/config/                     非敏感应用配置和本地 override 示
 
 1. **质量与版本地基**：补齐 verify/config/security targets，锁定镜像/模块兼容矩阵，移除未使用的 OpenTracing/Jaeger 直接依赖。
 2. **应用遥测装配**：配置值对象、单一 provider lifecycle、OTLP gRPC/HTTP、resource、propagation、metrics 和 exporter failure 指标。
-3. **Grafana infra-only 切片**：Collector ingress/infra pipeline、Tempo、Prometheus、glog/filelog/Loki、persistent queue、infra-smoke API 和自动后端查询。
+3. **Grafana infra-only 切片**：Collector ingress/infra pipeline、Tempo、Prometheus、OTLP logs/Loki、persistent queue、infra-smoke API 和自动后端查询。
 4. **真实 chat 切片**：HTTP 契约、OpenAI-compatible provider DI、AI usecase、request/OTel/AI identity、generation observation 和本地 eval evidence。
 5. **Langfuse AI 切片**：AI downstream filter/export、OTLP attribute mapping、进程内 score worker、幂等投影和查询 smoke。
 6. **隐私与配置模式**：三种 payload policy、production fail-fast、实际后端 canary 扫描、secret scan 和本地 override 保护。

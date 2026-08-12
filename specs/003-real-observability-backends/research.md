@@ -35,11 +35,11 @@
 
 ## 4. Grafana 主线信号路径
 
-**Decision**：Tempo 接收 OTLP traces；Collector 暴露 Prometheus scrape endpoint，Prometheus 同时抓取应用指标与 Collector self-telemetry；glog 写结构化 JSON 文件，经 shared volume + filelog receiver 转为 OTLP logs，并通过 Loki native OTLP HTTP endpoint 写入 Loki；Grafana仅配置 datasources、dashboards 与 alerts。
+**Decision（由 T170-T174 校准）**：Tempo 接收 OTLP traces；Collector 暴露 Prometheus scrape endpoint，Prometheus 同时抓取应用指标与 Collector self-telemetry；应用使用同一 OTel provider lifecycle 发射受控 completion OTLP logs，经 Collector 的 OTLP receiver、固定 body filter 与精确 attribute/resource allowlist 后，通过 Loki native OTLP HTTP endpoint 写入 Loki；Grafana仅配置 datasources、dashboards 与 alerts。JSONL 只保留为显式本地诊断 opt-in，不再是 smoke 或 Loki 的数据路径。
 
-**Rationale**：日志先落本地文件具备进程崩溃后的短时可恢复性；Loki native OTLP 保留 structured metadata；Prometheus pull 与 push exporter 的故障证据保持不同。
+**Rationale**：应用、trace、metric、log 只连接同一 Collector，消除 Docker Desktop bind-mount/file watch 与宿主 GID 耦合；Collector 的 Loki persistent queue承担已脱敏日志的恢复；Loki native OTLP 保留 structured metadata；Prometheus pull 与 push exporter 的故障证据保持不同。
 
-**Alternatives considered**：应用直接发 Loki；使用已趋于淘汰的 Loki exporter；Prometheus remote write；第一阶段启用 OTel logs SDK。均增加应用绑定或偏离已确认边界。
+**Alternatives considered**：应用直接发 Loki；使用已趋于淘汰的 Loki exporter；Prometheus remote write；glog JSONL + shared volume + filelog。前三者增加应用绑定或偏离已确认边界；最后一种曾作为早期方案实施，但因宿主挂载可见性和权限耦合被 T170-T174 取代。
 
 **Evidence**：[Loki native OTLP ingestion](https://grafana.com/docs/loki/latest/send-data/otel/)、[native OTLP vs Loki exporter](https://grafana.com/docs/loki/latest/send-data/otel/native_otlp_vs_loki_exporter/) 与 [Tempo Collector setup](https://grafana.com/docs/tempo/latest/set-up-for-tracing/instrument-send/set-up-collector/otel-collector/)。
 

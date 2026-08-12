@@ -39,28 +39,6 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
-  # T055 固定 glog JSONL 路径；坏行只丢弃当前行，不能停止其余日志采集。
-  filelog/glog:
-    include:
-      - /var/log/longtermism/application.jsonl
-    # Docker Desktop bind mounts do not reliably forward host file-system watch events into the
-    # Linux VM. Polling keeps the local smoke's append-only JSONL visible without changing data.
-    poll_interval: 200ms
-    start_at: beginning
-    on_truncate: read_whole_file
-    operators:
-      - type: json_parser
-        parse_from: body
-        parse_to: attributes
-        on_error: drop_quiet
-        trace:
-          trace_id:
-            parse_from: attributes.trace_id
-          span_id:
-            parse_from: attributes.span_id
-      - type: move
-        from: attributes.message
-        to: body
 
 processors:
   # ingress 是进入任一 persistent queue 前的第一道保护，避免敏感字段先落盘。
@@ -135,10 +113,12 @@ processors:
           - delete_key(attributes, "tool_arguments")
           - delete_key(attributes, "provider_error_body")
           - delete_matching_keys(attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
-  # filelog 的 JSON attributes 也需要在写入 Loki 前收紧，避免未来应用字段扩展绕过
-  # HTTP completion log 的结构 allowlist。
+  # OTLP logs 在进入 Loki persistent queue 前再次收紧。应用侧已经使用安全值对象，
+  # Collector 仍以精确 allowlist 防御未来 SDK/resource 扩展把自由字段带入日志后端。
   transform/redact-logs:
-    error_mode: ignore
+    # 任一投影错误都必须在写入持久队列前 fail closed；不能让未完成 allowlist 的
+    # 记录因 ignore 语义继续进入 Loki。
+    error_mode: propagate
     log_statements:
       - context: log
         statements:
@@ -153,27 +133,23 @@ processors:
           - delete_key(log.attributes, "tool_arguments")
           - delete_key(log.attributes, "provider_error_body")
           - delete_key(log.attributes, "raw_query")
-          - keep_keys(log.attributes, ["timestamp", "level", "message", "request_id", "trace_id", "span_id", "route", "method", "status", "duration_ms", "error_class", "smoke_run_id"])
+          - keep_keys(log.attributes, ["request_id", "trace_id", "span_id", "route", "method", "status", "duration_ms", "error_class", "ai_trace_id", "smoke_run_id"])
+      - context: resource
+        statements:
+          - keep_keys(attributes, ["service.name", "service.version", "deployment.environment"])
   # 只有显式 AI marker 才能到 Langfuse；绝不由 route 或 span 名推断 AI 语义。
   filter/ai:
     error_mode: ignore
     traces:
       span:
         - attributes["longtermism.observability.plane"] != "ai"
-  # 此文件只承载 T053 的 completion JSONL。先丢弃普通 glog 记录，确保 move 后的
-  # Loki body 仍是固定消息，而不是未知调用方写入的任意文本。
+  # 应用的 OTLP Logger 只发射固定 completion body；这里再次丢弃其它日志，防止共享
+  # receiver 的未来调用方把自由文本送入 Loki。
   filter/http-completion-logs:
     error_mode: ignore
     logs:
       log_record:
         - body != "http request completed" and body != "http request failed"
-  # filelog records originate outside the application OTLP resource. Set the one fixed service
-  # identity here so Loki's controlled service_name label matches the dashboard and smoke query.
-  resource/http-completion-log-service:
-    attributes:
-      - key: service.name
-        value: longtermism
-        action: upsert
   # tail sampling 的保留规则优先于常规成功比例，避免 smoke/故障/回归证据被抽走。
   tail_sampling/retain:
     decision_wait: 10s
@@ -312,6 +288,6 @@ service:
       receivers: [otlp]
       exporters: [prometheus/app]
     logs:
-      receivers: [filelog/glog]
-      processors: [filter/http-completion-logs, resource/http-completion-log-service, transform/redact-logs]
+      receivers: [otlp]
+      processors: [filter/http-completion-logs, transform/redact-logs]
       exporters: [otlphttp/loki]

@@ -20,14 +20,12 @@ services:
     # DAC_OVERRIDE is required only to make a repeated bootstrap idempotent
     # after the queue directories have been handed to UID 10001 with mode 0750.
     cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
-    environment:
-      OBSERVABILITY_LOG_GID: ${OBSERVABILITY_LOG_GID:?set OBSERVABILITY_LOG_GID}
     entrypoint:
       - /bin/sh
       - -ec
       - >-
         mkdir -p /var/lib/otelcol/storage/queue/tempo /var/lib/otelcol/storage/queue/loki /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/tempo-compaction /var/lib/otelcol/storage/queue/loki-compaction /var/lib/otelcol/storage/queue/langfuse-compaction;
-        chown 10001:"$${OBSERVABILITY_LOG_GID}" /var/lib/otelcol/storage/queue /var/lib/otelcol/storage/queue/tempo /var/lib/otelcol/storage/queue/loki /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/tempo-compaction /var/lib/otelcol/storage/queue/loki-compaction /var/lib/otelcol/storage/queue/langfuse-compaction;
+        chown 10001:10001 /var/lib/otelcol/storage/queue /var/lib/otelcol/storage/queue/tempo /var/lib/otelcol/storage/queue/loki /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/tempo-compaction /var/lib/otelcol/storage/queue/loki-compaction /var/lib/otelcol/storage/queue/langfuse-compaction;
         chmod 0750 /var/lib/otelcol/storage/queue /var/lib/otelcol/storage/queue/tempo /var/lib/otelcol/storage/queue/loki /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/tempo-compaction /var/lib/otelcol/storage/queue/loki-compaction /var/lib/otelcol/storage/queue/langfuse-compaction
     volumes:
       - type: volume
@@ -41,8 +39,8 @@ services:
 
   collector:
     image: ${OTELCOL_CONTRIB_IMAGE}
-    # 保持非 root UID；补充宿主机当前主组，使 filelog 能以只读方式读取 0640 JSONL。
-    user: "10001:${OBSERVABILITY_LOG_GID:?set OBSERVABILITY_LOG_GID}"
+    # 固定 non-root 身份只访问 collector-data；OTLP logs 不再依赖宿主机文件 GID。
+    user: "10001:10001"
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     environment:
       LANGFUSE_OTLP_AUTHORIZATION: ${LANGFUSE_OTLP_AUTHORIZATION:?set LANGFUSE_OTLP_AUTHORIZATION}
@@ -69,11 +67,6 @@ services:
       - type: bind
         source: ./collector/collector-grafana.yaml
         target: /etc/otelcol-contrib/config.yaml
-        read_only: true
-      # 宿主机应用写入项目内 ignored JSONL；Collector 只从挂载后的固定路径读取。
-      - type: bind
-        source: ../../resource/log/observability
-        target: /var/log/longtermism
         read_only: true
       - type: volume
         source: collector-data

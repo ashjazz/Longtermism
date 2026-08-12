@@ -43,6 +43,6 @@ limits_config:
     log_attributes:
       # Request/trace identities remain queryable structured metadata, never index labels.
       - action: structured_metadata
-        attributes: [request_id, trace_id, span_id, route, method, status, duration_ms, error_class, smoke_run_id]
+        attributes: [request_id, trace_id, span_id, route, method, status, duration_ms, error_class, ai_trace_id, smoke_run_id]
       - action: drop
         attributes: [authorization, cookie, api_key, token, password, prompt, query, output, tool_arguments, provider_error_body, raw_query]
