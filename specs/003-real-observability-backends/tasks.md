@@ -304,7 +304,7 @@
 
 - [X] T170 [P] [US1] 在 `internal/observability/http_logging_test.go` 与 `internal/observability/logging_test.go` 编写 completion log → OTLP log record 映射 RED 契约；质量门控：仅允许现有低敏 allowlist、保留 `smoke_run_id` 作为 structured metadata、拒绝 raw payload/credential，发送失败不得改变 HTTP 响应。
 - [X] T171 [P] [US1] 在 `deploy/observability/collector/collector-grafana.yaml`、`hack/observability/collector_grafana_config_test.sh` 与 `hack/observability/compose_grafana_test.sh` 编写 OTLP logs pipeline RED 配置断言；质量门控：logs 只由 OTLP receiver 接收，Loki exporter 保留 queue/retry/redaction，移除应用 JSONL bind mount/filelog 依赖，Collector self-telemetry 可由 Prometheus 查询。
-- [ ] T172 [P] [US1] 在 `internal/observability/backend/grafana_smoke_adapter_test.go` 与 `internal/observability/smoke/infra_runner_test.go` 增加真实 Tempo search response、可恢复查询失败重试、OTLP-log Loki marker 的 RED 契约；质量门控：Tempo/Loki 任一短暂查询错误只在 deadline 耗尽后失败，且不会将 raw response 写入 report。
+- [X] T172 [P] [US1] 在 `internal/observability/backend/grafana_smoke_adapter_test.go` 与 `internal/observability/smoke/infra_runner_test.go` 增加真实 Tempo search response、可恢复查询失败重试、OTLP-log Loki marker 的 RED 契约；质量门控：Tempo/Loki 任一短暂查询错误只在 deadline 耗尽后失败，且不会将 raw response 写入 report。
 
 ### Implementation - GREEN/REFACTOR
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 		wantHTTPRequestDelta int64
 		wantLangfuseQueries  int
 		wantAIPlaneQueries   int
+		forbiddenReportText  string
 	}{
 		{
 			name: "polls delayed backend observations before the smoke deadline",
@@ -52,25 +54,34 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 			wantAIPlaneQueries:   2,
 		},
 		{
-			name: "records a Tempo query failure as stable report evidence",
+			name: "recovers after a transient Tempo query failure",
 			backend: fakeInfrastructureBackend{
-				marker:         "infra-t064a-marker",
-				tempoResponses: []markerQueryResponse{{err: errors.New("synthetic tempo backend failure")}},
-				lokiResponses: []markerQueryResponse{{observations: []MarkerObservation{
-					{Marker: "infra-t064a-marker", ObservedAt: startedAt.Add(time.Second)},
-				}}},
-				before: 41,
-				after:  42,
+				marker: "infra-t172-tempo",
+				tempoResponses: []markerQueryResponse{
+					{err: classifiedInfrastructureQueryError{class: "backend_unavailable", raw: "raw-t172-tempo-response"}},
+					{observations: []MarkerObservation{{Marker: "infra-t172-tempo", ObservedAt: startedAt.Add(time.Second)}}},
+				},
+				lokiResponses: []markerQueryResponse{{observations: []MarkerObservation{{Marker: "infra-t172-tempo", ObservedAt: startedAt.Add(time.Second)}}}},
+				before:        41, after: 42,
 			},
-			wantStatus:           "failed",
-			wantFailedBackend:    "tempo",
-			wantFailureStage:     "query",
-			wantErrorClass:       "query_failed",
-			wantTempoQueries:     61,
-			wantLokiQueries:      0,
-			wantLangfuseQueries:  0,
-			wantAIPlaneQueries:   0,
-			wantHTTPRequestDelta: 1,
+			wantStatus: "passed", wantTempoQueries: 2, wantLokiQueries: 1,
+			wantLangfuseQueries: 2, wantAIPlaneQueries: 2, wantHTTPRequestDelta: 1,
+			forbiddenReportText: "raw-t172-tempo-response",
+		},
+		{
+			name: "recovers after a transient Loki query failure",
+			backend: fakeInfrastructureBackend{
+				marker:         "infra-t172-loki",
+				tempoResponses: []markerQueryResponse{{observations: []MarkerObservation{{Marker: "infra-t172-loki", ObservedAt: startedAt.Add(time.Second)}}}},
+				lokiResponses: []markerQueryResponse{
+					{err: classifiedInfrastructureQueryError{class: "backend_unavailable", raw: "raw-t172-loki-response"}},
+					{observations: []MarkerObservation{{Marker: "infra-t172-loki", ObservedAt: startedAt.Add(time.Second)}}},
+				},
+				before: 41, after: 42,
+			},
+			wantStatus: "passed", wantTempoQueries: 1, wantLokiQueries: 2,
+			wantLangfuseQueries: 2, wantAIPlaneQueries: 2, wantHTTPRequestDelta: 1,
+			forbiddenReportText: "raw-t172-loki-response",
 		},
 		{
 			name: "records a zero protected HTTP metric delta as stable report evidence",
@@ -204,6 +215,15 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 			if got := document.Cleanup.Status; got != "not_required" {
 				t.Fatalf("cleanup status = %q, want not_required for an infra-only smoke", got)
 			}
+			if tt.forbiddenReportText != "" {
+				encoded, marshalErr := json.Marshal(report)
+				if marshalErr != nil {
+					t.Fatalf("MarshalJSON() error = %v", marshalErr)
+				}
+				if strings.Contains(string(encoded), tt.forbiddenReportText) {
+					t.Fatal("schema-valid smoke report leaked a raw backend response")
+				}
+			}
 			if tt.wantFailedBackend != "" {
 				assertInfrastructureFailure(t, document.Checks, tt.wantFailedBackend, tt.wantFailureStage, tt.wantErrorClass)
 			}
@@ -229,6 +249,30 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 	}
 }
 
+// 后端短暂不可用可以重试，但只有完整窗口耗尽后才能失败；届时保留的只能是 adapter
+// 给出的有限安全分类，不能把 raw response 包装进 runner/report 错误链。
+func TestInfrastructureMarkerPollingPreservesSafeFailureClassAtDeadline(t *testing.T) {
+	startedAt := time.Date(2026, time.August, 12, 1, 2, 3, 0, time.UTC)
+	clock := newPollerTestClock(startedAt)
+	target := PollMarkerTarget{Marker: "infra-t172-persistent", StartedAt: startedAt, Deadline: startedAt.Add(2 * time.Second)}
+	queryCalls := 0
+
+	_, err := NewBoundedMarkerPoller(clock, time.Second).WaitForMarker(context.Background(), target, func(context.Context, PollMarkerTarget) ([]MarkerObservation, error) {
+		queryCalls++
+		return nil, classifiedInfrastructureQueryError{class: "backend_unavailable", raw: "raw-t172-persistent-response"}
+	})
+	if queryCalls != 3 || !clock.Now().Equal(target.Deadline) {
+		t.Fatalf("polling boundary = calls:%d now:%s, want three inclusive queries through %s", queryCalls, clock.Now(), target.Deadline)
+	}
+	var classified interface{ Class() string }
+	if !errors.As(err, &classified) || classified.Class() != "backend_unavailable" {
+		t.Fatalf("polling error class = %v, want backend_unavailable only after deadline", err)
+	}
+	if strings.Contains(err.Error(), "raw-t172-persistent-response") {
+		t.Fatal("polling error leaked the raw backend response")
+	}
+}
+
 // A missing counter sample is a failed acceptance fact, not an exporter timeout. This distinction
 // tells an operator whether Prometheus was reachable but did not observe the protected route.
 func TestWaitForHTTPRequestIncreaseReturnsLastCountWhenDeadlineHasNoDelta(t *testing.T) {
@@ -247,6 +291,16 @@ type markerQueryResponse struct {
 	observations []MarkerObservation
 	err          error
 }
+
+// classifiedInfrastructureQueryError 模拟 adapter 已完成脱敏后的有限错误分类；raw 仅用于
+// 证明 runner/report 边界不会把平台响应原文持久化。
+type classifiedInfrastructureQueryError struct {
+	class string
+	raw   string
+}
+
+func (e classifiedInfrastructureQueryError) Error() string { return e.raw }
+func (e classifiedInfrastructureQueryError) Class() string { return e.class }
 
 type negativeQueryResponse struct {
 	count int

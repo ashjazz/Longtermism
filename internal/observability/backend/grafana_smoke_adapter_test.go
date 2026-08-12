@@ -30,10 +30,17 @@ func TestGrafanaSmokeEvidenceAdapterQueriesCurrentMarkers(t *testing.T) {
 		switch request.URL.Path {
 		case "/api/search":
 			assertExactMarkerPredicate(t, "Tempo", query.Get("q"), "longtermism.smoke.run_id", target.Marker)
-			_, _ = fmt.Fprintf(writer, `{"traces":[{"startTimeUnixNano":"%d","rootTraceName":"GET /api/v1/observability/infra-smoke","rootServiceName":"raw-t064b-tempo-secret"},{"startTimeUnixNano":"%d","rootTraceName":"GET /api/v1/observability/infra-smoke","rootServiceName":"raw-t064b-tempo-secret"}]}`, startedAt.UnixNano(), deadline.UnixNano())
+			// Tempo /api/search 返回 trace summary，而不是完整 span attribute 文档。
+			// fixture 保留真实 summary 形状，确保 decoder 不依赖伪造的 attributes 字段。
+			_, _ = fmt.Fprintf(writer, `{"traces":[{"traceID":"0123456789abcdef0123456789abcdef","rootTraceName":"GET /api/v1/observability/infra-smoke","rootServiceName":"raw-t064b-tempo-secret","startTimeUnixNano":"%d","durationMs":12,"spanSet":{"matched":1}},{"traceID":"fedcba9876543210fedcba9876543210","rootTraceName":"GET /api/v1/observability/infra-smoke","rootServiceName":"raw-t064b-tempo-secret","startTimeUnixNano":"%d","durationMs":13,"spanSet":{"matched":1}}],"metrics":{"inspectedTraces":2}}`, startedAt.UnixNano(), deadline.UnixNano())
 		case "/loki/api/v1/query_range":
-			assertExactMarkerPredicate(t, "Loki", query.Get("query"), "smoke_run_id", target.Marker)
-			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"values":[["%d","raw-t064b-loki-secret"],["%d","raw-t064b-loki-secret"]]}]}}`, startedAt.UnixNano(), deadline.UnixNano())
+			wantQuery := fmt.Sprintf(`{service_name="longtermism"} | smoke_run_id = %q`, target.Marker)
+			if query.Get("query") != wantQuery {
+				t.Errorf("Loki marker query = %q, want canonical OTLP structured-metadata query %q", query.Get("query"), wantQuery)
+			}
+			// OTLP keeps the stable completion message in the log body and correlation fields in
+			// structured metadata. Loki may return that metadata as the third values element.
+			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"stream":{"service_name":"longtermism"},"values":[["%d","http request completed",{"smoke_run_id":"%s"}],["%d","http request completed",{"smoke_run_id":"%s"}]]}]}}`, startedAt.UnixNano(), target.Marker, deadline.UnixNano(), target.Marker)
 		default:
 			t.Errorf("path = %q, want Tempo or Loki query", request.URL.Path)
 		}
@@ -187,6 +194,8 @@ func TestGrafanaSmokeEvidenceAdapterRejectsMalformedMarkerDocuments(t *testing.T
 		{name: "Tempo missing traces", decode: decodeTempoMarkerObservations, result: backendQueryResultForTest(`{}`)},
 		{name: "Tempo null traces", decode: decodeTempoMarkerObservations, result: backendQueryResultForTest(`{"traces":null}`)},
 		{name: "Loki non-string line", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["1784541600000000000",1]]}]}}`)},
+		{name: "Loki missing structured marker", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["1784541600000000000","http request completed",{}]]}]}}`)},
+		{name: "Loki foreign structured marker", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["1784541600000000000","http request completed",{"smoke_run_id":"infra-t172-foreign"}]]}]}}`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
