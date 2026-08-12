@@ -69,7 +69,9 @@ end
 filter_statements = Array(ai_filter.dig("traces", "span")).map { |statement| statement.to_s.gsub(/\s+/, "") }
 plane_drop = /attributes\["longtermism\.observability\.plane"\]!="ai"/
 fail_check("invalid_langfuse_ai_filter") unless filter_statements.any? { |statement| statement.match?(plane_drop) }
-fail_check("invalid_langfuse_ai_pipeline") unless Array(ai_pipeline["exporters"]) == ["otlp/tempo", "otlphttp/langfuse"] && Array(ai_pipeline["processors"]).include?("filter/ai")
+# Tempo 已由 infra 分支接收完整 trace；AI 分支只能写 Langfuse，否则带 marker 的
+# root/bridge/semantic span 会以相同 trace/span identity 重复写入 Tempo。
+fail_check("invalid_langfuse_ai_pipeline") unless Array(ai_pipeline["exporters"]) == ["otlphttp/langfuse"] && Array(ai_pipeline["processors"]).include?("filter/ai")
 
 # Langfuse is an independent failure domain: it needs its own durable queue, retry budget and
 # request deadline rather than borrowing Tempo or Loki storage settings.

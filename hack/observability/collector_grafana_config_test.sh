@@ -146,7 +146,7 @@ require_exact(infra.fetch("exporters"), ["otlp/tempo"], "invalid_infra_exporters
 require_includes(infra.fetch("processors", []), ["transform/redact-downstream", "tail_sampling/retain"], "missing_infra_privacy_or_sampling")
 require_exact(ai.fetch("receivers"), ["forward/ai"], "invalid_ai_receivers")
 require_includes(ai.fetch("processors", []), ["filter/ai", "transform/redact-downstream", "tail_sampling/retain"], "missing_ai_filter_privacy_or_sampling")
-require_exact(ai.fetch("exporters"), ["otlp/tempo", "otlphttp/langfuse"], "invalid_ai_exporters")
+require_exact(ai.fetch("exporters"), ["otlphttp/langfuse"], "invalid_ai_exporters")
 require_exact(metrics.fetch("receivers"), ["otlp"], "invalid_metrics_receivers")
 require_exact(metrics.fetch("exporters"), ["prometheus/app"], "invalid_metrics_exporters")
 require_exact(logs.fetch("receivers"), ["filelog/glog"], "invalid_logs_receivers")

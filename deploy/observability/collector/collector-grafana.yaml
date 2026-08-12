@@ -254,12 +254,21 @@ exporters:
       storage: file_storage/loki
   otlphttp/langfuse:
     endpoint: http://langfuse-web:3000/api/public/otel
+    # Langfuse 的 OTLP 入口只接受 HTTP 传输；显式固定 protobuf，避免 Collector
+    # 版本升级时由默认编码变化造成静默投递失败。
+    encoding: proto
     headers:
       Authorization: ${env:LANGFUSE_OTLP_AUTHORIZATION}
-      x-langfuse-otel-version: ${env:LANGFUSE_OTEL_INGESTION_VERSION}
+      # v4 ingestion header 使直接 OTLP 数据进入实时 observation 路径。
+      x-langfuse-ingestion-version: ${env:LANGFUSE_OTEL_INGESTION_VERSION}
     timeout: 10s
     retry_on_failure:
       enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      # 独立持久队列承担故障隔离；0s 保留队列中的事实直到后端恢复，
+      # 不因短暂 Langfuse 故障丢失已经完成脱敏的 AI 观测。
+      max_elapsed_time: 0s
     sending_queue:
       enabled: true
       queue_size: 10000
@@ -296,7 +305,9 @@ service:
     traces/ai:
       receivers: [forward/ai]
       processors: [filter/ai, transform/redact-downstream, transform/redact-span-events, tail_sampling/retain]
-      exporters: [otlp/tempo, otlphttp/langfuse]
+      # 完整 trace 已由 infra 分支写入 Tempo；此处只投影显式 marker 的 AI span，
+      # 避免相同 trace/span identity 被重复写入 Tempo。
+      exporters: [otlphttp/langfuse]
     metrics:
       receivers: [otlp]
       exporters: [prometheus/app]
