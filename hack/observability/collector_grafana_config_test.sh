@@ -95,12 +95,15 @@ receivers = section(config, "receivers")
 processors = section(config, "processors")
 connectors = section(config, "connectors")
 exporters = section(config, "exporters")
-require_keys(receivers, %w[otlp filelog/glog], "missing_required_receiver")
-fail_check("missing_filelog_append_polling") unless receivers.dig("filelog/glog", "poll_interval") == "200ms"
+require_keys(receivers, %w[otlp], "missing_required_receiver")
+# Application logs now share the OTLP ingress and provider lifecycle with traces/metrics.
+# Keeping filelog around would preserve an untested bypass and the host JSONL dependency.
+fail_check("legacy_filelog_receiver") if receivers.keys.any? { |name| name == "filelog" || name.start_with?("filelog/") }
+fail_check("legacy_application_log_path") if scalar_strings(receivers).any? { |value| value.include?("/var/log/longtermism") || value.include?("application.jsonl") }
 require_keys(connectors, %w[forward/infra forward/ai], "missing_required_connector")
 require_keys(exporters, %w[otlp/tempo otlphttp/loki otlphttp/langfuse prometheus/app], "missing_stable_component")
 require_keys(extensions, %w[health_check file_storage/tempo file_storage/loki file_storage/langfuse], "missing_persistent_queue_storage")
-require_keys(processors, %w[filter/ai transform/redact-ingress transform/redact-downstream tail_sampling/retain resource/http-completion-log-service], "missing_required_processor")
+require_keys(processors, %w[filter/ai filter/http-completion-logs transform/redact-ingress transform/redact-downstream transform/redact-logs tail_sampling/retain], "missing_required_processor")
 service_extensions = config.dig("service", "extensions")
 fail_check("missing_enabled_persistent_queue_storage") unless service_extensions.is_a?(Array)
 require_includes(service_extensions, %w[health_check file_storage/tempo file_storage/loki file_storage/langfuse], "missing_enabled_persistent_queue_storage")
@@ -149,12 +152,28 @@ require_includes(ai.fetch("processors", []), ["filter/ai", "transform/redact-dow
 require_exact(ai.fetch("exporters"), ["otlphttp/langfuse"], "invalid_ai_exporters")
 require_exact(metrics.fetch("receivers"), ["otlp"], "invalid_metrics_receivers")
 require_exact(metrics.fetch("exporters"), ["prometheus/app"], "invalid_metrics_exporters")
-require_exact(logs.fetch("receivers"), ["filelog/glog"], "invalid_logs_receivers")
+require_exact(logs.fetch("receivers"), ["otlp"], "invalid_logs_receivers")
 require_exact(logs.fetch("exporters"), ["otlphttp/loki"], "invalid_logs_exporters")
-require_includes(logs.fetch("processors", []), ["filter/http-completion-logs", "resource/http-completion-log-service", "transform/redact-logs"], "missing_logs_identity_or_privacy_processor")
-log_service = processors.fetch("resource/http-completion-log-service")
-expected_service_name = [{"key" => "service.name", "value" => "longtermism", "action" => "upsert"}]
-fail_check("invalid_logs_service_identity") unless log_service["attributes"] == expected_service_name
+require_includes(logs.fetch("processors", []), ["filter/http-completion-logs", "transform/redact-logs"], "missing_logs_identity_or_privacy_processor")
+fail_check("legacy_logs_resource_inference") if logs.fetch("processors", []).include?("resource/http-completion-log-service")
+log_statements = Array(processors.dig("transform/redact-logs", "log_statements")).flat_map do |group|
+  group.is_a?(Hash) ? Array(group["statements"]).map { |statement| statement.to_s.gsub(/\s+/, "") } : []
+end
+expected_log_attributes = %w[request_id trace_id span_id route method status duration_ms error_class ai_trace_id smoke_run_id]
+keep_statement = log_statements.find { |statement| statement.start_with?("keep_keys(") }
+keep_match = /\Akeep_keys\((?:log\.)?attributes,\[(.*)\]\)\z/.match(keep_statement.to_s)
+fail_check("missing_logs_attribute_allowlist") unless keep_match
+kept_log_attributes = keep_match[1].scan(/["'']([^"'']+)["'']/).flatten
+fail_check("invalid_logs_attribute_allowlist") unless kept_log_attributes.sort == expected_log_attributes.sort
+resource_statements = Array(processors.dig("transform/redact-logs", "log_statements")).flat_map do |group|
+  group.is_a?(Hash) && group["context"] == "resource" ? Array(group["statements"]).map { |statement| statement.to_s.gsub(/\s+/, "") } : []
+end
+resource_keep = resource_statements.find { |statement| statement.start_with?("keep_keys(") }
+resource_match = /\Akeep_keys\((?:resource\.)?attributes,\[(.*)\]\)\z/.match(resource_keep.to_s)
+fail_check("missing_logs_resource_allowlist") unless resource_match
+expected_log_resource_attributes = %w[service.name service.version deployment.environment]
+kept_log_resource_attributes = resource_match[1].scan(/["'']([^"'']+)["'']/).flatten
+fail_check("invalid_logs_resource_allowlist") unless kept_log_resource_attributes.sort == expected_log_resource_attributes.sort
 %w[otlp/tempo otlphttp/loki otlphttp/langfuse].each do |name|
   exporter = exporters.fetch(name)
   queue = exporter.fetch("sending_queue", {})

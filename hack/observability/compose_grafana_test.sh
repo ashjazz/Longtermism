@@ -208,8 +208,6 @@ end
 end
 collector_storage_init = services.fetch("collector-storage-init")
 fail_check("invalid_collector_storage_initializer_user") unless collector_storage_init["user"] == "0:0"
-collector_storage_init_environment = required_hash(collector_storage_init["environment"], "missing_collector_storage_initializer_gid")
-fail_check("missing_collector_storage_initializer_gid") unless collector_storage_init_environment["OBSERVABILITY_LOG_GID"] == "${OBSERVABILITY_LOG_GID:?set OBSERVABILITY_LOG_GID}"
 collector_storage_init_command = Array(collector_storage_init["entrypoint"]).last
 %w[mkdir\ -p /var/lib/otelcol/storage/queue/tempo /var/lib/otelcol/storage/queue/loki /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/tempo-compaction /var/lib/otelcol/storage/queue/loki-compaction /var/lib/otelcol/storage/queue/langfuse-compaction chown\ 10001: chmod\ 0750].each do |required_fragment|
   fail_check("invalid_collector_storage_initializer_command") unless collector_storage_init_command.is_a?(String) && collector_storage_init_command.include?(required_fragment)
@@ -284,9 +282,6 @@ end
 collector_mounts = Array(services.fetch("collector")["volumes"])
 fail_check("missing_collector_config_mount") unless has_mount?(collector_mounts, type: "bind", source: "./collector/collector-grafana.yaml", target: "/etc/otelcol-contrib/config.yaml", read_only: true)
 fail_check("missing_collector_storage_initialization_dependency") unless services.fetch("collector").dig("depends_on", "collector-storage-init", "condition") == "service_completed_successfully"
-# 宿主机运行应用时，JSONL 落在被忽略的项目运行目录；Collector 只读同一个 bind mount，
-# 因而仍由 filelog 异步送往 Loki，应用不直接连接后端。
-fail_check("missing_local_application_log_mount") unless has_mount?(collector_mounts, type: "bind", source: "../../resource/log/observability", target: "/var/log/longtermism", read_only: true)
 tempo_mounts = Array(services.fetch("tempo")["volumes"])
 prometheus_mounts = Array(services.fetch("prometheus")["volumes"])
 loki_mounts = Array(services.fetch("loki")["volumes"])
@@ -298,8 +293,13 @@ fail_check("missing_datasource_mount") unless has_mount?(grafana_mounts, type: "
 fail_check("missing_dashboard_provider_mount") unless has_mount?(grafana_mounts, type: "bind", source: "./grafana/provisioning/dashboards.yaml", target: "/etc/grafana/provisioning/dashboards/dashboards.yaml", read_only: true)
 fail_check("missing_dashboard_mount") unless has_mount?(grafana_mounts, type: "bind", source: "./grafana/dashboards/observability-overview.json", target: "/var/lib/grafana/dashboards/observability-overview.json", read_only: true)
 fail_check("missing_alert_mount") unless has_mount?(grafana_mounts, type: "bind", source: "./grafana/alerts/observability.rules.yaml", target: "/etc/grafana/provisioning/alerting/observability.rules.yaml", read_only: true)
+collector_binds = Array(services.fetch("collector")["volumes"]).select { |mount| mount.is_a?(Hash) && mount["type"] == "bind" }
+fail_check("legacy_application_log_bind_mount") if collector_binds.any? do |mount|
+  mount["source"] == "../../resource/log/observability" || mount["target"] == "/var/log/longtermism"
+end
+fail_check("legacy_observability_log_gid_dependency") if scalar_strings(compose).any? { |value| value.include?("OBSERVABILITY_LOG_GID") }
 allowed_binds = {
-  "collector" => [["./collector/collector-grafana.yaml", "/etc/otelcol-contrib/config.yaml"], ["../../resource/log/observability", "/var/log/longtermism"]], "tempo" => [["./tempo/tempo.yaml", "/etc/tempo/tempo.yaml"]],
+  "collector" => [["./collector/collector-grafana.yaml", "/etc/otelcol-contrib/config.yaml"]], "tempo" => [["./tempo/tempo.yaml", "/etc/tempo/tempo.yaml"]],
   "prometheus" => [["./prometheus/prometheus.yaml", "/etc/prometheus/prometheus.yml"]], "loki" => [["./loki/loki.yaml", "/etc/loki/loki.yaml"]],
   "grafana" => [["./grafana/provisioning/datasources.yaml", "/etc/grafana/provisioning/datasources/datasources.yaml"], ["./grafana/provisioning/dashboards.yaml", "/etc/grafana/provisioning/dashboards/dashboards.yaml"], ["./grafana/dashboards/observability-overview.json", "/var/lib/grafana/dashboards/observability-overview.json"], ["./grafana/alerts/observability.rules.yaml", "/etc/grafana/provisioning/alerting/observability.rules.yaml"]]
 }
@@ -324,6 +324,10 @@ fail_check("invalid_tempo_retention") unless tempo.dig("compactor", "compaction"
 fail_check("tempo_otlp_grpc_not_compose_reachable") unless tempo.dig("distributor", "receivers", "otlp", "protocols", "grpc", "endpoint") == "0.0.0.0:4317"
 fail_check("tempo_otlp_http_not_compose_reachable") unless tempo.dig("distributor", "receivers", "otlp", "protocols", "http", "endpoint") == "0.0.0.0:4318"
 fail_check("invalid_prometheus_retention") unless Array(services.fetch("prometheus")["command"]).include?("--storage.tsdb.retention.time=15d") && !prometheus.key?("remote_write")
+self_telemetry_jobs = Array(prometheus["scrape_configs"]).select { |job| job.is_a?(Hash) && job["job_name"] == "otel-collector" }
+fail_check("missing_collector_self_telemetry_scrape") unless self_telemetry_jobs.length == 1
+self_telemetry_targets = Array(self_telemetry_jobs.first["static_configs"]).flat_map { |config| config.is_a?(Hash) ? Array(config["targets"]) : [] }
+fail_check("invalid_collector_self_telemetry_scrape") unless self_telemetry_targets == ["collector:8888"]
 datasources = required_hash(yaml(datasources_path), "invalid_datasources_config")
 expected_datasources = {"prometheus" => "http://prometheus:9090", "loki" => "http://loki:3100", "tempo" => "http://tempo:3200"}
 actual_datasources = Array(datasources["datasources"]).each_with_object({}) do |entry, values|
@@ -341,12 +345,11 @@ e2e_recipe = target_recipe(makefile, "obs-grafana-e2e").join("\n")
 bootstrap_recipe = target_recipe(makefile, "obs-langfuse-bootstrap-up").join("\n")
 langfuse_compose_definition = "OBS_LANGFUSE_COMPOSE = docker compose --project-name $(OBSERVABILITY_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml"
 fail_check("invalid_langfuse_compose_definition") unless makefile_text.include?(langfuse_compose_definition)
-fail_check("invalid_grafana_compose_definition") unless makefile_text.include?("OBS_GRAFANA_COMPOSE = OBSERVABILITY_LOG_GID=\"$$(id -g)\" $(OBS_LANGFUSE_COMPOSE) -f deploy/observability/compose.grafana.yaml")
+grafana_compose_line = makefile_text.lines.find { |line| line.start_with?("OBS_GRAFANA_COMPOSE =") }.to_s.strip
+fail_check("invalid_grafana_compose_definition") unless grafana_compose_line == "OBS_GRAFANA_COMPOSE = $(OBS_LANGFUSE_COMPOSE) -f deploy/observability/compose.grafana.yaml"
+fail_check("legacy_local_log_startup_dependency") if up_recipe.match?(/OBSERVABILITY_LOG_GID|resource\/log\/observability/)
 fail_check("invalid_grafana_up_target") unless up_recipe.include?("$(OBS_GRAFANA_COMPOSE) up -d")
 fail_check("invalid_langfuse_bootstrap_target") unless bootstrap_recipe.include?("$(OBS_LANGFUSE_COMPOSE) up -d --wait --wait-timeout 180 langfuse-web langfuse-worker") && !bootstrap_recipe.include?("compose.grafana.yaml") && !bootstrap_recipe.match?(/LANGFUSE_OTLP_AUTHORIZATION|LANGFUSE_OTEL_INGESTION_VERSION/)
-fail_check("missing_local_log_symlink_guard") unless up_recipe.include?("-L") && up_recipe.include?("resource/log/observability")
-collector_user = services.fetch("collector")["user"]
-fail_check("missing_local_log_group") unless collector_user == "10001:${OBSERVABILITY_LOG_GID:?set OBSERVABILITY_LOG_GID}"
 fail_check("invalid_grafana_down_target") unless down_recipe.include?("$(OBS_GRAFANA_COMPOSE) down") && !down_recipe.match?(/(?:^|\s)-v(?:\s|$)/)
 fail_check("invalid_stack_health_target") unless health_recipe.include?("$(OBS_GRAFANA_COMPOSE) ps")
 fail_check("invalid_infra_smoke_target") unless infra_recipe.include?("obs-smoke") && infra_recipe.include?("infra")
