@@ -87,6 +87,33 @@ func TestBuildSmokeReportAggregatesPassedAndSkippedResults(t *testing.T) {
 	}
 }
 
+func TestBuildSmokeReportProjectsOptionalChatIdentity(t *testing.T) {
+	input := validSmokeReportInput()
+	input.Scenario = "chat"
+	input.RequestID = "request-t105"
+	input.AITraceID = "ai-trace-t105"
+	report, err := BuildSmokeReport(input)
+	if err != nil {
+		t.Fatal("BuildSmokeReport() rejected valid low-sensitivity chat identity")
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal("SmokeReport could not be encoded as JSON")
+	}
+	var got map[string]any
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal("SmokeReport did not encode as valid JSON")
+	}
+	if got["request_id"] != input.RequestID || got["ai_trace_id"] != input.AITraceID {
+		t.Fatal("SmokeReport omitted the response-owned chat correlation identity")
+	}
+
+	input.RequestID = "short"
+	if _, err := BuildSmokeReport(input); err == nil {
+		t.Fatal("BuildSmokeReport() accepted an invalid chat identity")
+	}
+}
+
 func TestBuildSmokeReportMakesCleanupFailurePartOfOverallResult(t *testing.T) {
 	input := validSmokeReportInput()
 	input.Checks = input.Checks[:1]

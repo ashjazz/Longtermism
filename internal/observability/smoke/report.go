@@ -32,7 +32,7 @@ var (
 	allowedCleanupStatuses             = stringSet("not_required", "completed", "failed")
 	allowedTemporaryCredentialStatuses = stringSet("not_created", "revoked", "deleted", "failed")
 	allowedTemporaryDataStatuses       = stringSet("not_created", "deleted", "failed")
-	allowedErrorClasses                = stringSet("authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "invalid_query", "malformed_response", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing")
+	allowedErrorClasses                = stringSet("authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "identity_mismatch", "invalid_query", "malformed_response", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing")
 	allowedVersionKeys                 = stringSet("api", "collector", "grafana", "langfuse", "loki", "prometheus", "schema", "signoz", "smoke_runner", "tempo")
 	allowedResidualResources           = stringSet("run-directory", "temporary-debug-data", "temporary-queue-data")
 	allowedEvidenceKeysByBackend       = map[string]map[string]struct{}{
@@ -58,6 +58,8 @@ type SmokeReportInput struct {
 	Marker     string
 	Profile    string
 	Scenario   string
+	RequestID  string
+	AITraceID  string
 	StartedAt  time.Time
 	Deadline   time.Time
 	FinishedAt time.Time
@@ -89,6 +91,8 @@ type SmokeReport struct {
 	marker     string
 	profile    string
 	scenario   string
+	requestID  string
+	aiTraceID  string
 	startedAt  time.Time
 	finishedAt time.Time
 	status     string
@@ -119,6 +123,8 @@ type smokeReportJSON struct {
 	Marker        string            `json:"marker"`
 	Profile       string            `json:"profile"`
 	Scenario      string            `json:"scenario"`
+	RequestID     string            `json:"request_id,omitempty"`
+	AITraceID     string            `json:"ai_trace_id,omitempty"`
 	StartedAt     string            `json:"started_at"`
 	FinishedAt    string            `json:"finished_at"`
 	Status        string            `json:"status"`
@@ -139,6 +145,8 @@ func BuildSmokeReport(input SmokeReportInput) (*SmokeReport, error) {
 		marker:     input.Marker,
 		profile:    input.Profile,
 		scenario:   input.Scenario,
+		requestID:  input.RequestID,
+		aiTraceID:  input.AITraceID,
 		startedAt:  input.StartedAt.UTC(),
 		finishedAt: input.FinishedAt.UTC(),
 		status:     aggregateSmokeStatus(checks, cleanup),
@@ -155,6 +163,8 @@ func (r SmokeReport) MarshalJSON() ([]byte, error) {
 		Marker:        r.marker,
 		Profile:       r.profile,
 		Scenario:      r.scenario,
+		RequestID:     r.requestID,
+		AITraceID:     r.aiTraceID,
 		StartedAt:     r.startedAt.Format(time.RFC3339Nano),
 		FinishedAt:    r.finishedAt.Format(time.RFC3339Nano),
 		Status:        r.status,
@@ -185,6 +195,9 @@ func validateSmokeReportInput(input SmokeReportInput) error {
 		input.FinishedAt.After(input.Deadline) ||
 		input.FinishedAt.Before(input.StartedAt) ||
 		len(input.Checks) == 0 {
+		return errInvalidSmokeReport
+	}
+	if (input.RequestID == "") != (input.AITraceID == "") || input.RequestID != "" && !isSafePollMarker(input.RequestID) || input.AITraceID != "" && !isSafePollMarker(input.AITraceID) {
 		return errInvalidSmokeReport
 	}
 	if err := validateVersions(input.Versions); err != nil {

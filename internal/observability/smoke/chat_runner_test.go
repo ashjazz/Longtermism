@@ -82,6 +82,14 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 			wantRunnerErr:    errSyntheticModelFailure,
 			wantFailure:      chatSmokeFailure{backend: "api", stage: "api", class: "backend_unavailable"},
 		},
+		{
+			name:             "preserves partial response identity on model failure",
+			triggerErr:       errSyntheticModelFailure,
+			backend:          fakeChatSmokeBackend{},
+			wantReportStatus: "failed",
+			wantRunnerErr:    errSyntheticModelFailure,
+			wantFailure:      chatSmokeFailure{backend: "api", stage: "api", class: "backend_unavailable"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -103,6 +111,9 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 					}
 					if gotDeadline, ok := ctx.Deadline(); !ok || !gotDeadline.Equal(deadline) {
 						t.Fatal("chat trigger did not receive the 60-second smoke deadline")
+					}
+					if tt.name == "preserves partial response identity on model failure" {
+						return ChatSmokeAPIResult{RequestID: response.RequestID, AITraceID: response.AITraceID}, tt.triggerErr
 					}
 					return response, tt.triggerErr
 				},
@@ -249,7 +260,7 @@ func assertCompleteChatSmokeChecks(t *testing.T, checks []BackendCheck) {
 func assertChatSmokeTargets(t *testing.T, targets []ChatSmokeTarget, run ChatSmokeIdentity, response ChatSmokeAPIResult, startedAt, deadline time.Time) {
 	t.Helper()
 	for index, target := range targets {
-		if target.Marker != run.Marker || target.RequestID != response.RequestID || target.AITraceID != response.AITraceID || target.ServiceTraceID != response.ServiceTraceID || target.SpanID != response.SpanID || !target.StartedAt.Equal(startedAt) || !target.Deadline.Equal(deadline) {
+		if target.Marker != run.Marker || target.RequestID != response.RequestID || target.AITraceID != response.AITraceID || target.ServiceTraceID != response.ServiceTraceID || target.SpanID != response.SpanID || !target.StartedAt.Equal(startedAt) || !target.Deadline.Equal(deadline) || target.Limit != maximumChatObservations {
 			t.Fatalf("backend query target %d does not match the API response identity and smoke window", index)
 		}
 	}
