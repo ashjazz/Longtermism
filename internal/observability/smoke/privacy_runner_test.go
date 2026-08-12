@@ -82,12 +82,83 @@ func TestPrivacySmokeRunnerContract(t *testing.T) {
 	}
 }
 
+// TestPrivacySmokeRunnerPreflight keeps invalid identity and canary data out of every query. A
+// preflight failure returns only a fixed sentinel, never the rejected value.
+func TestPrivacySmokeRunnerPreflight(t *testing.T) {
+	startedAt := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+	validDeps := func() PrivacySmokeRunnerDependencies {
+		return PrivacySmokeRunnerDependencies{
+			Backend: &fakePrivacySmokeBackend{}, Transport: &countingPrivacySmokeTransport{}, Clock: newPollerTestClock(startedAt),
+			IdentityFactory: func(context.Context) (PrivacySmokeIdentity, error) {
+				return PrivacySmokeIdentity{RunID: "privacy-run-boundary", Marker: "privacy-marker-boundary"}, nil
+			},
+		}
+	}
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		request PrivacySmokeRequest
+		mutate  func(*PrivacySmokeRunnerDependencies)
+	}{
+		{name: "nil context", ctx: nil, request: PrivacySmokeRequest{Deadline: startedAt.Add(time.Minute), Profile: "grafana", ForbiddenCanary: "synthetic-private-boundary"}},
+		{name: "unsafe canary", ctx: context.Background(), request: PrivacySmokeRequest{Deadline: startedAt.Add(time.Minute), Profile: "grafana", ForbiddenCanary: "secret=value"}},
+		{name: "window exceeds limit", ctx: context.Background(), request: PrivacySmokeRequest{Deadline: startedAt.Add(time.Minute + time.Nanosecond), Profile: "grafana", ForbiddenCanary: "synthetic-private-boundary"}},
+		{name: "identity fails", ctx: context.Background(), request: PrivacySmokeRequest{Deadline: startedAt.Add(time.Minute), Profile: "grafana", ForbiddenCanary: "synthetic-private-boundary"}, mutate: func(deps *PrivacySmokeRunnerDependencies) {
+			deps.IdentityFactory = func(context.Context) (PrivacySmokeIdentity, error) {
+				return PrivacySmokeIdentity{}, errors.New("identity failed")
+			}
+		}},
+		{name: "identity cannot contain forbidden canary", ctx: context.Background(), request: PrivacySmokeRequest{Deadline: startedAt.Add(time.Minute), Profile: "grafana", ForbiddenCanary: "synthetic-private-boundary"}, mutate: func(deps *PrivacySmokeRunnerDependencies) {
+			deps.IdentityFactory = func(context.Context) (PrivacySmokeIdentity, error) {
+				return PrivacySmokeIdentity{RunID: "privacy-run-boundary", Marker: "prefix-synthetic-private-boundary"}, nil
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := validDeps()
+			if tt.mutate != nil {
+				tt.mutate(&deps)
+			}
+			report, err := RunPrivacySmoke(tt.ctx, tt.request, deps)
+			if report != nil || !errors.Is(err, errPrivacySmokeFailed) {
+				t.Fatalf("RunPrivacySmoke() = (%#v, %v), want fixed preflight failure", report, err)
+			}
+		})
+	}
+}
+
+func TestPrivacySmokeRunnerAggregatesHitsAndKeepsFailurePriorityStable(t *testing.T) {
+	startedAt := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
+	backend := &fakePrivacySmokeBackend{
+		hits:            map[PrivacySmokeSurface]int{PrivacySmokeSurfaceAPI: 2, PrivacySmokeSurfaceLoki: 3, PrivacySmokeSurfaceTempo: -1},
+		errorsBySurface: map[PrivacySmokeSurface]error{PrivacySmokeSurfaceLangfuseTrace: errors.New("response contains synthetic-private-priority")},
+	}
+	report, err := RunPrivacySmoke(context.Background(), PrivacySmokeRequest{Deadline: startedAt.Add(time.Minute), Profile: "grafana", ForbiddenCanary: "synthetic-private-priority"}, PrivacySmokeRunnerDependencies{
+		Backend: backend, Transport: &countingPrivacySmokeTransport{}, Clock: newPollerTestClock(startedAt),
+		IdentityFactory: func(context.Context) (PrivacySmokeIdentity, error) {
+			return PrivacySmokeIdentity{RunID: "privacy-run-priority", Marker: "privacy-marker-priority"}, nil
+		},
+	})
+	if err != nil || report == nil {
+		t.Fatalf("RunPrivacySmoke() = (%#v, %v), want report-owned failure", report, err)
+	}
+	check := findPrivacySmokeCheck(t, report.Checks())
+	if check.ErrorClass != "unexpected_evidence" || check.Evidence["forbidden_marker_hits"] != int64(5) {
+		t.Fatalf("privacy aggregate = %#v, want confirmed leakage priority with five safe hits", check)
+	}
+	if strings.Contains(validatePrivacySmokeReport(t, report), "synthetic-private-priority") {
+		t.Fatal("privacy report reflected a forbidden canary")
+	}
+}
+
 type fakePrivacySmokeBackend struct {
-	mu             sync.Mutex
-	hits           map[PrivacySmokeSurface]int
-	queryErr       error
-	targets        []PrivacySmokeTarget
-	callsBySurface map[PrivacySmokeSurface]int
+	mu              sync.Mutex
+	hits            map[PrivacySmokeSurface]int
+	queryErr        error
+	errorsBySurface map[PrivacySmokeSurface]error
+	targets         []PrivacySmokeTarget
+	callsBySurface  map[PrivacySmokeSurface]int
 }
 
 func (b *fakePrivacySmokeBackend) Search(ctx context.Context, target PrivacySmokeTarget) (int, error) {
@@ -103,6 +174,9 @@ func (b *fakePrivacySmokeBackend) Search(ctx context.Context, target PrivacySmok
 	b.callsBySurface[target.Surface]++
 	if b.queryErr != nil {
 		return 0, b.queryErr
+	}
+	if err := b.errorsBySurface[target.Surface]; err != nil {
+		return 0, err
 	}
 	return b.hits[target.Surface], nil
 }

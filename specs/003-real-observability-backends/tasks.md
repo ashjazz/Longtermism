@@ -187,7 +187,7 @@
 - [X] T104 [US2] 在 `deploy/observability/grafana/dashboards/observability-overview.json` 增加 AI/eval/score 面板；质量门控：使 T084 GREEN，同步覆盖 token/cost/eval，不能用高基数 ID 做 metrics labels。
 - [X] T105 [US2] 在 `internal/observability/smoke/chat_runner.go` 实现真实 chat 双平面查询；质量门控：使 T085 GREEN，按响应 identity+run window 查询 Tempo/Loki/Prometheus/Langfuse，业务失败保留原始错误域。
 - [X] T106 [US2] 在 `internal/observability/smoke/score_runner.go` 实现 evidence/score 投影查询；质量门控：使 T086 GREEN，120 秒边界内确认 sent 或稳定 failure，不把 delayed/duplicate score 误判为新成功。
-- [ ] T107 [US2] 在 `internal/observability/smoke/privacy_runner.go` 实现平台 canary 扫描；质量门控：使 T087 GREEN，扫描发生在真实 backend-visible 数据与本地 queue/report，任何未脱敏命中使报告失败。
+- [X] T107 [US2] 在 `internal/observability/smoke/privacy_runner.go` 实现平台 canary 扫描；质量门控：使 T087 GREEN，扫描发生在真实 backend-visible 数据与本地 queue/report，任何未脱敏命中使报告失败。
 - [ ] T108 [US2] 在 `cmd/obs-smoke/main.go` 增加 `chat`、`score`、`privacy` scenarios；质量门控：真实调用必须显式 opt-in，缺 credential 在发送前失败，输出仅含低敏 report path/status/identity。
 - [ ] T109 [US2] 在 `Makefile` 增加 `obs-chat-smoke`、`obs-langfuse-score-smoke`、`obs-privacy-platform-smoke`、`obs-direct-langfuse-smoke` 并将 `obs-grafana-e2e` 扩展为 infra+chat+score+privacy 聚合门禁；质量门控：direct smoke 仅诊断 ingestion/header 且不得成为正式 E2E 依赖，默认 `make verify` 不调用真实目标。
 
