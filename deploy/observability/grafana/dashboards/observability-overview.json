@@ -2,7 +2,7 @@
   "uid": "longtermism-observability-overview",
   "title": "Longtermism Observability Overview",
   "schemaVersion": 41,
-  "version": 1,
+  "version": 2,
   "panels": [
     {
       "id": 1,
@@ -59,6 +59,79 @@
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [{ "refId": "A", "expr": "{service_name=\"longtermism\"} | trace_id != \"\" | line_format \"{{.trace_id}}\"" }],
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 }
+    },
+    {
+      "id": 7,
+      "title": "LLM Requests",
+      "description": "Provider attempt throughput split by bounded outcome; use this to detect provider failure or timeout shifts.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (gen_ai_provider_name, outcome) (rate(longtermism_llm_request_count_total[5m]))", "legendFormat": "{{gen_ai_provider_name}} · {{outcome}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 }
+    },
+    {
+      "id": 8,
+      "title": "LLM Duration p95",
+      "description": "Provider p95 attempt latency over five minutes; compare with request outcomes before changing timeout policy.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, gen_ai_provider_name) (rate(longtermism_llm_duration_seconds_bucket[5m])))", "legendFormat": "{{gen_ai_provider_name}}" }],
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 }
+    },
+    {
+      "id": 9,
+      "title": "LLM Tokens and Cost",
+      "description": "Token burn rate and estimated/actual cost rate by bounded provider dimensions; no request or trace identity becomes a metric label.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (gen_ai_provider_name, gen_ai_token_type) (rate(longtermism_llm_tokens_token_total[5m]))", "legendFormat": "tokens · {{gen_ai_provider_name}} · {{gen_ai_token_type}}" },
+        { "refId": "B", "expr": "sum by (gen_ai_provider_name, currency, estimate_status) (rate(longtermism_llm_cost_total{currency=\"USD\"}[5m]))", "legendFormat": "cost · {{gen_ai_provider_name}} · {{currency}} · {{estimate_status}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "min": 0 },
+        "overrides": [
+          { "matcher": { "id": "byFrameRefID", "options": "A" }, "properties": [{ "id": "unit", "value": "tps" }] },
+          { "matcher": { "id": "byFrameRefID", "options": "B" }, "properties": [{ "id": "unit", "value": "currencyUSD" }, { "id": "custom.axisPlacement", "value": "right" }] }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 34 }
+    },
+    {
+      "id": 10,
+      "title": "Evaluation Results",
+      "description": "Evaluation throughput, failed/error regressions, and p50 score. Investigate a falling score together with a rising failure series.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum by (evaluator, status, metric_name) (rate(longtermism_eval_result_total{status!~\"failed|error\"}[5m]))", "legendFormat": "non-regression · {{evaluator}} · {{metric_name}} · {{status}}" },
+        { "refId": "B", "expr": "sum by (evaluator, status, metric_name) (rate(longtermism_eval_result_total{status=~\"failed|error\"}[5m]))", "legendFormat": "regression · {{evaluator}} · {{metric_name}} · {{status}}" },
+        { "refId": "C", "expr": "histogram_quantile(0.50, sum by (le, evaluator, metric_name) (rate(longtermism_eval_score_bucket[5m])))", "legendFormat": "score p50 · {{evaluator}} · {{metric_name}}" }
+      ],
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [{ "matcher": { "id": "byFrameRefID", "options": "C" }, "properties": [{ "id": "max", "value": 1 }, { "id": "custom.axisPlacement", "value": "right" }] }] },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 34 }
+    },
+    {
+      "id": 11,
+      "title": "Langfuse Score Projection",
+      "description": "Asynchronous score projection transitions by bounded backend/status; dropped or failed growth means local evidence exists but platform delivery did not complete.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (backend, status) (rate(longtermism_score_projection_total[5m]))", "legendFormat": "{{backend}} · {{status}}" }],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 43 }
+    },
+    {
+      "id": 12,
+      "title": "Langfuse Score Worker Queue",
+      "description": "Current bounded score queue depth. A sustained rise indicates Langfuse delivery is slower than evaluation production.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "max by (backend) (longtermism_score_worker_queue)", "legendFormat": "{{backend}}" }],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }] } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 43 }
     }
   ]
 }

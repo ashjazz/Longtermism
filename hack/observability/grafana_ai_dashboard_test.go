@@ -67,11 +67,11 @@ func TestGrafanaAIDashboardContract(t *testing.T) {
 		datasourceUID  string
 		fragments      []string
 	}{
-		{name: "LLM request outcome", title: "LLM Requests", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"longtermism_llm_request_count", "gen_ai_provider_name", "outcome"}},
-		{name: "LLM duration", title: "LLM Duration p95", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"histogram_quantile", "longtermism_llm_duration_bucket", "gen_ai_provider_name"}},
-		{name: "LLM tokens and cost", title: "LLM Tokens and Cost", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"longtermism_llm_tokens", "longtermism_llm_cost", "gen_ai_token_type", "currency"}},
-		{name: "evaluation and regression", title: "Evaluation Results", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"longtermism_eval_result", "longtermism_eval_score", "status", "failed|error"}},
-		{name: "Langfuse score projection", title: "Langfuse Score Projection", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"longtermism_score_projection", "backend", "status"}},
+		{name: "LLM request outcome", title: "LLM Requests", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"longtermism_llm_request_count_total", "gen_ai_provider_name", "outcome"}},
+		{name: "LLM duration", title: "LLM Duration p95", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"histogram_quantile", "longtermism_llm_duration_seconds_bucket", "gen_ai_provider_name"}},
+		{name: "LLM tokens and cost", title: "LLM Tokens and Cost", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"longtermism_llm_tokens_token_total", "longtermism_llm_cost_total", "gen_ai_token_type", `currency="USD"`}},
+		{name: "evaluation and regression", title: "Evaluation Results", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"longtermism_eval_result_total", "longtermism_eval_score_bucket", "status", "failed|error"}},
+		{name: "Langfuse score projection", title: "Langfuse Score Projection", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"longtermism_score_projection_total", "backend", "status"}},
 		{name: "Langfuse score worker queue", title: "Langfuse Score Worker Queue", datasourceType: "prometheus", datasourceUID: "prometheus", fragments: []string{"longtermism_score_worker_queue", "backend"}},
 		{name: "infrastructure trace correlation", title: "Logs to Trace Correlation", datasourceType: "loki", datasourceUID: "loki", fragments: []string{"trace_id", "service_name"}},
 	}
