@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -223,25 +224,25 @@ func TestPrivacyArtifactStoreFailsClosedWithoutPublishingSensitiveOrPartialFacts
 		name   string
 		mutate func(*PrivacyFixtureArtifactInput)
 	}{
-		{name: "raw response", mutate: func(input *PrivacyFixtureArtifactInput) { input.ApplicationLogProjection.Message = t188RawResponse }},
-		{name: "canary", mutate: func(input *PrivacyFixtureArtifactInput) { input.ApplicationLogProjection.Message = t188Canary }},
+		{name: "raw response", mutate: func(input *PrivacyFixtureArtifactInput) { input.ApplicationLogProjection.Body = t188RawResponse }},
+		{name: "canary", mutate: func(input *PrivacyFixtureArtifactInput) { input.ApplicationLogProjection.Body = t188Canary }},
 		{name: "authorization", mutate: func(input *PrivacyFixtureArtifactInput) {
-			input.ApplicationLogProjection.Message = "Authorization: Bearer " + t188Authorization
+			input.ApplicationLogProjection.Body = "Authorization: Bearer " + t188Authorization
 		}},
 		{name: "credential", mutate: func(input *PrivacyFixtureArtifactInput) {
-			input.ApplicationLogProjection.Message = "sk-proj-t188forbiddencredential000000"
+			input.ApplicationLogProjection.Body = "sk-proj-t188forbiddencredential000000"
 		}},
 		{name: "token", mutate: func(input *PrivacyFixtureArtifactInput) {
-			input.ApplicationLogProjection.Message = "token=t188-forbidden-token"
+			input.ApplicationLogProjection.Body = "token=t188-forbidden-token"
 		}},
 		{name: "recognized PII", mutate: func(input *PrivacyFixtureArtifactInput) {
-			input.ApplicationLogProjection.Message = "privacy-t188@example.com"
+			input.ApplicationLogProjection.Body = "privacy-t188@example.com"
 		}},
 		{name: "API map key", mutate: func(input *PrivacyFixtureArtifactInput) {
 			input.APIScanSummary[t188Canary] = 0
 		}},
 		{name: "application route", mutate: func(input *PrivacyFixtureArtifactInput) {
-			input.ApplicationLogProjection.Route = "/" + t188Authorization
+			input.ApplicationLogProjection.Attributes["route"] = "/" + t188Authorization
 		}},
 		{name: "collector component", mutate: func(input *PrivacyFixtureArtifactInput) {
 			input.CollectorCompositeProof.ComponentIdentity = t188RawResponse
@@ -266,7 +267,7 @@ func TestPrivacyArtifactStoreFailsClosedWithoutPublishingSensitiveOrPartialFacts
 			input.ChatReport = t188ChatReport(t, foreign, "chat", nil)
 		}},
 		{name: "oversized typed artifact", mutate: func(input *PrivacyFixtureArtifactInput) {
-			input.ApplicationLogProjection.Message = strings.Repeat("x", maximumPrivacyArtifactBytes+1)
+			input.ApplicationLogProjection.Body = strings.Repeat("x", maximumPrivacyArtifactBytes+1)
 		}},
 		{name: "missing run", mutate: func(input *PrivacyFixtureArtifactInput) { input.RunID = "" }},
 		{name: "missing canary policy", mutate: func(input *PrivacyFixtureArtifactInput) { input.ForbiddenCanary = "" }},
@@ -287,8 +288,8 @@ func TestPrivacyArtifactStoreFailsClosedWithoutPublishingSensitiveOrPartialFacts
 				t.Fatal("unsafe fixture input was persisted")
 			} else {
 				reportBytes, _ := json.Marshal(input.ChatReport)
-				assertT188LowSensitiveError(t, err, input.RunID, input.Marker, input.ApplicationLogProjection.Message,
-					input.ApplicationLogProjection.Route, input.CollectorCompositeProof.ComponentIdentity,
+				assertT188LowSensitiveError(t, err, input.RunID, input.Marker, input.ApplicationLogProjection.Body,
+					fmt.Sprint(input.ApplicationLogProjection.Attributes["route"]), input.CollectorCompositeProof.ComponentIdentity,
 					input.CollectorCompositeProof.ExportAdmissionCorrelation, string(reportBytes))
 			}
 			entries, err := os.ReadDir(root)

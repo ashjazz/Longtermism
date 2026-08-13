@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	observability "github.com/ashjazz/Longtermism/internal/observability"
 )
 
 const (
@@ -37,6 +39,19 @@ func t188OpenStore(t *testing.T, root string) *PrivacyArtifactStore {
 func t188ArtifactInput(t *testing.T) PrivacyFixtureArtifactInput {
 	t.Helper()
 	startedAt := time.Now().UTC().Add(-time.Second).Truncate(time.Millisecond)
+	entry, err := observability.BuildHTTPCompletionLog(observability.HTTPCompletionLogInput{
+		Timestamp: startedAt.Add(time.Second), RequestID: "request-t188-artifact",
+		TraceID: "0123456789abcdef0123456789abcdef", SpanID: "0123456789abcdef",
+		RouteTemplate: "/api/v1/chat", Method: "POST", StatusCode: 200, Duration: 120 * time.Millisecond,
+		IsAIRequest: true, IsSmokeRun: true, AITraceID: "ai-trace-t188-artifact", SmokeRunID: "marker-t188-artifact",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := observability.BuildHTTPCompletionOTLPRecord(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
 	input := PrivacyFixtureArtifactInput{
 		RunID: "run-t188-artifact", Marker: "marker-t188-artifact", RequestID: "request-t188-artifact", AITraceID: "ai-trace-t188-artifact",
 		ForbiddenCanary: t188Canary,
@@ -44,11 +59,18 @@ func t188ArtifactInput(t *testing.T) PrivacyFixtureArtifactInput {
 		StartedAt: startedAt, Deadline: startedAt.Add(time.Minute),
 		APIScanSummary: map[string]int{"synthetic_canary": 0, "credential": 0, "authorization": 0, "token": 0, "recognized_pii": 0},
 		ApplicationLogProjection: PrivacyApplicationLogProjection{
-			Message: "http request completed", Route: "/api/v1/chat", Method: "POST", StatusCode: 200,
+			Timestamp: projection.Timestamp, Severity: projection.Severity, Body: projection.Body,
+			Attributes: projection.Attributes,
 		},
 		CollectorCompositeProof: PrivacyCollectorCompositeProof{
-			RuntimeConfigDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			ComponentIdentity:   "otlphttp/loki", ExportAdmissionCorrelation: "admission-t188-artifact",
+			RuntimeConfigDigest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			PrequeueArtifactSHA256: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+			ComponentIdentity:      "otlphttp/loki", ExportAdmissionCorrelation: "admission-t188-artifact",
+			ComponentTelemetry: PrivacyCollectorComponentTelemetry{
+				ComponentIdentity: "otlphttp/loki", ObservedAt: startedAt.Add(30 * time.Second),
+				WindowStartedAt: startedAt, WindowDeadline: startedAt.Add(time.Minute), Enqueued: 1, Sent: 1,
+				QueueCapacity: 100,
+			},
 		},
 	}
 	input.ChatReport = t188ChatReport(t, input, "chat", nil)
