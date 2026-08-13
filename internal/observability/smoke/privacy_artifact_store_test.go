@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestPrivacyArtifactStorePublishesTypedManifestLast(t *testing.T) {

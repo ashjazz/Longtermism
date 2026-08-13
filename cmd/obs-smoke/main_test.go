@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	v1observability "github.com/ashjazz/Longtermism/api/v1/observability"
+	"github.com/ashjazz/Longtermism/internal/observability/backend"
 	"github.com/ashjazz/Longtermism/internal/observability/smoke"
 )
 
@@ -738,5 +740,42 @@ func TestProtectedInfrastructureSmokeTriggerFailsClosedBeforeNetwork(t *testing.
 				t.Fatalf("trigger error = %v, want stable preflight rejection", err)
 			}
 		})
+	}
+}
+
+// TestPrivacyProductionBackendAcceptsOnlyConcreteCapabilities keeps generic T180 fake ports out
+// of the live composition root. Each dependency seals a real contained read or protected query;
+// composition is allowed to project those proofs, never to accept caller-reported booleans.
+func TestPrivacyProductionBackendAcceptsOnlyConcreteCapabilities(t *testing.T) {
+	constructor := reflect.TypeOf(backend.NewPrivacySmokeBackend)
+	want := reflect.TypeOf((func(
+		*smoke.PrivacyArtifactStore,
+		*backend.PrivacyLocalSurfaces,
+		*backend.PrivacyGrafanaSurfaces,
+		*backend.PrivacyLangfuseSurfaces,
+		time.Duration,
+	) (*backend.PrivacySmokeBackend, error))(nil))
+	if constructor != want || constructor.IsVariadic() {
+		t.Fatal("production privacy backend accepts a generic or forgeable proof dependency")
+	}
+
+	composition := reflect.TypeOf(newPrivacyCommandRunner)
+	wantInputs := []reflect.Type{
+		reflect.TypeOf((*smoke.ProtectedPrivacyFixtureTrigger)(nil)),
+		reflect.TypeOf((*smoke.ChatRunManifestStore)(nil)),
+		reflect.TypeOf((*backend.PrivacySmokeBackend)(nil)),
+		reflect.TypeOf((*smoke.PollerClock)(nil)).Elem(),
+	}
+	if composition.Kind() != reflect.Func || composition.IsVariadic() || composition.NumIn() != len(wantInputs) {
+		t.Fatal("production privacy composition root has a generic or incomplete dependency graph")
+	}
+	for index, wantInput := range wantInputs {
+		if composition.In(index) != wantInput {
+			t.Fatalf("production privacy composition input %d = %v, want %v", index, composition.In(index), wantInput)
+		}
+	}
+	writer := reflect.TypeOf((*smoke.PrivacyFixtureArtifactWriter)(nil)).Elem()
+	if !reflect.TypeOf((*backend.PrivacySmokeBackend)(nil)).Implements(writer) {
+		t.Fatal("production backend does not expose its already-bound contained store as the fixture writer")
 	}
 }
