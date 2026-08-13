@@ -68,6 +68,10 @@ var (
 			if err != nil {
 				return err
 			}
+			smokeEnabled, smokeAdmission, err := buildDefaultChatSmokeAdmission(ctx)
+			if err != nil {
+				return err
+			}
 
 			s.Group("/api", func(group *ghttp.RouterGroup) {
 				// MiddlewareHandlerResponse 提供统一响应信封 {code, message, data}，
@@ -89,6 +93,8 @@ var (
 				Handler:                     chatRuntime.Handler,
 				Limiter:                     limiter,
 				Limit:                       chatRuntime.Limit,
+				SmokeEnabled:                smokeEnabled,
+				SmokeAdmission:              smokeAdmission,
 				state:                       &processChatRoutesState,
 			}); err != nil {
 				return err
@@ -243,7 +249,36 @@ func httpCompletionIdentity(request *http.Request) appobservability.HTTPRequestI
 		identity.IsSmokeRun = true
 		identity.SmokeRunID = marker
 	}
+	if route == chatHTTPPath {
+		if trustedMarker := ChatSmokeRunIDFromContext(request.Context()); trustedMarker != "" {
+			identity.IsAIRequest = true
+			identity.IsSmokeRun = true
+			identity.SmokeRunID = trustedMarker
+		}
+	}
 	return identity
+}
+
+func buildDefaultChatSmokeAdmission(ctx context.Context) (bool, *ChatSmokeAdmission, error) {
+	commonEnabled := g.Cfg().MustGet(ctx, "observability.smoke.enabled", false).Bool()
+	enabled := g.Cfg().MustGet(ctx, "observability.smoke.chat.enabled", false).Bool()
+	if !enabled {
+		return false, nil, nil
+	}
+	if !commonEnabled {
+		return false, nil, fmt.Errorf("initialize chat smoke admission: common smoke gate is disabled")
+	}
+	environmentName := g.Cfg().MustGet(ctx, "observability.smoke.chat.authorization_env", "").String()
+	value := os.Getenv(environmentName)
+	input := ChatSmokeRuntimeConfigInput{
+		Enabled: true, AuthorizationEnvName: environmentName, AuthorizationValue: value,
+		ReplayCapacity: g.Cfg().MustGet(ctx, "observability.smoke.chat.replay_capacity", 64).Int(),
+		ReplayTTL:      g.Cfg().MustGet(ctx, "observability.smoke.chat.replay_ttl", "2m").Duration(),
+	}
+	if _, err := ResolveChatSmokeRuntimeConfig(input); err != nil {
+		return false, nil, fmt.Errorf("initialize chat smoke admission")
+	}
+	return true, NewChatSmokeAdmission(ChatSmokeAdmissionConfig{Authorization: value, Capacity: input.ReplayCapacity, TTL: input.ReplayTTL}), nil
 }
 
 func newInfraSmokeMetrics() (*appobservability.Metrics, error) {

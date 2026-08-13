@@ -29,6 +29,49 @@ const (
 
 const maxCollectorTimeout = time.Minute
 
+const (
+	minimumChatSmokeCredentialBytes = 16
+	maximumChatSmokeCredentialBytes = 512
+	maximumChatSmokeReplayCapacity  = 4096
+	maximumChatSmokeReplayTTL       = 10 * time.Minute
+)
+
+type ChatSmokeRuntimeConfigInput struct {
+	Enabled              bool
+	AuthorizationEnvName string
+	AuthorizationValue   string
+	ReplayCapacity       int
+	ReplayTTL            time.Duration
+}
+
+// ChatSmokeRuntimeConfig is safe to print. The authorization value is consumed by the
+// admission constructor and intentionally never becomes part of this snapshot.
+type ChatSmokeRuntimeConfig struct {
+	Ready                bool
+	AuthorizationEnvName string
+	CredentialPresent    bool
+	ReplayCapacity       int
+	ReplayTTL            time.Duration
+}
+
+func ResolveChatSmokeRuntimeConfig(input ChatSmokeRuntimeConfigInput) (ChatSmokeRuntimeConfig, error) {
+	if !input.Enabled {
+		return ChatSmokeRuntimeConfig{}, nil
+	}
+	authorization := strings.TrimSpace(input.AuthorizationValue)
+	if !isValidEnvironmentVariableName(strings.TrimSpace(input.AuthorizationEnvName)) ||
+		len(authorization) < minimumChatSmokeCredentialBytes || len(authorization) > maximumChatSmokeCredentialBytes ||
+		strings.ContainsAny(authorization, "\r\n\x00") ||
+		input.ReplayCapacity <= 0 || input.ReplayCapacity > maximumChatSmokeReplayCapacity ||
+		input.ReplayTTL <= 0 || input.ReplayTTL > maximumChatSmokeReplayTTL {
+		return ChatSmokeRuntimeConfig{}, gerror.New("chat smoke admission configuration is invalid")
+	}
+	return ChatSmokeRuntimeConfig{
+		Ready: true, AuthorizationEnvName: strings.TrimSpace(input.AuthorizationEnvName),
+		CredentialPresent: true, ReplayCapacity: input.ReplayCapacity, ReplayTTL: input.ReplayTTL,
+	}, nil
+}
+
 // ObservabilityCollectorConfigInput 是配置加载层传入的临时 DTO。
 // HeaderValue 仅用于判定凭据是否被提供，绝不能被保存到运行时快照、日志或错误中。
 type ObservabilityCollectorConfigInput struct {

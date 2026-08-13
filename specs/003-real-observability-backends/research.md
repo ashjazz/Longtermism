@@ -96,3 +96,28 @@
 **Alternatives considered**：SigNoz 替换全部后端含 Langfuse；两个 profile 同优先级并行；只验证 compose 启动。均偏离已确认目标。
 
 **Evidence**：[SigNoz OTel Collector metrics](https://signoz.io/docs/metrics-management/opentelemetry-collector-metrics/) 与 [SigNoz log collection methods](https://signoz.io/docs/logs-management/send-logs/collection-methods/)。
+
+## 11. Privacy 八 surface 证据能力
+
+**Decision（T186）**：privacy smoke 保留八个闭合 surface，但不再假设所有后端都支持同一种 arbitrary canary 全文搜索。每个 surface 使用平台真实可提供的最强证据；证据方法是报告中的低基数枚举，而不是 adapter 自报的布尔值：
+
+| Surface | 证据方法 | 可证明事实 | 明确不能宣称的事实 |
+| --- | --- | --- | --- |
+| API response | `bounded_memory_scan` | 受保护 chat 的成功响应在内存中经过统一 scanner，所有 forbidden category 为 0 | raw response 已持久化或可供后续重扫 |
+| application log | `projection_and_exact_query` | 应用发送前的 completion OTLP record 通过精确 allowlist 投影；Loki 中同 run 的存储记录可由 structured metadata 精确定位 | 通过扫描任意本地 JSONL 文件证明生产日志安全 |
+| Collector queue/report | `configuration_and_telemetry` | 运行配置 digest 与受审配置一致、pre-queue 低敏工件 hash 绑定同 run、export admission 可关联到目标组件，并取得该组件 queue telemetry | 证明某条 run record 已进入/仍留在 queue、读取 Collector `file_storage` 私有格式，或报告“queue 内容零命中” |
+| Tempo | `bounded_trace_document` | 先以 run/request/AI/native trace identity 和窗口做 TraceQL bounded search，再读取唯一 trace document，扫描其 span/resource attributes 与可序列化字段 | Tempo 支持独立的任意 payload 全文索引；从查询 target 回填未返回事实 |
+| Loki | `exact_structured_query` | 以 low-cardinality service selector 加 run/request/AI/native trace structured metadata 精确查询，并扫描返回的 log body 与 metadata | 把高基数 identity 升格为 index label，或只检查请求 query 不检查响应 identity |
+| Langfuse trace | `bounded_platform_document` | 锁定的 self-hosted Langfuse `3.185.0` 使用 v1 `GET /api/public/observations`；按 trace、时间窗和结构化 filter取得最多 100 条完整 observation row，并扫描实际返回的 input/output/metadata 等字段 | 使用 self-hosted v4 才支持的 v2 observations/field groups，或假设服务端全文搜索覆盖所有字段 |
+| Langfuse score | `bounded_platform_document` | `GET /api/public/v3/scores`（self-hosted v3.179.0+）按稳定 projection/trace/observation/window定位唯一 score；请求 `details,subject` 后扫描实际返回的 core、comment、metadata、subject | score API 可搜索任意 canary，或从本地 projection 猜测平台详情字段 |
+| report | `contained_artifact_scan` | 只读取 typed privacy manifest 登记、同 run/window、hash 匹配的既有 chat fixture report并统一扫描 | 扫描当前尚未生成的 privacy report，或按文件名/目录遍历猜测 report |
+
+报告使用固定顺序的八项 `privacy_evidence`，每项必须包含唯一 surface、固定 evidence method、`attempted=true`、状态、scanner policy 版本和类别计数；缺项、重复、跳过或默认零均不合法。scanner policy `1` 的闭合集合是 `synthetic_canary`、`credential`（已知 key/secret 形态）、`authorization`（Authorization/Bearer 形态）、`token`（已知 token 形态）与 `recognized_pii`（策略内明确支持的邮箱、手机号等模式），每类计数均为非负整数。policy 版本变化必须显式升级，不能把“recognized PII”表述为对所有个人信息的普遍证明。
+
+网络 body 在 decode/scan 前限制为 1 MiB，结果上限 100，每个 surface 使用独立短 context。passed privacy report 的八项类别计数必须全为 0。Collector 项的计数只属于绑定的 pre-queue 工件；它还必须同时证明 runtime config digest、artifact hash、component identity 与 export admission correlation，结论仅为“queue 前隐私契约与组件队列运行状态均已验证”，不声称扫描了 queue 内容。当前 privacy report 继续由 runner serialization guard 单独保护，不属于 `report` surface 的输入。
+
+**Rationale**：SC-005 要求证明敏感内容没有进入“查询结果、日志、待发送记录和报告”，但不同存储的可查询能力不同。API 与 report 可直接扫描；Loki 支持 structured metadata；Tempo 可返回 trace document；Langfuse v3 observations 返回完整行；Collector persistent queue 是 exporter-helper 的内部恢复格式，不是业务查询接口。用组合证据表达后者，比读取内部文件或伪造 exact query 更稳定、更可迁移。
+
+**Alternatives considered**：对八个 surface 统一发送 `exact canary` 查询；宽查后在 adapter 端用 target 补齐身份；平台不支持时返回 0；直接扫描 Collector queue 文件。它们分别会发明平台能力、混淆观察事实、制造假阳性，或绑定不稳定的内部存储格式，因此拒绝。
+
+**Evidence**：[Tempo HTTP API and TraceQL search](https://grafana.com/docs/tempo/latest/api_docs/)、[Loki native OTLP mapping](https://grafana.com/docs/loki/latest/send-data/otel/)、[Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/)、[Langfuse Observations API compatibility](https://langfuse.com/docs/api-and-data-platform/features/observations-api) 与 [Langfuse Scores API v3](https://langfuse.com/docs/api-and-data-platform/features/scores-api)。

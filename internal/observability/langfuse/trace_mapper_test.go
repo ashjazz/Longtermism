@@ -32,7 +32,8 @@ func TestMapTraceToProjectionProjectsOnlyExplicitAllowlist(t *testing.T) {
 		"ai.prompt.hash":                           "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"longtermism.payload.mode":                 string(obs.PayloadModeMetadataOnly),
 		"longtermism.payload.redacted":             "false",
-		"request.id":                               "req-t077-private",
+		"request.id":                               "req-t077-mapped",
+		"longtermism.smoke.run_id":                 "run-t177-mapper",
 		"ai.tenant_id":                             "tenant-t077-private",
 		"ai.user_id":                               "user-t077-private",
 		"ai.session_id":                            "session-t077-private",
@@ -59,20 +60,22 @@ func TestMapTraceToProjectionProjectsOnlyExplicitAllowlist(t *testing.T) {
 	}
 	projectionAttributes := projection.AttributesSnapshot()
 	wantAttributes := map[string]string{
-		"langfuse.observation.type":                             "generation",
-		"langfuse.observation.name":                             "ai.generation",
-		"langfuse.observation.metadata.ai_feature":              "chat",
-		"langfuse.observation.metadata.outcome":                 "success",
-		"langfuse.observation.metadata.ai_trace_id":             t077AITraceID,
-		"langfuse.observation.model.name":                       "provider-actual-model",
-		"langfuse.observation.metadata.requested_model":         "server-requested-model",
-		"langfuse.observation.usage_details.input":              "11",
-		"langfuse.observation.usage_details.output":             "17",
-		"langfuse.observation.usage_details.reasoning_output":   "5",
-		"langfuse.observation.metadata.prompt_template_version": "chat-v1",
-		"langfuse.observation.metadata.prompt_hash":             "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		"langfuse.observation.metadata.payload_mode":            string(obs.PayloadModeMetadataOnly),
-		"langfuse.observation.metadata.payload_redacted":        "false",
+		"langfuse.observation.type":                              "generation",
+		"langfuse.observation.name":                              "ai.generation",
+		"langfuse.observation.metadata.ai_feature":               "chat",
+		"langfuse.observation.metadata.outcome":                  "success",
+		"langfuse.observation.metadata.ai_trace_id":              t077AITraceID,
+		"langfuse.observation.metadata.request_id":               "req-t077-mapped",
+		"langfuse.observation.metadata.longtermism.smoke.run_id": "run-t177-mapper",
+		"langfuse.observation.model.name":                        "provider-actual-model",
+		"langfuse.observation.metadata.requested_model":          "server-requested-model",
+		"langfuse.observation.usage_details.input":               "11",
+		"langfuse.observation.usage_details.output":              "17",
+		"langfuse.observation.usage_details.reasoning_output":    "5",
+		"langfuse.observation.metadata.prompt_template_version":  "chat-v1",
+		"langfuse.observation.metadata.prompt_hash":              "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"langfuse.observation.metadata.payload_mode":             string(obs.PayloadModeMetadataOnly),
+		"langfuse.observation.metadata.payload_redacted":         "false",
 	}
 	for key, want := range wantAttributes {
 		if got := projectionAttributes[key]; got != want {
@@ -81,7 +84,7 @@ func TestMapTraceToProjectionProjectsOnlyExplicitAllowlist(t *testing.T) {
 	}
 	assertExactT077AttributeKeys(t, projectionAttributes, wantAttributes)
 	for _, forbidden := range []string{
-		"request.id", "ai.tenant_id", "ai.user_id", "ai.session_id", "ai.query.hash", "ai.agent.tool_name",
+		"ai.tenant_id", "ai.user_id", "ai.session_id", "ai.query.hash", "ai.agent.tool_name",
 		"http.route", "langfuse.observation.metadata.caller_key", "authorization", "gen_ai.prompt.0.content",
 	} {
 		if _, exists := projectionAttributes[forbidden]; exists {

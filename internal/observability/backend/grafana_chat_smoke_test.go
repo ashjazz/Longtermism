@@ -29,9 +29,8 @@ func TestGrafanaChatSmokeBackendQueriesExactCorrelationFacts(t *testing.T) {
 			// 由服务端完整 TraceQL predicate证明，adapter不得臆造未查询的关联字段。
 			_, _ = fmt.Fprintf(writer, `{"traces":[{"traceID":"%s","startTimeUnixNano":"%d","rootTraceName":"raw-t178-tempo-body"}]}`, target.ServiceTraceID, target.StartedAt.Add(time.Second).UnixNano())
 		case "/loki/api/v1/query_range":
-			line := fmt.Sprintf(`{"smoke_run_id":"%s","request_id":"%s","ai_trace_id":"%s","trace_id":"%s","span_id":"%s","message":"raw-t178-loki-body"}`, target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, target.SpanID)
-			encodedLine, _ := json.Marshal(line)
-			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"stream":{"raw":"raw-t178-loki-stream"},"values":[["%d",%s]]}]}}`, target.StartedAt.Add(2*time.Second).UnixNano(), encodedLine)
+			metadata := lokiChatMetadataForTest(target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, "fedcba9876543210")
+			_, _ = writer.Write([]byte(lokiChatResponseForTest(target.StartedAt.Add(2*time.Second), metadata)))
 		case "/api/v1/query":
 			_, _ = fmt.Fprint(writer, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1784541600,"42"]}]}}`)
 		default:
@@ -44,8 +43,12 @@ func TestGrafanaChatSmokeBackendQueriesExactCorrelationFacts(t *testing.T) {
 		Marker: target.Marker, RequestID: target.RequestID, AITraceID: target.AITraceID,
 		ServiceTraceID: target.ServiceTraceID, SpanID: target.SpanID, ObservedAt: target.StartedAt.Add(3 * time.Second),
 	}}}
+	grafana, err := NewGrafanaSmokeQueryClient(GrafanaQueryConfig{PrometheusURL: server.URL, LokiURL: server.URL, TempoURL: server.URL, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("protected Grafana client: %v", err)
+	}
 	backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{
-		Grafana:  NewGrafanaQueryClient(GrafanaQueryConfig{PrometheusURL: server.URL, LokiURL: server.URL, TempoURL: server.URL, Timeout: time.Second}),
+		Grafana:  grafana,
 		Langfuse: langfuse,
 	})
 
@@ -64,7 +67,14 @@ func TestGrafanaChatSmokeBackendQueriesExactCorrelationFacts(t *testing.T) {
 			if err != nil || len(observations) != 1 {
 				t.Fatalf("query = (%#v, %v), want one observation", observations, err)
 			}
-			assertExactChatObservation(t, observations[0], target, tt.want)
+			if tt.name == "Loki" {
+				want := smoke.ChatObservation{Marker: target.Marker, RequestID: target.RequestID, AITraceID: target.AITraceID, ServiceTraceID: target.ServiceTraceID, SpanID: "fedcba9876543210", ObservedAt: tt.want}
+				if observations[0] != want {
+					t.Fatalf("Loki observation = %#v, want actual root span %#v", observations[0], want)
+				}
+			} else {
+				assertExactChatObservation(t, observations[0], target, tt.want)
+			}
 			assertChatObservationIsLowSensitivity(t, observations[0])
 		})
 	}
@@ -99,7 +109,11 @@ func TestGrafanaChatSmokeBackendUsesOnlyLowCardinalityLLMCounter(t *testing.T) {
 		_, _ = fmt.Fprint(writer, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1784541600,"7"]}]}}`)
 	}))
 	defer server.Close()
-	backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{Grafana: NewGrafanaQueryClient(GrafanaQueryConfig{PrometheusURL: server.URL, Timeout: time.Second}), Langfuse: &recordingChatObservationQuery{}})
+	grafana, err := NewGrafanaSmokeQueryClient(GrafanaQueryConfig{PrometheusURL: server.URL, Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("protected Grafana client: %v", err)
+	}
+	backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{Grafana: grafana, Langfuse: &recordingChatObservationQuery{}})
 	_, _ = backend.BaselineLLMRequestCount(context.Background())
 	_, _ = backend.LLMRequestCount(context.Background())
 	if len(expressions) != 2 {
@@ -143,7 +157,11 @@ func TestGrafanaChatSmokeBackendRejectsUnsafeTargetsBeforeNetwork(t *testing.T) 
 			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
 			defer server.Close()
 			langfuse := &recordingChatObservationQuery{}
-			backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{Grafana: NewGrafanaQueryClient(GrafanaQueryConfig{TempoURL: server.URL, Timeout: time.Second}), Langfuse: langfuse})
+			grafana, clientErr := NewGrafanaSmokeQueryClient(GrafanaQueryConfig{TempoURL: server.URL, Timeout: time.Second})
+			if clientErr != nil {
+				t.Fatalf("protected Grafana client: %v", clientErr)
+			}
+			backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{Grafana: grafana, Langfuse: langfuse})
 			queries := []func(context.Context, smoke.ChatSmokeTarget) ([]smoke.ChatObservation, error){backend.QueryTempoChat, backend.QueryLokiChat, backend.QueryLangfuseChat}
 			for _, query := range queries {
 				_, err := query(context.Background(), tt.mutate(valid))
@@ -155,6 +173,33 @@ func TestGrafanaChatSmokeBackendRejectsUnsafeTargetsBeforeNetwork(t *testing.T) 
 				t.Fatalf("unsafe query sends = grafana:%d langfuse:%d, want zero", calls, len(langfuse.targets))
 			}
 		})
+	}
+}
+
+func TestGrafanaChatSmokeBackendRequiresProtectedLoopbackClient(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+	}{
+		{name: "remote", endpoint: "https://example.com:443"},
+		{name: "userinfo", endpoint: "http://user:pass@127.0.0.1:3000"},
+		{name: "path override", endpoint: "http://127.0.0.1:3000/admin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, err := NewGrafanaSmokeQueryClient(GrafanaQueryConfig{TempoURL: tt.endpoint, Timeout: time.Second})
+			if client != nil || errorClass(err) != "backend_unavailable" {
+				t.Fatalf("protected constructor = (%#v,%v), want fail-closed", client, err)
+			}
+			if strings.Contains(fmt.Sprint(err), tt.endpoint) {
+				t.Fatal("protected constructor leaked endpoint")
+			}
+		})
+	}
+	ordinary := NewGrafanaQueryClient(GrafanaQueryConfig{TempoURL: "http://127.0.0.1:3000", Timeout: time.Second})
+	backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{Grafana: ordinary, Langfuse: &recordingChatObservationQuery{}})
+	if _, err := backend.QueryTempoChat(context.Background(), chatSmokeTargetForTest()); errorClass(err) != "invalid_query" {
+		t.Fatalf("ordinary Grafana client class = %q, want invalid_query", errorClass(err))
 	}
 }
 
@@ -183,7 +228,11 @@ func TestGrafanaChatSmokeBackendFailuresStayBoundedAndLowSensitivity(t *testing.
 				_, _ = writer.Write([]byte(tt.body))
 			}))
 			defer server.Close()
-			backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{Grafana: NewGrafanaQueryClient(GrafanaQueryConfig{TempoURL: server.URL, LokiURL: server.URL, PrometheusURL: server.URL, Timeout: time.Second}), Langfuse: &recordingChatObservationQuery{}})
+			grafana, clientErr := NewGrafanaSmokeQueryClient(GrafanaQueryConfig{TempoURL: server.URL, LokiURL: server.URL, PrometheusURL: server.URL, Timeout: time.Second})
+			if clientErr != nil {
+				t.Fatalf("protected Grafana client: %v", clientErr)
+			}
+			backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{Grafana: grafana, Langfuse: &recordingChatObservationQuery{}})
 			err := tt.query(backend)(context.Background())
 			if errorClass(err) != tt.wantClass {
 				t.Fatalf("error = %v class %q, want %q", err, errorClass(err), tt.wantClass)
@@ -201,11 +250,7 @@ func TestGrafanaChatSmokeBackendFailuresStayBoundedAndLowSensitivity(t *testing.
 // 两者都必须拒绝 foreign/缺失/窗口外事实，防止“有一行结果就从 target 回填”的假阳性。
 func TestGrafanaChatSmokeBackendRejectsConflictingBackendFacts(t *testing.T) {
 	target := chatSmokeTargetForTest()
-	lokiLine := func(marker, requestID, aiTraceID, observedTraceID, spanID string) string {
-		line, _ := json.Marshal(fmt.Sprintf(`{"smoke_run_id":"%s","request_id":"%s","ai_trace_id":"%s","trace_id":"%s","span_id":"%s"}`, marker, requestID, aiTraceID, observedTraceID, spanID))
-		return string(line)
-	}
-	validLokiLine := lokiLine(target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, target.SpanID)
+	validLokiLine := lokiChatMetadataForTest(target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, "fedcba9876543210")
 	tests := []struct {
 		name, path, body string
 		query            func(*GrafanaChatSmokeBackend) func(context.Context) error
@@ -213,19 +258,19 @@ func TestGrafanaChatSmokeBackendRejectsConflictingBackendFacts(t *testing.T) {
 		{name: "Tempo foreign trace", path: "/api/search", body: fmt.Sprintf(`{"traces":[{"traceID":"ffffffffffffffffffffffffffffffff","startTimeUnixNano":"%d"}]}`, target.StartedAt.Add(time.Second).UnixNano()), query: tempoChatErrorQuery},
 		{name: "Tempo missing trace identity", path: "/api/search", body: fmt.Sprintf(`{"traces":[{"startTimeUnixNano":"%d"}]}`, target.StartedAt.Add(time.Second).UnixNano()), query: tempoChatErrorQuery},
 		{name: "Tempo ambiguous matches", path: "/api/search", body: fmt.Sprintf(`{"traces":[{"traceID":"%s","startTimeUnixNano":"%d"},{"traceID":"%s","startTimeUnixNano":"%d"}]}`, target.ServiceTraceID, target.StartedAt.Add(time.Second).UnixNano(), target.ServiceTraceID, target.StartedAt.Add(2*time.Second).UnixNano()), query: tempoChatErrorQuery},
-		{name: "Tempo outside window", path: "/api/search", body: fmt.Sprintf(`{"traces":[{"traceID":"%s","startTimeUnixNano":"%d"}]}`, target.ServiceTraceID, target.Deadline.Add(time.Nanosecond).UnixNano()), query: tempoChatErrorQuery},
-		{name: "Loki missing marker", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine("", target.RequestID, target.AITraceID, target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
-		{name: "Loki foreign marker", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine("foreign-marker-t178", target.RequestID, target.AITraceID, target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
-		{name: "Loki missing request", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine(target.Marker, "", target.AITraceID, target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
-		{name: "Loki foreign request", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine(target.Marker, "foreign-request-t178", target.AITraceID, target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
-		{name: "Loki missing AI trace", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine(target.Marker, target.RequestID, "", target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
-		{name: "Loki foreign AI trace", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine(target.Marker, target.RequestID, "foreign-ai-trace-t178", target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
-		{name: "Loki missing service trace", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine(target.Marker, target.RequestID, target.AITraceID, "", target.SpanID)), query: lokiChatErrorQuery},
-		{name: "Loki foreign service trace", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine(target.Marker, target.RequestID, target.AITraceID, "ffffffffffffffffffffffffffffffff", target.SpanID)), query: lokiChatErrorQuery},
-		{name: "Loki missing span", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine(target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, "")), query: lokiChatErrorQuery},
-		{name: "Loki foreign span", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiLine(target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, "ffffffffffffffff")), query: lokiChatErrorQuery},
-		{name: "Loki ambiguous matches", path: "/loki/api/v1/query_range", body: fmt.Sprintf(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["%d",%s],["%d",%s]]}]}}`, target.StartedAt.Add(time.Second).UnixNano(), validLokiLine, target.StartedAt.Add(2*time.Second).UnixNano(), validLokiLine), query: lokiChatErrorQuery},
-		{name: "Loki outside window", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.Deadline.Add(time.Nanosecond), validLokiLine), query: lokiChatErrorQuery},
+		{name: "Tempo outside window", path: "/api/search", body: fmt.Sprintf(`{"traces":[{"traceID":"%s","startTimeUnixNano":"%d"}]}`, target.ServiceTraceID, target.Deadline.Add(time.Second).UnixNano()), query: tempoChatErrorQuery},
+		{name: "Loki missing marker", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest("", target.RequestID, target.AITraceID, target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
+		{name: "Loki foreign marker", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest("foreign-marker-t178", target.RequestID, target.AITraceID, target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
+		{name: "Loki missing request", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest(target.Marker, "", target.AITraceID, target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
+		{name: "Loki foreign request", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest(target.Marker, "foreign-request-t178", target.AITraceID, target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
+		{name: "Loki missing AI trace", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest(target.Marker, target.RequestID, "", target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
+		{name: "Loki foreign AI trace", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest(target.Marker, target.RequestID, "foreign-ai-trace-t178", target.ServiceTraceID, target.SpanID)), query: lokiChatErrorQuery},
+		{name: "Loki missing service trace", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest(target.Marker, target.RequestID, target.AITraceID, "", target.SpanID)), query: lokiChatErrorQuery},
+		{name: "Loki foreign service trace", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest(target.Marker, target.RequestID, target.AITraceID, "ffffffffffffffffffffffffffffffff", target.SpanID)), query: lokiChatErrorQuery},
+		{name: "Loki missing span", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest(target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, "")), query: lokiChatErrorQuery},
+		{name: "Loki malformed span", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.StartedAt.Add(time.Second), lokiChatMetadataForTest(target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, "not-a-span")), query: lokiChatErrorQuery},
+		{name: "Loki ambiguous matches", path: "/loki/api/v1/query_range", body: fmt.Sprintf(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["%d","http request completed",%s],["%d","http request completed",%s]]}]}}`, target.StartedAt.Add(time.Second).UnixNano(), validLokiLine, target.StartedAt.Add(2*time.Second).UnixNano(), validLokiLine), query: lokiChatErrorQuery},
+		{name: "Loki outside window", path: "/loki/api/v1/query_range", body: lokiChatResponseForTest(target.Deadline.Add(time.Second), validLokiLine), query: lokiChatErrorQuery},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -236,7 +281,11 @@ func TestGrafanaChatSmokeBackendRejectsConflictingBackendFacts(t *testing.T) {
 				_, _ = writer.Write([]byte(tt.body))
 			}))
 			defer server.Close()
-			backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{Grafana: NewGrafanaQueryClient(GrafanaQueryConfig{TempoURL: server.URL, LokiURL: server.URL, Timeout: time.Second}), Langfuse: &recordingChatObservationQuery{}})
+			grafana, clientErr := NewGrafanaSmokeQueryClient(GrafanaQueryConfig{TempoURL: server.URL, LokiURL: server.URL, Timeout: time.Second})
+			if clientErr != nil {
+				t.Fatalf("protected Grafana client: %v", clientErr)
+			}
+			backend := NewGrafanaChatSmokeBackend(GrafanaChatSmokeBackendConfig{Grafana: grafana, Langfuse: &recordingChatObservationQuery{}})
 			err := tt.query(backend)(context.Background())
 			if errorClass(err) != "malformed_response" {
 				t.Fatalf("conflicting evidence error = %v class %q, want malformed_response", err, errorClass(err))
@@ -250,8 +299,13 @@ func TestGrafanaChatSmokeBackendRejectsConflictingBackendFacts(t *testing.T) {
 	}
 }
 
-func lokiChatResponseForTest(observedAt time.Time, line string) string {
-	return fmt.Sprintf(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["%d",%s]]}]}}`, observedAt.UnixNano(), line)
+func lokiChatResponseForTest(observedAt time.Time, metadata string) string {
+	return fmt.Sprintf(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["%d","http request completed",%s]]}]}}`, observedAt.UnixNano(), metadata)
+}
+
+func lokiChatMetadataForTest(marker, requestID, aiTraceID, observedTraceID, spanID string) string {
+	encoded, _ := json.Marshal(map[string]string{"smoke_run_id": marker, "request_id": requestID, "ai_trace_id": aiTraceID, "trace_id": observedTraceID, "span_id": spanID})
+	return string(encoded)
 }
 
 func tempoChatErrorQuery(backend *GrafanaChatSmokeBackend) func(context.Context) error {
@@ -331,7 +385,13 @@ func assertBoundedChatRequest(t *testing.T, request recordedChatRequest, target 
 		t.Fatalf("%s query = %v, want bounded window and server limit", request.path, request.query)
 	}
 	expression := request.query.Get("q") + request.query.Get("query")
-	for _, identity := range []string{target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, target.SpanID} {
+	identities := []string{target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, target.SpanID}
+	if request.path == "/loki/api/v1/query_range" {
+		// completion log属于 HTTP root span，而 manifest 中 SpanID 是 ai.chat bridge span。
+		// 跨 surface 依靠同一 trace 和低敏关联身份，不能伪造“所有 surface 共用一个 span”。
+		identities = identities[:4]
+	}
+	for _, identity := range identities {
 		if !strings.Contains(expression, identity) {
 			t.Fatalf("%s expression = %q, missing exact identity %q", request.path, expression, identity)
 		}

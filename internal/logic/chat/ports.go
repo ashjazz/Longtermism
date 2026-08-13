@@ -40,6 +40,9 @@ type ChatEvidenceStore interface {
 // ChatScoreProjectionInput 只组合已持久化 evidence 与 generation adapter 返回的
 // 原生平台身份。未来平台 adapter 负责映射，usecase 不认识 Langfuse schema。
 type ChatScoreProjectionInput struct {
+	// RunID is present only for an authenticated live-smoke request. It is never
+	// derived from EvalRunID or timestamps; ordinary chat leaves it empty.
+	RunID      string
 	Evidence   aieval.EvaluationEvidence
 	Generation appobs.PlatformSpanIdentity
 }
@@ -47,5 +50,5 @@ type ChatScoreProjectionInput struct {
 // ChatScoreProjectionQueue 只允许同步、立即返回的有界入队。worker 的重试、状态机
 // 与 shutdown 属于基础设施层，usecase 不创建 goroutine。
 type ChatScoreProjectionQueue interface {
-	TryEnqueue(ChatScoreProjectionInput) error
+	TryEnqueue(context.Context, ChatScoreProjectionInput) error
 }

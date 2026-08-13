@@ -18,7 +18,7 @@ func TestPrivacySmokeRunnerContract(t *testing.T) {
 	startedAt := time.Now().UTC().Add(time.Minute).Truncate(time.Second)
 	deadline := startedAt.Add(time.Minute)
 	const canary = "synthetic-private-canary-t087"
-	identity := PrivacySmokeIdentity{RunID: "privacy-run-t087", Marker: "privacy-marker-t087"}
+	identity := privacyRunnerTestIdentity("privacy-run-t087", "privacy-marker-t087", startedAt, deadline)
 	contractSurfaces := []PrivacySmokeSurface{PrivacySmokeSurfaceAPI, PrivacySmokeSurfaceApplicationLog, PrivacySmokeSurfaceCollectorQueue, PrivacySmokeSurfaceTempo, PrivacySmokeSurfaceLoki, PrivacySmokeSurfaceLangfuseTrace, PrivacySmokeSurfaceLangfuseScore, PrivacySmokeSurfaceReport}
 
 	tests := []struct {
@@ -90,7 +90,7 @@ func TestPrivacySmokeRunnerPreflight(t *testing.T) {
 		return PrivacySmokeRunnerDependencies{
 			Backend: &fakePrivacySmokeBackend{}, Transport: &countingPrivacySmokeTransport{}, Clock: newPollerTestClock(startedAt),
 			IdentityFactory: func(context.Context) (PrivacySmokeIdentity, error) {
-				return PrivacySmokeIdentity{RunID: "privacy-run-boundary", Marker: "privacy-marker-boundary"}, nil
+				return privacyRunnerTestIdentity("privacy-run-boundary", "privacy-marker-boundary", startedAt, startedAt.Add(time.Minute)), nil
 			},
 		}
 	}
@@ -110,7 +110,8 @@ func TestPrivacySmokeRunnerPreflight(t *testing.T) {
 		}},
 		{name: "identity cannot contain forbidden canary", ctx: context.Background(), request: PrivacySmokeRequest{Deadline: startedAt.Add(time.Minute), Profile: "grafana", ForbiddenCanary: "synthetic-private-boundary"}, mutate: func(deps *PrivacySmokeRunnerDependencies) {
 			deps.IdentityFactory = func(context.Context) (PrivacySmokeIdentity, error) {
-				return PrivacySmokeIdentity{RunID: "privacy-run-boundary", Marker: "prefix-synthetic-private-boundary"}, nil
+				identity := privacyRunnerTestIdentity("privacy-run-boundary", "prefix-synthetic-private-boundary", startedAt, startedAt.Add(time.Minute))
+				return identity, nil
 			}
 		}},
 	}
@@ -137,7 +138,7 @@ func TestPrivacySmokeRunnerAggregatesHitsAndKeepsFailurePriorityStable(t *testin
 	report, err := RunPrivacySmoke(context.Background(), PrivacySmokeRequest{Deadline: startedAt.Add(time.Minute), Profile: "grafana", ForbiddenCanary: "synthetic-private-priority"}, PrivacySmokeRunnerDependencies{
 		Backend: backend, Transport: &countingPrivacySmokeTransport{}, Clock: newPollerTestClock(startedAt),
 		IdentityFactory: func(context.Context) (PrivacySmokeIdentity, error) {
-			return PrivacySmokeIdentity{RunID: "privacy-run-priority", Marker: "privacy-marker-priority"}, nil
+			return privacyRunnerTestIdentity("privacy-run-priority", "privacy-marker-priority", startedAt, startedAt.Add(time.Minute)), nil
 		},
 	})
 	if err != nil || report == nil {
@@ -149,6 +150,14 @@ func TestPrivacySmokeRunnerAggregatesHitsAndKeepsFailurePriorityStable(t *testin
 	}
 	if strings.Contains(validatePrivacySmokeReport(t, report), "synthetic-private-priority") {
 		t.Fatal("privacy report reflected a forbidden canary")
+	}
+}
+
+func privacyRunnerTestIdentity(runID, marker string, startedAt, deadline time.Time) PrivacySmokeIdentity {
+	return PrivacySmokeIdentity{
+		RunID: runID, Marker: marker, RequestID: "request-privacy", AITraceID: "ai-trace-privacy",
+		ServiceTraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef",
+		ManifestRef: "privacy-fixture-manifest.json", StartedAt: startedAt, Deadline: deadline,
 	}
 }
 

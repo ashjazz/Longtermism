@@ -13,8 +13,9 @@ var (
 )
 
 const (
-	maxScoreWorkerQueueCapacity = 4096
-	scoreWorkerDiagnosticBuffer = 256
+	maxScoreWorkerQueueCapacity      = 4096
+	scoreWorkerDiagnosticBuffer      = 256
+	shutdownProjectionPersistTimeout = time.Second
 )
 
 // ScoreRetryWaiter makes retry timing replaceable in deterministic tests while
@@ -31,26 +32,44 @@ type ScoreWorkerTransition struct {
 	Attempt int                   `json:"attempt"`
 }
 
+// ScoreProjectionRecorder is the durable side of worker state transitions. Unlike
+// OnTransition diagnostics, Record is synchronous: the next external side effect is
+// forbidden until the new immutable snapshot is durable.
+type ScoreProjectionRecorder interface {
+	Record(context.Context, ScoreProjection) error
+}
+
+// ScoreProjectionPersistenceFailure deliberately carries no projection/evidence identity.
+// Operators need the failed state class, while detailed storage errors stay local.
+type ScoreProjectionPersistenceFailure struct {
+	Class  string                `json:"class"`
+	Status ScoreProjectionStatus `json:"status"`
+}
+
 type ScoreWorkerConfig struct {
-	QueueCapacity  int
-	MaxAttempts    int
-	InitialBackoff time.Duration
-	MaxBackoff     time.Duration
-	Sender         ScoreSender
-	Waiter         ScoreRetryWaiter
+	QueueCapacity        int
+	MaxAttempts          int
+	InitialBackoff       time.Duration
+	MaxBackoff           time.Duration
+	Sender               ScoreSender
+	Waiter               ScoreRetryWaiter
+	ProjectionRecorder   ScoreProjectionRecorder
+	OnPersistenceFailure func(ScoreProjectionPersistenceFailure)
 	// OnTransition must return quickly and must not perform blocking I/O. Events
 	// are best-effort through a bounded channel so diagnostics never backpressure chat.
 	OnTransition func(ScoreWorkerTransition)
 }
 
 type ScoreWorker struct {
-	queue          chan ScoreProjection
-	maxAttempts    int
-	initialBackoff time.Duration
-	maxBackoff     time.Duration
-	sender         ScoreSender
-	waiter         ScoreRetryWaiter
-	onTransition   func(ScoreWorkerTransition)
+	queue                chan ScoreProjection
+	maxAttempts          int
+	initialBackoff       time.Duration
+	maxBackoff           time.Duration
+	sender               ScoreSender
+	waiter               ScoreRetryWaiter
+	onTransition         func(ScoreWorkerTransition)
+	projectionRecorder   ScoreProjectionRecorder
+	onPersistenceFailure func(ScoreProjectionPersistenceFailure)
 
 	runCtx      context.Context
 	cancelRun   context.CancelFunc
@@ -76,20 +95,22 @@ func NewScoreWorker(config ScoreWorkerConfig) (*ScoreWorker, error) {
 	}
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	return &ScoreWorker{
-		queue:           make(chan ScoreProjection, config.QueueCapacity),
-		maxAttempts:     config.MaxAttempts,
-		initialBackoff:  config.InitialBackoff,
-		maxBackoff:      config.MaxBackoff,
-		sender:          config.Sender,
-		waiter:          waiter,
-		onTransition:    config.OnTransition,
-		runCtx:          runCtx,
-		cancelRun:       cancelRun,
-		stop:            make(chan struct{}),
-		done:            make(chan struct{}),
-		diagnostics:     make(chan ScoreWorkerTransition, scoreWorkerDiagnosticBuffer),
-		accepting:       true,
-		diagnosticsOpen: true,
+		queue:                make(chan ScoreProjection, config.QueueCapacity),
+		maxAttempts:          config.MaxAttempts,
+		initialBackoff:       config.InitialBackoff,
+		maxBackoff:           config.MaxBackoff,
+		sender:               config.Sender,
+		waiter:               waiter,
+		onTransition:         config.OnTransition,
+		projectionRecorder:   config.ProjectionRecorder,
+		onPersistenceFailure: config.OnPersistenceFailure,
+		runCtx:               runCtx,
+		cancelRun:            cancelRun,
+		stop:                 make(chan struct{}),
+		done:                 make(chan struct{}),
+		diagnostics:          make(chan ScoreWorkerTransition, scoreWorkerDiagnosticBuffer),
+		accepting:            true,
+		diagnosticsOpen:      true,
 	}, nil
 }
 
@@ -244,7 +265,9 @@ func (worker *ScoreWorker) deliver(projection ScoreProjection) {
 			worker.recordTransition(sending, ScoreProjectionStatusFailedPermanent)
 			return
 		}
-		worker.record(retryWait)
+		if !worker.persistProjection(retryWait) {
+			return
+		}
 		if err := worker.callWaiter(worker.retryDelay(retryWait.Attempt)); err != nil {
 			if worker.runCtx.Err() != nil {
 				worker.recordTransition(retryWait, ScoreProjectionStatusFailedShutdownTimeout)
@@ -304,8 +327,39 @@ func (worker *ScoreWorker) recordTransition(projection ScoreProjection, status S
 	if err != nil {
 		return projection.Snapshot(), false
 	}
-	worker.record(updated)
+	if !worker.persistProjection(updated) {
+		return projection.Snapshot(), false
+	}
 	return updated, true
+}
+
+func (worker *ScoreWorker) persistProjection(projection ScoreProjection) bool {
+	ctx := worker.runCtx
+	cancel := func() {}
+	if projection.Status == ScoreProjectionStatusFailedShutdownTimeout && ctx.Err() != nil {
+		ctx, cancel = context.WithTimeout(context.Background(), shutdownProjectionPersistTimeout)
+	}
+	defer cancel()
+	if worker.projectionRecorder != nil {
+		if err := worker.projectionRecorder.Record(ctx, projection.Snapshot()); err != nil {
+			worker.notifyPersistenceFailure(projection.Status)
+			return false
+		}
+	}
+	worker.record(projection)
+	return true
+}
+
+func (worker *ScoreWorker) notifyPersistenceFailure(status ScoreProjectionStatus) {
+	if worker.onPersistenceFailure == nil {
+		return
+	}
+	func() {
+		defer func() { _ = recover() }()
+		worker.onPersistenceFailure(ScoreProjectionPersistenceFailure{
+			Class: "projection_persistence_failed", Status: status,
+		})
+	}()
 }
 
 func (worker *ScoreWorker) record(projection ScoreProjection) {

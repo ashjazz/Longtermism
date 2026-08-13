@@ -118,6 +118,67 @@ type ScoreProjection struct {
 	maxAttempts  int
 }
 
+// ScoreProjectionRecoverySnapshot is the complete low-sensitivity state needed to
+// reconstruct one durable projection after a process restart. It deliberately keeps
+// endpoint credentials and provider responses outside the recovery boundary.
+type ScoreProjectionRecoverySnapshot struct {
+	ProjectionID          string
+	Evidence              aieval.EvaluationEvidence
+	TargetKind            ScoreTargetKind
+	PlatformTraceID       string
+	PlatformObservationID string
+	Status                ScoreProjectionStatus
+	Attempt               int
+	CreatedAt             time.Time
+	MaxAttempts           int
+}
+
+// ScoreProjectionRecoveryInput is the lifecycle-facing name for the persisted
+// recovery contract. The snapshot alias is retained for storage DTO composition.
+type ScoreProjectionRecoveryInput = ScoreProjectionRecoverySnapshot
+
+func RecoverScoreProjection(input ScoreProjectionRecoveryInput) (ScoreProjection, error) {
+	return RestoreScoreProjection(input)
+}
+
+// RestoreScoreProjection revalidates every persisted fact instead of trusting the
+// serialized representation. In particular, a stored ProjectionID must still equal
+// the deterministic ID derived from the target and evidence.
+func RestoreScoreProjection(snapshot ScoreProjectionRecoverySnapshot) (ScoreProjection, error) {
+	target, err := newScoreTarget(snapshot.PlatformTraceID, snapshot.PlatformObservationID, snapshot.TargetKind)
+	if err != nil || !isValidScoreTarget(target) || !isValidProjectionEvidence(snapshot.Evidence) ||
+		target.platformTraceID != snapshot.Evidence.ServiceTraceID || snapshot.CreatedAt.IsZero() ||
+		snapshot.MaxAttempts <= 0 || snapshot.MaxAttempts > maxScoreProjectionAttempts ||
+		snapshot.Attempt < 0 || snapshot.Attempt > snapshot.MaxAttempts || !isRecoverableProjectionStatus(snapshot.Status) {
+		return ScoreProjection{}, errInvalidProjectionInput
+	}
+	projection := ScoreProjection{
+		ProjectionID: snapshot.ProjectionID,
+		Target:       target,
+		Evidence:     cloneProjectionEvidence(snapshot.Evidence),
+		Status:       snapshot.Status,
+		Attempt:      snapshot.Attempt,
+		CreatedAt:    snapshot.CreatedAt.UTC(),
+		maxAttempts:  snapshot.MaxAttempts,
+	}
+	if projection.ProjectionID == "" || projection.ProjectionID != deriveProjectionID(target, projection.Evidence) {
+		return ScoreProjection{}, errInvalidProjectionInput
+	}
+	return projection, nil
+}
+
+func isRecoverableProjectionStatus(status ScoreProjectionStatus) bool {
+	switch status {
+	case ScoreProjectionStatusQueued, ScoreProjectionStatusSending, ScoreProjectionStatusRetryWait,
+		ScoreProjectionStatusSent, ScoreProjectionStatusDroppedQueueFull,
+		ScoreProjectionStatusFailedPermanent, ScoreProjectionStatusFailedShutdownTimeout,
+		ScoreProjectionStatusNotConfigured:
+		return true
+	default:
+		return false
+	}
+}
+
 // Snapshot transfers an isolated value to queue/client ownership. ScoreProjection
 // itself uses value semantics, but EvaluationEvidence contains a threshold pointer;
 // this method prevents two goroutines from sharing that mutable leaf.

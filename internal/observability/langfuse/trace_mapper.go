@@ -148,6 +148,8 @@ func projectAllowlistedAttributes(destination, source map[string]string) {
 		{source: "ai.feature", destination: "langfuse.observation.metadata.ai_feature"},
 		{source: "ai.outcome", destination: "langfuse.observation.metadata.outcome"},
 		{source: "longtermism.ai.trace_id", destination: "langfuse.observation.metadata.ai_trace_id"},
+		{source: "request.id", destination: "langfuse.observation.metadata.request_id"},
+		{source: "longtermism.smoke.run_id", destination: "langfuse.observation.metadata.longtermism.smoke.run_id"},
 		{source: "gen_ai.response.model", destination: "langfuse.observation.model.name"},
 		{source: "gen_ai.request.model", destination: "langfuse.observation.metadata.requested_model"},
 		{source: "gen_ai.usage.input_tokens", destination: "langfuse.observation.usage_details.input"},

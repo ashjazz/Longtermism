@@ -43,6 +43,42 @@ func TestSmokeReportSchemaValidatorAcceptsEverySupportedScenario(t *testing.T) {
 	}
 }
 
+func TestPrivacySmokeReportRequiresTheClosedEightSurfaceProofSet(t *testing.T) {
+	validator, err := NewSmokeReportSchemaValidator(loadSmokeReportSchema(t))
+	if err != nil {
+		t.Fatal("NewSmokeReportSchemaValidator() returned an unexpected error")
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "missing proof set", mutate: func(document map[string]any) { delete(document, "privacy_evidence") }},
+		{name: "missing surface", mutate: func(document map[string]any) { delete(document["privacy_evidence"].([]map[string]any)[0], "surface") }},
+		{name: "unattempted surface", mutate: func(document map[string]any) { document["privacy_evidence"].([]map[string]any)[1]["attempted"] = false }},
+		{name: "wrong evidence method", mutate: func(document map[string]any) {
+			document["privacy_evidence"].([]map[string]any)[4]["evidence_method"] = "bounded_memory_scan"
+		}},
+		{name: "duplicate surface replaces report", mutate: func(document map[string]any) { document["privacy_evidence"].([]map[string]any)[7]["surface"] = "api" }},
+		{name: "collector lacks runtime binding", mutate: func(document map[string]any) {
+			delete(document["privacy_evidence"].([]map[string]any)[2], "runtime_config_digest_verified")
+		}},
+		{name: "missing category count", mutate: func(document map[string]any) {
+			delete(document["privacy_evidence"].([]map[string]any)[3]["counts"].(map[string]any), "recognized_pii")
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validSmokeReportDocument("privacy")
+			tt.mutate(document)
+			if err := validator.ValidateJSON(marshalSmokeReportDocument(t, document)); err == nil {
+				t.Fatal("ValidateJSON() accepted an incomplete privacy proof set")
+			}
+		})
+	}
+}
+
 func TestSmokeReportSchemaValidatorRejectsInvalidDocumentsWithoutEchoingPayload(t *testing.T) {
 	validator, err := NewSmokeReportSchemaValidator(loadSmokeReportSchema(t))
 	if err != nil {
@@ -263,7 +299,7 @@ func TestSmokeReportSchemaValidatorRejectsOversizedDocuments(t *testing.T) {
 }
 
 func validSmokeReportDocument(scenario string) map[string]any {
-	return map[string]any{
+	document := map[string]any{
 		"schema_version": "2",
 		"run_id":         "run-t020-" + scenario,
 		"marker":         "marker-t020-" + scenario,
@@ -282,6 +318,26 @@ func validSmokeReportDocument(scenario string) map[string]any {
 			"temporary_credentials": "revoked",
 			"temporary_data":        "deleted",
 		},
+	}
+	if scenario == "privacy" {
+		document["privacy_evidence"] = validPrivacyEvidenceDocument()
+	}
+	return document
+}
+
+func validPrivacyEvidenceDocument() []map[string]any {
+	counts := func() map[string]any {
+		return map[string]any{"synthetic_canary": 0, "credential": 0, "authorization": 0, "token": 0, "recognized_pii": 0}
+	}
+	return []map[string]any{
+		{"surface": "api", "evidence_method": "bounded_memory_scan", "attempted": true, "status": "passed", "scanner_policy_version": "1", "counts": counts()},
+		{"surface": "application_log", "evidence_method": "projection_and_exact_query", "attempted": true, "status": "passed", "scanner_policy_version": "1", "counts": counts()},
+		{"surface": "collector_queue", "evidence_method": "configuration_and_telemetry", "attempted": true, "status": "passed", "scanner_policy_version": "1", "counts": counts(), "runtime_config_digest_verified": true, "prequeue_artifact_hash_verified": true, "component_identity_verified": true, "export_admission_correlated": true},
+		{"surface": "tempo", "evidence_method": "bounded_trace_document", "attempted": true, "status": "passed", "scanner_policy_version": "1", "counts": counts()},
+		{"surface": "loki", "evidence_method": "exact_structured_query", "attempted": true, "status": "passed", "scanner_policy_version": "1", "counts": counts()},
+		{"surface": "langfuse_trace", "evidence_method": "bounded_platform_document", "attempted": true, "status": "passed", "scanner_policy_version": "1", "counts": counts()},
+		{"surface": "langfuse_score", "evidence_method": "bounded_platform_document", "attempted": true, "status": "passed", "scanner_policy_version": "1", "counts": counts()},
+		{"surface": "report", "evidence_method": "contained_artifact_scan", "attempted": true, "status": "passed", "scanner_policy_version": "1", "counts": counts()},
 	}
 }
 

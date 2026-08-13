@@ -2,11 +2,17 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"fmt"
+	"net"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 
+	v1chat "github.com/ashjazz/Longtermism/api/v1/chat"
+	appobservability "github.com/ashjazz/Longtermism/internal/observability"
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
 	"github.com/ashjazz/Longtermism/pkg/ai/ratelimit"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -36,7 +42,39 @@ type ChatRoutesInput struct {
 	Handler                     ghttp.HandlerFunc
 	Limiter                     ratelimit.Limiter
 	Limit                       ChatRateLimitConfig
+	SmokeEnabled                bool
+	SmokeAdmission              *ChatSmokeAdmission
 	state                       *chatRoutesState
+}
+
+var chatSmokeMarkerPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$`)
+
+var disabledChatSmokeAuthorizationDigest = sha256.Sum256([]byte("disabled-chat-smoke-admission"))
+
+type ChatSmokeAdmissionConfig struct {
+	Authorization string
+	Capacity      int
+	TTL           time.Duration
+}
+
+type ChatSmokeAdmission struct {
+	authorizationDigest [sha256.Size]byte
+	capacity            int
+	ttl                 time.Duration
+	mu                  sync.Mutex
+	consumed            map[string]time.Time
+}
+
+func NewChatSmokeAdmission(config ChatSmokeAdmissionConfig) *ChatSmokeAdmission {
+	authorization := []byte(config.Authorization)
+	return &ChatSmokeAdmission{
+		authorizationDigest: sha256.Sum256(authorization),
+		capacity:            config.Capacity, ttl: config.TTL, consumed: make(map[string]time.Time),
+	}
+}
+
+func ChatSmokeRunIDFromContext(ctx context.Context) string {
+	return appobservability.ChatSmokeRunIDFromContext(ctx)
 }
 
 type chatRoutesState struct {
@@ -80,6 +118,7 @@ func RegisterChatRoutes(server *ghttp.Server, input ChatRoutesInput) error {
 			chatHTTPPath,
 			RequestIdentityMiddleware,
 			wrapPublicChatHTTPMiddleware(chainObservabilityHTTPMiddleware(
+				chatSmokeAdmissionMiddleware(input.SmokeEnabled, input.SmokeAdmission),
 				bootstrapHTTPMiddleware(input.Bootstrap),
 				input.CompletionLoggingMiddleware,
 			)),
@@ -89,6 +128,66 @@ func RegisterChatRoutes(server *ghttp.Server, input ChatRoutesInput) error {
 	}
 	input.state.registered = true
 	return nil
+}
+
+func chatSmokeAdmissionMiddleware(enabled bool, admission *ChatSmokeAdmission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			marker := request.Header.Get(v1chat.ChatSmokeRunIDHeader)
+			authorization := request.Header.Get(v1chat.ChatSmokeAuthorizationHeader)
+			if marker == "" && authorization == "" {
+				next.ServeHTTP(writer, request)
+				return
+			}
+			request.Header.Del(v1chat.ChatSmokeAuthorizationHeader)
+			request.Header.Del(v1chat.ChatSmokeRunIDHeader)
+			authenticated, validLength := authenticateChatSmokeCredential(admission, authorization)
+			mayConsume := enabled && admission != nil && isExactChatSmokeLoopback(request.RemoteAddr) && authenticated && validLength
+			if !mayConsume || !admission.consume(marker, time.Now().UTC()) {
+				http.NotFound(writer, request)
+				return
+			}
+			ctx := appobservability.ContextWithChatSmokeRunID(request.Context(), marker)
+			next.ServeHTTP(writer, request.WithContext(ctx))
+		})
+	}
+}
+
+func authenticateChatSmokeCredential(admission *ChatSmokeAdmission, authorization string) (bool, bool) {
+	expected := disabledChatSmokeAuthorizationDigest
+	if admission != nil {
+		expected = admission.authorizationDigest
+	}
+	digest := sha256.Sum256([]byte(authorization))
+	authenticated := subtle.ConstantTimeCompare(digest[:], expected[:]) == 1
+	validLength := len(authorization) >= minimumChatSmokeCredentialBytes && len(authorization) <= maximumChatSmokeCredentialBytes
+	return authenticated, validLength
+}
+
+func (admission *ChatSmokeAdmission) consume(marker string, now time.Time) bool {
+	if admission == nil || admission.capacity <= 0 || admission.ttl <= 0 || !chatSmokeMarkerPattern.MatchString(marker) {
+		return false
+	}
+	admission.mu.Lock()
+	defer admission.mu.Unlock()
+	for consumedMarker, consumedAt := range admission.consumed {
+		if !now.Before(consumedAt.Add(admission.ttl)) {
+			delete(admission.consumed, consumedMarker)
+		}
+	}
+	if _, exists := admission.consumed[marker]; exists || len(admission.consumed) >= admission.capacity {
+		return false
+	}
+	admission.consumed[marker] = now
+	return true
+}
+
+func isExactChatSmokeLoopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	return host == "127.0.0.1" || host == "::1"
 }
 
 func bootstrapHTTPMiddleware(bootstrap *ObservabilityBootstrap) func(http.Handler) http.Handler {
@@ -110,6 +209,8 @@ func wrapPublicChatHTTPMiddleware(middleware func(http.Handler) http.Handler) gh
 		sanitizedRequest := request.Request.Clone(request.Request.Context())
 		sanitizedRequest.Header = request.Request.Header.Clone()
 		sanitizedRequest.Header.Del("Baggage")
+		request.Header.Del(v1chat.ChatSmokeAuthorizationHeader)
+		request.Header.Del(v1chat.ChatSmokeRunIDHeader)
 
 		next := http.HandlerFunc(func(_ http.ResponseWriter, nextRequest *http.Request) {
 			ctx := clearPublicChatSemanticIdentity(nextRequest.Context())

@@ -21,6 +21,7 @@ const evaluatorSpanName = "ai.evaluator"
 // feature 不属于 EvaluationEvidence 的评估身份，但属于 span 的业务路由事实；
 // adapter 不能根据包名、route 或调用位置把它猜成 chat。
 type EvaluatorSpanInput struct {
+	SmokeRunID  string
 	Feature     string
 	StartedAt   time.Time
 	CompletedAt time.Time
@@ -69,7 +70,7 @@ func (adapter *EvaluatorSpanAdapter) RecordEvaluator(ctx context.Context, input 
 		ctx,
 		adapter.tracer,
 		evaluatorSpanName,
-		evaluatorSpanAttributes(evidence, routingAttributes),
+		evaluatorSpanAttributes(input, routingAttributes),
 		codes.Unset,
 		"",
 		nativeSpanTiming{
@@ -96,6 +97,9 @@ func cloneEvaluatorSpanInput(input EvaluatorSpanInput) EvaluatorSpanInput {
 }
 
 func validateEvaluatorSpanInput(input EvaluatorSpanInput) error {
+	if input.SmokeRunID != "" && !isSafeObservationIdentifier(input.SmokeRunID) {
+		return errors.New("evaluator smoke run identity is invalid")
+	}
 	evidence := input.Evidence
 	if input.StartedAt.IsZero() || input.CompletedAt.IsZero() || input.CompletedAt.Before(input.StartedAt) {
 		return errors.New("evaluator timing boundary is invalid")
@@ -147,7 +151,8 @@ func expectedRegressionStatus(score float64, threshold *float64) aieval.Regressi
 	return aieval.RegressionStatusFailed
 }
 
-func evaluatorSpanAttributes(evidence aieval.EvaluationEvidence, routing map[string]string) []attribute.KeyValue {
+func evaluatorSpanAttributes(input EvaluatorSpanInput, routing map[string]string) []attribute.KeyValue {
+	evidence := input.Evidence
 	attributes := routingOTelAttributes(routing)
 	attributes = append(attributes,
 		attribute.String("longtermism.eval.run_id", evidence.EvalRunID),
@@ -160,6 +165,9 @@ func evaluatorSpanAttributes(evidence aieval.EvaluationEvidence, routing map[str
 	)
 	if evidence.Threshold != nil {
 		attributes = append(attributes, attribute.Float64("ai.eval.threshold", *evidence.Threshold))
+	}
+	if input.SmokeRunID != "" {
+		attributes = append(attributes, attribute.String("longtermism.smoke.run_id", input.SmokeRunID))
 	}
 	return attributes
 }

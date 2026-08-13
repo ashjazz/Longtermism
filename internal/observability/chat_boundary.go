@@ -16,6 +16,28 @@ const (
 	chatAIExecutionFeature  = "chat"
 )
 
+type chatSmokeRunIDContextKey struct{}
+
+// ContextWithChatSmokeRunID stores only a marker that has already crossed the protected
+// transport boundary. Authentication material is deliberately never placed in context.
+func ContextWithChatSmokeRunID(ctx context.Context, marker string) context.Context {
+	if ctx == nil || !isSafeObservationIdentifier(marker) {
+		return ctx
+	}
+	return context.WithValue(ctx, chatSmokeRunIDContextKey{}, marker)
+}
+
+func ChatSmokeRunIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	marker, _ := ctx.Value(chatSmokeRunIDContextKey{}).(string)
+	if !isSafeObservationIdentifier(marker) {
+		return ""
+	}
+	return marker
+}
+
 // ChatAIExecutionOutcome 是 root/bridge 结束时唯一允许写入的低敏业务结果。
 type ChatAIExecutionOutcome struct {
 	Outcome       string
@@ -53,6 +75,9 @@ func (boundary *ChatAIExecutionBoundary) Start(
 	attributes, err := chatBoundaryRoutingAttributes(identity, obs.SpanRoutingRoleAIChatBridge)
 	if err != nil {
 		return ctx, identity, nil, err
+	}
+	if marker := ChatSmokeRunIDFromContext(ctx); marker != "" {
+		attributes = append(attributes, attribute.String("longtermism.smoke.run_id", marker))
 	}
 	bridgeContext, bridge := boundary.tracer.Start(
 		ctx,

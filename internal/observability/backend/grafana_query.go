@@ -35,6 +35,7 @@ type GrafanaQueryConfig struct {
 	GrafanaURL    string
 	Timeout       time.Duration
 	HTTPClient    *http.Client
+	ResolveHost   HostResolver
 }
 
 // GrafanaQueryClient is deliberately read-only. It is an adapter for the smoke runner, not an
@@ -42,12 +43,35 @@ type GrafanaQueryConfig struct {
 // decoding. This prevents a failed backend from becoming an unbounded memory or sensitive-body
 // sink in the diagnostic path.
 type GrafanaQueryClient struct {
-	prometheusURL string
-	lokiURL       string
-	tempoURL      string
-	grafanaURL    string
-	timeout       time.Duration
-	httpClient    *http.Client
+	prometheusURL  string
+	lokiURL        string
+	tempoURL       string
+	grafanaURL     string
+	timeout        time.Duration
+	httpClient     *http.Client
+	smokeProtected bool
+}
+
+// NewGrafanaSmokeQueryClient creates the live-smoke variant of the Grafana client. Unlike the
+// general deployment adapter it accepts only explicit loopback endpoints, disables proxies and
+// revalidates DNS at dial time so CLI configuration cannot become an SSRF primitive.
+func NewGrafanaSmokeQueryClient(config GrafanaQueryConfig) (*GrafanaQueryClient, error) {
+	resolve := config.ResolveHost
+	if resolve == nil {
+		resolve = defaultHostResolver
+	}
+	for _, endpoint := range []string{config.PrometheusURL, config.LokiURL, config.TempoURL, config.GrafanaURL} {
+		if endpoint == "" {
+			continue
+		}
+		if _, err := parseLoopbackQueryBaseURL(endpoint, resolve); err != nil {
+			return nil, newBackendQueryError("grafana", "backend_unavailable")
+		}
+	}
+	client := NewGrafanaQueryClient(config)
+	client.httpClient = newLoopbackHTTPClient(resolve)
+	client.smokeProtected = true
+	return client, nil
 }
 
 // BackendQueryResult keeps a successful backend document private by default. The raw response

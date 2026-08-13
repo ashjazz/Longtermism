@@ -38,10 +38,18 @@ var privacySmokeSurfaces = [...]PrivacySmokeSurface{
 	PrivacySmokeSurfaceReport,
 }
 
-type PrivacySmokeIdentity struct{ RunID, Marker string }
+type PrivacySmokeIdentity struct {
+	RunID, Marker, RequestID, AITraceID, ServiceTraceID, SpanID string
+	ManifestRef                                                 string
+	StartedAt, Deadline                                         time.Time
+}
 
 type PrivacySmokeTarget struct {
 	RunID, Marker, ForbiddenCanary string
+	RequestID, AITraceID           string
+	ServiceTraceID, SpanID         string
+	ManifestRef                    string
+	Limit                          int
 	Surface                        PrivacySmokeSurface
 	StartedAt, Deadline            time.Time
 }
@@ -89,24 +97,37 @@ func preparePrivacySmoke(ctx context.Context, request PrivacySmokeRequest, deps 
 	if ctx == nil || deps.Backend == nil || deps.Clock == nil || deps.IdentityFactory == nil || !contains(allowedProfiles, request.Profile) {
 		return time.Time{}, PrivacySmokeIdentity{}, nil, nil, errPrivacySmokeFailed
 	}
-	startedAt := deps.Clock.Now().UTC()
-	if request.Deadline.IsZero() || !request.Deadline.After(startedAt) || request.Deadline.Sub(startedAt) > time.Minute || !isSafePollMarker(request.ForbiddenCanary) {
+	now := deps.Clock.Now().UTC()
+	if request.Deadline.IsZero() || !request.Deadline.After(now) || request.Deadline.Sub(now) > time.Minute || !isSafePollMarker(request.ForbiddenCanary) {
 		return time.Time{}, PrivacySmokeIdentity{}, nil, nil, errPrivacySmokeFailed
 	}
 	identity, err := deps.IdentityFactory(ctx)
-	if err != nil || !isSafePollMarker(identity.RunID) || !isSafePollMarker(identity.Marker) ||
+	if err != nil || !validPrivacySmokeIdentity(identity, request) ||
 		strings.Contains(identity.RunID, request.ForbiddenCanary) || strings.Contains(identity.Marker, request.ForbiddenCanary) || ctx.Err() != nil {
 		return time.Time{}, PrivacySmokeIdentity{}, nil, nil, errPrivacySmokeFailed
 	}
 	bounded, cancel := boundedChatContext(ctx, request.Deadline)
-	return startedAt, identity, bounded, cancel, nil
+	return identity.StartedAt.UTC(), identity, bounded, cancel, nil
+}
+
+func validPrivacySmokeIdentity(identity PrivacySmokeIdentity, request PrivacySmokeRequest) bool {
+	return isSafePollMarker(identity.RunID) && isSafePollMarker(identity.Marker) && isSafePollMarker(identity.RequestID) &&
+		isSafePollMarker(identity.AITraceID) && privacyTraceIDPattern.MatchString(identity.ServiceTraceID) &&
+		privacySpanIDPattern.MatchString(identity.SpanID) && safePrivacyArtifactRef(identity.ManifestRef) &&
+		!identity.StartedAt.IsZero() && identity.Deadline.Equal(request.Deadline) && identity.Deadline.After(identity.StartedAt) &&
+		identity.Deadline.Sub(identity.StartedAt) <= time.Minute
 }
 
 func queryPrivacySurfaces(ctx context.Context, identity PrivacySmokeIdentity, request PrivacySmokeRequest, startedAt time.Time, backend PrivacySmokeBackend) (int64, string) {
 	var total int64
 	class := ""
 	for _, surface := range privacySmokeSurfaces {
-		target := PrivacySmokeTarget{RunID: identity.RunID, Marker: identity.Marker, ForbiddenCanary: request.ForbiddenCanary, Surface: surface, StartedAt: startedAt, Deadline: request.Deadline}
+		target := PrivacySmokeTarget{
+			RunID: identity.RunID, Marker: identity.Marker, ForbiddenCanary: request.ForbiddenCanary,
+			RequestID: identity.RequestID, AITraceID: identity.AITraceID, ServiceTraceID: identity.ServiceTraceID,
+			SpanID: identity.SpanID, ManifestRef: identity.ManifestRef, Limit: 100,
+			Surface: surface, StartedAt: startedAt, Deadline: request.Deadline,
+		}
 		hits, err := backend.Search(ctx, target)
 		if err != nil {
 			class = higherPrivacyFailure(class, "query_failed")

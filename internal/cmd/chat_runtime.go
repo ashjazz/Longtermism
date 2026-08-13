@@ -3,16 +3,20 @@ package cmd
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	controllerchat "github.com/ashjazz/Longtermism/internal/controller/chat"
 	appeval "github.com/ashjazz/Longtermism/internal/eval"
 	logicchat "github.com/ashjazz/Longtermism/internal/logic/chat"
 	appobservability "github.com/ashjazz/Longtermism/internal/observability"
+	obssmoke "github.com/ashjazz/Longtermism/internal/observability/smoke"
 	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
 	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
@@ -49,29 +53,36 @@ type chatRuntimeEvidenceStore interface {
 }
 
 type ChatRuntimeDependencies struct {
-	BuildProvider    func(context.Context, LLMProviderConfigInput, LLMProviderDependencies) (llm.Provider, LLMProviderConfigSnapshot, error)
-	Provider         LLMProviderDependencies
-	OpenEvidence     func(appeval.LocalEvidenceStoreConfig) (chatRuntimeEvidenceStore, error)
-	NewAITraceID     func() string
-	NewEvalRunID     func() string
-	TracerName       string
-	RequestIDFromCtx func(context.Context) string
+	BuildProvider        func(context.Context, LLMProviderConfigInput, LLMProviderDependencies) (llm.Provider, LLMProviderConfigSnapshot, error)
+	Provider             LLMProviderDependencies
+	OpenEvidence         func(appeval.LocalEvidenceStoreConfig) (chatRuntimeEvidenceStore, error)
+	NewAITraceID         func() string
+	NewEvalRunID         func() string
+	TracerName           string
+	RequestIDFromCtx     func(context.Context) string
+	RunManifestWriter    logicchat.ChatRunManifestWriter
+	ProjectionQueue      logicchat.ChatScoreProjectionQueue
+	BuildProjectionQueue func(context.Context, chatRuntimeEvidenceStore) (logicchat.ChatScoreProjectionQueue, func() error, error)
+	CloseRunManifest     func() error
 }
 
 // ChatRuntime 持有 chat 独占资源。ObservabilityBootstrap 不在此生命周期内：
 // 它由 Main 创建一次并最后关闭，防止 chat 重装或提前关闭全局 provider。
 type ChatRuntime struct {
-	Enabled bool
-	Handler ghttp.HandlerFunc
-	Limit   ChatRateLimitConfig
-	close   func() error
+	Enabled   bool
+	Handler   ghttp.HandlerFunc
+	Limit     ChatRateLimitConfig
+	close     func() error
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (runtime *ChatRuntime) Close() error {
 	if runtime == nil || runtime.close == nil {
 		return nil
 	}
-	return runtime.close()
+	runtime.closeOnce.Do(func() { runtime.closeErr = runtime.close() })
+	return runtime.closeErr
 }
 
 // BuildChatRuntime 将已经存在的 observability bootstrap、单个 LLM provider、
@@ -128,6 +139,18 @@ func BuildChatRuntime(
 	if evidenceStore == nil {
 		return nil, fmt.Errorf("build chat runtime: evidence storage unavailable")
 	}
+	projectionQueue := dependencies.ProjectionQueue
+	closeProjection := func() error { return nil }
+	if dependencies.BuildProjectionQueue != nil {
+		projectionQueue, closeProjection, err = dependencies.BuildProjectionQueue(ctx, evidenceStore)
+		if err != nil || (projectionQueue == nil) != (closeProjection == nil) {
+			_ = evidenceStore.Close()
+			return nil, fmt.Errorf("build chat runtime: score projection unavailable")
+		}
+		if closeProjection == nil {
+			closeProjection = func() error { return nil }
+		}
+	}
 
 	tracer := otel.Tracer(dependencies.TracerName)
 	usecase := logicchat.NewChatUsecase(logicchat.ChatUsecaseDependencies{
@@ -146,20 +169,29 @@ func BuildChatRuntime(
 		Evaluator:               evaluator,
 		EvaluatorObserver:       appobservability.NewEvaluatorSpanAdapter(tracer),
 		EvidenceStore:           evidenceStore,
-		// T101 owns the bounded Langfuse score projection worker. Local evidence remains
-		// the source of truth now; a nil queue records no platform status and never blocks chat.
-		ProjectionQueue: nil,
+		RunManifestWriter:       dependencies.RunManifestWriter,
+		// ProjectionQueue is an app-layer port. The durable Langfuse lifecycle owns
+		// persistence, recovery and external delivery; chat only submits the immutable
+		// evidence/native-generation pair after evidence storage has succeeded.
+		ProjectionQueue: projectionQueue,
 	})
 	controller := controllerchat.NewV1(controllerchat.ChatControllerDependencies{
-		Usecase:              usecase,
-		RequestIDFromContext: dependencies.RequestIDFromCtx,
-		DebugEnabled:         config.DebugEnabled,
+		Usecase:               usecase,
+		RequestIDFromContext:  dependencies.RequestIDFromCtx,
+		SmokeRunIDFromContext: appobservability.ChatSmokeRunIDFromContext,
+		DebugEnabled:          config.DebugEnabled,
 	})
 	return &ChatRuntime{
 		Enabled: config.Enabled,
 		Handler: newChatHTTPHandler(controllerchat.NewHTTPHandler(controller)),
 		Limit:   config.RateLimit,
-		close:   evidenceStore.Close,
+		close: func() error {
+			var manifestErr error
+			if dependencies.CloseRunManifest != nil {
+				manifestErr = dependencies.CloseRunManifest()
+			}
+			return errors.Join(closeProjection(), evidenceStore.Close(), manifestErr)
+		},
 	}, nil
 }
 
@@ -202,9 +234,94 @@ func buildDefaultChatRuntime(ctx context.Context, bootstrap *ObservabilityBootst
 			Retention: g.Cfg().MustGet(ctx, "ai.chat.eval.evidence.retention", appeval.DefaultLocalEvidenceRetention.String()).Duration(),
 		},
 	}
-	return BuildChatRuntime(ctx, config, bootstrap, ChatRuntimeDependencies{
-		Provider: LLMProviderDependencies{LookupEnv: os.Getenv},
-	})
+	dependencies := ChatRuntimeDependencies{Provider: LLMProviderDependencies{LookupEnv: os.Getenv}}
+	dependencies.BuildProjectionQueue = buildDefaultChatProjectionQueue
+	if g.Cfg().MustGet(ctx, "observability.smoke.chat.enabled", false).Bool() {
+		if !g.Cfg().MustGet(ctx, "observability.smoke.enabled", false).Bool() {
+			return nil, fmt.Errorf("build default chat runtime: chat smoke requires the common smoke gate")
+		}
+		configuredPath := filepath.Clean(g.Cfg().MustGet(ctx, "observability.smoke.chat.manifest_path", "build/observability/smoke-manifests").String())
+		if configuredPath != filepath.Join("build", "observability", "smoke-manifests") {
+			return nil, fmt.Errorf("build default chat runtime: manifest path is outside the contained root")
+		}
+		for _, ancestor := range []string{"build", filepath.Join("build", "observability")} {
+			if info, statErr := os.Lstat(ancestor); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				return nil, fmt.Errorf("build default chat runtime: manifest parent is not contained")
+			} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+				return nil, fmt.Errorf("build default chat runtime: manifest parent is unavailable")
+			}
+		}
+		root, pathErr := filepath.Abs(configuredPath)
+		if pathErr != nil {
+			return nil, fmt.Errorf("build default chat runtime: manifest path is invalid")
+		}
+		store, storeErr := obssmoke.OpenChatRunManifestStore(root)
+		if storeErr != nil {
+			return nil, fmt.Errorf("build default chat runtime: manifest store unavailable")
+		}
+		dependencies.RunManifestWriter = store
+		dependencies.CloseRunManifest = store.Close
+	}
+	runtime, err := BuildChatRuntime(ctx, config, bootstrap, dependencies)
+	if err != nil && dependencies.CloseRunManifest != nil {
+		_ = dependencies.CloseRunManifest()
+	}
+	return runtime, err
+}
+
+func buildDefaultChatProjectionQueue(
+	ctx context.Context,
+	evidenceStore chatRuntimeEvidenceStore,
+) (logicchat.ChatScoreProjectionQueue, func() error, error) {
+	lookup, ok := evidenceStore.(LangfuseEvidenceLookup)
+	if !ok {
+		return nil, nil, errChatScoreProjectionUnavailable
+	}
+	baseURL, publicKey, secretKey := os.Getenv("LANGFUSE_BASE_URL"), os.Getenv("LANGFUSE_PUBLIC_KEY"), os.Getenv("LANGFUSE_SECRET_KEY")
+	if baseURL == "" && publicKey == "" && secretKey == "" {
+		// Langfuse 是可选出口。未配置时不创建 projection 文件，也不让普通 chat
+		// 为一个不存在的平台持续累积 not_configured 记录；显式 no-op queue 让
+		// usecase 区分“平台未配置”和“已配置但投影失败”。
+		return notConfiguredChatProjectionQueue{}, func() error { return nil }, nil
+	}
+	input := LangfuseScoreLifecycleInput{
+		BaseURL: baseURL, PublicKey: publicKey, SecretKey: secretKey,
+		QueueCapacity:  g.Cfg().MustGet(ctx, "ai.chat.eval.projection.queue_capacity", 64).Int(),
+		MaxAttempts:    maxLangfuseScoreAttempts,
+		InitialBackoff: time.Second, MaxBackoff: 3 * time.Second,
+		RequestTimeout: g.Cfg().MustGet(ctx, "ai.chat.eval.projection.request_timeout", "10s").Duration(),
+	}
+	if !isCompleteLangfuseScoreLifecycleInput(input) {
+		return nil, nil, errChatScoreProjectionUnavailable
+	}
+	projectionPath := g.Cfg().MustGet(ctx, "ai.chat.eval.projection.path", "build/observability/score-projections.json").String()
+	store, err := appeval.OpenScoreProjectionStore(appeval.ScoreProjectionStoreConfig{Path: projectionPath})
+	if err != nil {
+		return nil, nil, errChatScoreProjectionUnavailable
+	}
+	storeAdapter := chatProjectionStoreAdapter{store: store}
+	// ChatRuntime owns this store, worker and shutdown function as one unit. Do not use
+	// the process singleton here: a reused lifecycle would detach the returned closeFn
+	// from the resources it actually owns during runtime reloads.
+	lifecycle, err := newLangfuseScoreLifecycle(ctx, input, defaultLangfuseScoreLifecycleDependencies(LangfuseScoreLifecycleDependencies{
+		ProjectionStore: storeAdapter, EvidenceStore: lookup,
+	}))
+	if err != nil {
+		_ = store.Close()
+		return nil, nil, errChatScoreProjectionUnavailable
+	}
+	queue := newChatScoreProjectionQueue(lifecycle, maxLangfuseScoreAttempts)
+	if queue == nil {
+		_ = lifecycle.Shutdown(context.Background())
+		_ = store.Close()
+		return nil, nil, errChatScoreProjectionUnavailable
+	}
+	closeFn := func() error {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), maxLangfuseScoreTimeout)
+		defer cancel()
+		return errors.Join(lifecycle.Shutdown(shutdownCtx), store.Close())
+	}
+	return queue, closeFn, nil
 }
 
 func defaultChatRuntimeDependencies(dependencies ChatRuntimeDependencies) ChatRuntimeDependencies {

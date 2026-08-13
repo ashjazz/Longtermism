@@ -12,9 +12,11 @@ import (
 	"time"
 
 	appobs "github.com/ashjazz/Longtermism/internal/observability"
+	obssmoke "github.com/ashjazz/Longtermism/internal/observability/smoke"
 	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
 	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
+	traceapi "go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -59,7 +61,15 @@ var (
 // ChatCommand 是 controller 交给应用层的最小命令。provider、模型和 debug 策略均由
 // 服务端装配，客户端不能通过该对象改变运行策略。
 type ChatCommand struct {
-	Message string
+	Message    string
+	SmokeRunID string
+}
+
+type ChatRunManifestInput = obssmoke.ChatRunManifestInput
+type ChatRunManifestWriter = obssmoke.ChatRunManifestWriter
+
+func SmokeRunIDFromContext(ctx context.Context) string {
+	return appobs.ChatSmokeRunIDFromContext(ctx)
 }
 
 // ChatResult 保留业务响应与关联身份。即使 provider 失败，Identity 也会返回，使
@@ -125,6 +135,7 @@ type ChatUsecaseDependencies struct {
 	ProjectionQueue         ChatScoreProjectionQueue
 	Telemetry               ChatTelemetry
 	Diagnostics             ChatTelemetryDiagnostics
+	RunManifestWriter       ChatRunManifestWriter
 	Now                     func() time.Time
 }
 
@@ -149,6 +160,7 @@ type ChatUsecase struct {
 	projectionQueue         ChatScoreProjectionQueue
 	telemetry               ChatTelemetry
 	diagnostics             ChatTelemetryDiagnostics
+	runManifestWriter       ChatRunManifestWriter
 	now                     func() time.Time
 }
 
@@ -199,6 +211,7 @@ func NewChatUsecase(dependencies ChatUsecaseDependencies) *ChatUsecase {
 		projectionQueue:         dependencies.ProjectionQueue,
 		telemetry:               dependencies.Telemetry,
 		diagnostics:             dependencies.Diagnostics,
+		runManifestWriter:       dependencies.RunManifestWriter,
 		now:                     now,
 	}
 }
@@ -209,6 +222,10 @@ func NewChatUsecase(dependencies ChatUsecaseDependencies) *ChatUsecase {
 func (usecase *ChatUsecase) Execute(ctx context.Context, command ChatCommand) (ChatResult, error) {
 	if ctx == nil {
 		return ChatResult{}, ErrChatInvalidContext
+	}
+	trustedSmokeRunID := appobs.ChatSmokeRunIDFromContext(ctx)
+	if command.SmokeRunID != trustedSmokeRunID {
+		return ChatResult{}, ErrChatConfiguration
 	}
 	identity, identityContext, err := usecase.startAIExecution(ctx)
 	result := ChatResult{Identity: identity}
@@ -247,6 +264,7 @@ func (usecase *ChatUsecase) Execute(ctx context.Context, command ChatCommand) (C
 		Usage:        execution.response.Usage,
 		Identity:     executionIdentity,
 	}
+	usecase.writeRunManifest(executionContext, command.SmokeRunID, executionIdentity)
 	result.EvalSummary = usecase.evaluateAndPersist(
 		executionContext,
 		executionIdentity,
@@ -284,7 +302,7 @@ func (usecase *ChatUsecase) executeProvider(
 		usecase.recordFailedProvider(ctx, identity, startedAt, completedAt, obs.FailureUpstream, hasTrustedExecution)
 		return chatProviderExecution{failureStatus: obs.FailureUpstream}, ErrChatInvalidResponse
 	}
-	generationInput := usecase.newGenerationInput(identity, startedAt, completedAt, chatSuccessOutcome, "")
+	generationInput := usecase.newGenerationInput(ctx, identity, startedAt, completedAt, chatSuccessOutcome, "")
 	generationInput.ActualModel = canonicalModel
 	generationInput.FinishReason = response.FinishReason
 	generationInput.Usage = response.Usage
@@ -305,6 +323,7 @@ func (usecase *ChatUsecase) recordFailedProvider(
 	hasTrustedExecution bool,
 ) {
 	generationInput := usecase.newGenerationInput(
+		ctx,
 		identity,
 		startedAt,
 		completedAt,
@@ -316,12 +335,14 @@ func (usecase *ChatUsecase) recordFailedProvider(
 }
 
 func (usecase *ChatUsecase) newGenerationInput(
+	ctx context.Context,
 	identity obs.CorrelationIdentity,
 	startedAt, completedAt time.Time,
 	outcome string,
 	failureStatus obs.FailureStatus,
 ) appobs.GenerationSpanInput {
 	return appobs.GenerationSpanInput{
+		SmokeRunID:            appobs.ChatSmokeRunIDFromContext(ctx),
 		Feature:               chatFeature,
 		StartedAt:             startedAt,
 		CompletedAt:           completedAt,
@@ -335,6 +356,22 @@ func (usecase *ChatUsecase) newGenerationInput(
 		PromptHash:            usecase.promptHash,
 		PayloadMode:           usecase.payloadMode,
 		PayloadRedacted:       usecase.payloadRedacted,
+	}
+}
+
+func (usecase *ChatUsecase) writeRunManifest(ctx context.Context, marker string, identity obs.CorrelationIdentity) {
+	if usecase == nil || usecase.runManifestWriter == nil || marker == "" {
+		return
+	}
+	spanContext := traceapi.SpanContextFromContext(ctx)
+	if !spanContext.IsValid() {
+		return
+	}
+	if err := usecase.runManifestWriter.Write(ctx, ChatRunManifestInput{
+		SmokeRunID: marker, RequestID: identity.RequestID, AITraceID: identity.AITraceID,
+		ServiceTraceID: spanContext.TraceID().String(), SpanID: spanContext.SpanID().String(),
+	}); err != nil {
+		usecase.recordSideEffectFailure("run_manifest")
 	}
 }
 
@@ -449,7 +486,7 @@ func (usecase *ChatUsecase) evaluateAndPersist(
 		return summary
 	}
 	usecase.recordEvaluatorObservation(execution, evidence)
-	usecase.projectEvidence(evidence, generationIdentity)
+	usecase.projectEvidence(execution.context, evidence, generationIdentity)
 	return summary
 }
 
@@ -501,6 +538,7 @@ func (usecase *ChatUsecase) recordEvaluatorObservation(
 		return
 	}
 	if _, observerErr := usecase.evaluatorObserver.RecordEvaluator(execution.context, appobs.EvaluatorSpanInput{
+		SmokeRunID:  appobs.ChatSmokeRunIDFromContext(execution.context),
 		Feature:     chatFeature,
 		StartedAt:   execution.startedAt,
 		CompletedAt: execution.completedAt,
@@ -526,6 +564,7 @@ func (usecase *ChatUsecase) persistEvidence(
 }
 
 func (usecase *ChatUsecase) projectEvidence(
+	ctx context.Context,
 	evidence aieval.EvaluationEvidence,
 	generationIdentity appobs.PlatformSpanIdentity,
 ) {
@@ -537,7 +576,8 @@ func (usecase *ChatUsecase) projectEvidence(
 		usecase.recordSideEffectFailure(chatScoreProjectionComponent)
 		return
 	}
-	if projectionErr := usecase.projectionQueue.TryEnqueue(ChatScoreProjectionInput{
+	if projectionErr := usecase.projectionQueue.TryEnqueue(ctx, ChatScoreProjectionInput{
+		RunID:      appobs.ChatSmokeRunIDFromContext(ctx),
 		Evidence:   cloneEvaluationEvidence(evidence),
 		Generation: generationIdentity,
 	}); projectionErr != nil {

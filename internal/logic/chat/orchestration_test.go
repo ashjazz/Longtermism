@@ -95,12 +95,16 @@ func TestChatUsecaseOrchestratesEvidencePipelineInOrderWithoutMutatingFacts(t *t
 	command := ChatCommand{Message: "raw message must stay outside evaluation facts", SmokeRunID: "run-t177-orchestration"}
 	commandBefore := command
 
+	trustedContext := appobs.ContextWithChatSmokeRunID(obs.ContextWithCorrelationIdentity(context.Background(), inbound), command.SmokeRunID)
 	result, executeErr := usecase.Execute(
-		obs.ContextWithCorrelationIdentity(context.Background(), inbound),
+		trustedContext,
 		command,
 	)
 	if executeErr != nil {
 		t.Fatalf("Execute() error = %v", executeErr)
+	}
+	if projection.input.RunID != command.SmokeRunID {
+		t.Fatalf("projection run ID = %q, want trusted smoke run %q", projection.input.RunID, command.SmokeRunID)
 	}
 	wantEvents := []string{
 		"identity",
@@ -566,7 +570,7 @@ type recordingProjectionQueue struct {
 	input  ChatScoreProjectionInput
 }
 
-func (queue *recordingProjectionQueue) TryEnqueue(input ChatScoreProjectionInput) error {
+func (queue *recordingProjectionQueue) TryEnqueue(_ context.Context, input ChatScoreProjectionInput) error {
 	*queue.events = append(*queue.events, "projection")
 	queue.input = input
 	return nil
@@ -587,7 +591,7 @@ type countingProjectionQueue struct {
 	err   error
 }
 
-func (queue *countingProjectionQueue) TryEnqueue(ChatScoreProjectionInput) error {
+func (queue *countingProjectionQueue) TryEnqueue(context.Context, ChatScoreProjectionInput) error {
 	queue.calls++
 	return queue.err
 }

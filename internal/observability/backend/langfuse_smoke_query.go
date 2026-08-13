@@ -231,15 +231,19 @@ func newLoopbackHTTPClient(resolve HostResolver) *http.Client {
 		if err != nil {
 			return nil, err
 		}
-		if err := validateLoopbackHost(ctx, host, resolve); err != nil {
-			return nil, err
-		}
 		if host == "localhost" {
 			addresses, err := resolve(ctx, host)
 			if err != nil || len(addresses) == 0 {
 				return nil, errors.New("unresolved localhost")
 			}
+			for _, candidate := range addresses {
+				if !candidate.IsLoopback() {
+					return nil, errors.New("non-loopback query resolution")
+				}
+			}
 			host = addresses[0].String()
+		} else if host != "127.0.0.1" {
+			return nil, errors.New("non-loopback query host")
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(host, port))
 	}

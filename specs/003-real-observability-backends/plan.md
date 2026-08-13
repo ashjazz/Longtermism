@@ -120,7 +120,7 @@ manifest/config/                     非敏感应用配置和本地 override 示
 3. **Grafana infra-only 切片**：Collector ingress/infra pipeline、Tempo、Prometheus、OTLP logs/Loki、persistent queue、infra-smoke API 和自动后端查询。
 4. **真实 chat 切片**：HTTP 契约、OpenAI-compatible provider DI、AI usecase、request/OTel/AI identity、generation observation 和本地 eval evidence。
 5. **Langfuse AI 切片**：AI downstream filter/export、OTLP attribute mapping、进程内 score worker、幂等投影和查询 smoke。
-6. **隐私与配置模式**：三种 payload policy、production fail-fast、实际后端 canary 扫描、secret scan 和本地 override 保护。
+6. **隐私与配置模式**：三种 payload policy、production fail-fast、按 surface 真实证据能力执行的 bounded scan/query、版本化类别 scanner 和本地 override 保护。八个 surface 以 schema 固定的八项 proof set 表达，不共享一个虚构的全文查询能力：API/工件扫描原文，Loki 查询 structured metadata，Tempo/Langfuse 扫描有界平台文档；Collector 只证明受审 runtime config、同 run pre-queue 工件、export admission correlation 与 component telemetry，不把它误述为 queue 内容扫描。
 7. **恢复与运营资产**：独立 exporter 故障、queue/restart/drain、score worker failure、dashboard、alerts、retention 和安全 reset。
 8. **SigNoz 兼容切片**：独立 profile、三信号查询、dashboard/checklist，并继续验证 Langfuse AI 闭环。
 9. **收口证据**：Level 0-4 targets、机器可读报告、quickstart、ADR/journal、最终 Grafana 与 SigNoz 验收。
@@ -146,7 +146,7 @@ HTTP ingress 对 `traceparent`/`tracestate` 的信任不是 propagator 可以猜
 - **历史 OpenTracing 污染**：当前 `go.mod` 仍有未使用的 OpenTracing/Jaeger 直接依赖。首个质量切片删除并用 `go mod why`/`go mod tidy` 验证无回流。
 - **Langfuse 协议误配**：Langfuse OTLP 不支持 gRPC。Collector 到 Langfuse 固定 HTTP/protobuf，并用 direct diagnostic smoke 隔离 endpoint/header 问题。
 - **高基数 metrics**：request/run/trace identity 只进入 span、log 和报告，不进入 metric labels；metrics smoke 使用 route/status 增量。
-- **敏感数据落盘**：应用出口过滤先于 Collector；queue、日志、报告和后端查询均执行 canary 扫描。`content_raw` 仅能在 local/test 以显式授权生成不可序列化的本地调试工件，标准出口仍只允许 metadata 或经脱敏的受控内容。
+- **敏感数据落盘**：应用出口过滤先于 Collector；API response、Tempo/Loki/Langfuse 返回文档和 contained report执行 bounded scanner，应用 OTLP record 在发送前执行 allowlist projection。Collector persistent queue没有受支持的内容查询 API，因此其 proof 必须绑定受审 runtime config digest、同 run pre-queue artifact hash、目标 component identity、export admission correlation 与 queue telemetry；该 proof 不代表 queue 内容零命中。禁止扫描内部 queue 文件或用默认 0 代替事实。`content_raw` 仅能在 local/test 以显式授权生成不可序列化的本地调试工件，标准出口仍只允许 metadata 或经脱敏的受控内容。
 - **观测依赖拖垮业务**：exporter 与 score worker 有界异步、独立失败指标和 shutdown 超时；所有故障注入都断言业务结果未被改写。
 - **本地资源过重**：compose 提供 infra-only 与 full profile；完整 Grafana+Langfuse/Signoz+Langfuse 本地总预算上限为 12 GiB 内存、8 vCPU、20 GiB observability volumes，并记录实测峰值。
 - **E2E 假阳性与残留风险**：每次 smoke 使用唯一 marker、起始时间、轮询超时和后端 API 查询；报告包含每个检查的 failure stage 与 cleanup 状态，禁止只看容器 healthy 或手工 UI。smoke 自建短期凭据必须在报告前撤销（当发行方支持）并删除本地副本，run 目录、临时 queue 数据和调试临时数据必须零残留；外部注入的长期凭据不由 smoke 撤销。

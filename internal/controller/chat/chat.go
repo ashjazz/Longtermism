@@ -36,16 +36,18 @@ type ChatUsecase interface {
 }
 
 type ChatControllerDependencies struct {
-	Usecase              ChatUsecase
-	RequestIDFromContext func(context.Context) string
-	DebugEnabled         bool
+	Usecase               ChatUsecase
+	RequestIDFromContext  func(context.Context) string
+	SmokeRunIDFromContext func(context.Context) string
+	DebugEnabled          bool
 }
 
 // ControllerV1 maps between the public DTO and application command/result only.
 type ControllerV1 struct {
-	usecase              ChatUsecase
-	requestIDFromContext func(context.Context) string
-	debugEnabled         bool
+	usecase               ChatUsecase
+	requestIDFromContext  func(context.Context) string
+	smokeRunIDFromContext func(context.Context) string
+	debugEnabled          bool
 }
 
 func NewV1(dependencies ChatControllerDependencies) *ControllerV1 {
@@ -53,10 +55,15 @@ func NewV1(dependencies ChatControllerDependencies) *ControllerV1 {
 	if requestIDFromContext == nil {
 		requestIDFromContext = func(context.Context) string { return "" }
 	}
+	smokeRunIDFromContext := dependencies.SmokeRunIDFromContext
+	if smokeRunIDFromContext == nil {
+		smokeRunIDFromContext = func(context.Context) string { return "" }
+	}
 	return &ControllerV1{
-		usecase:              dependencies.Usecase,
-		requestIDFromContext: requestIDFromContext,
-		debugEnabled:         dependencies.DebugEnabled,
+		usecase:               dependencies.Usecase,
+		requestIDFromContext:  requestIDFromContext,
+		smokeRunIDFromContext: smokeRunIDFromContext,
+		debugEnabled:          dependencies.DebugEnabled,
 	}
 }
 
@@ -77,7 +84,10 @@ func (controller *ControllerV1) Chat(ctx context.Context, request *v1.ChatReq) (
 		return nil, newChatControllerError(http.StatusInternalServerError, chatInternalErrorMessage, requestID, "")
 	}
 
-	result, err := controller.usecase.Execute(ctx, logicchat.ChatCommand{Message: request.Message})
+	result, err := controller.usecase.Execute(ctx, logicchat.ChatCommand{
+		Message:    request.Message,
+		SmokeRunID: controller.smokeRunIDFromContext(ctx),
+	})
 	if err != nil {
 		return nil, mapChatUsecaseFailure(result, requestID, err)
 	}

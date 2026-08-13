@@ -52,8 +52,55 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/check" }
     },
+    "privacy_evidence": {
+      "type": "array",
+      "description": "Ordered, closed proof set for the eight privacy surfaces. It is separate from generic backend checks so a default-zero check cannot impersonate an attempted scan.",
+      "minItems": 8,
+      "maxItems": 8,
+      "prefixItems": [
+        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "api" }, "evidence_method": { "const": "bounded_memory_scan" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "application_log" }, "evidence_method": { "const": "projection_and_exact_query" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "collector_queue" }, "evidence_method": { "const": "configuration_and_telemetry" }, "runtime_config_digest_verified": { "const": true }, "prequeue_artifact_hash_verified": { "const": true }, "component_identity_verified": { "const": true }, "export_admission_correlated": { "const": true } }, "required": ["runtime_config_digest_verified", "prequeue_artifact_hash_verified", "component_identity_verified", "export_admission_correlated"] }] },
+        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "tempo" }, "evidence_method": { "const": "bounded_trace_document" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "loki" }, "evidence_method": { "const": "exact_structured_query" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "langfuse_trace" }, "evidence_method": { "const": "bounded_platform_document" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "langfuse_score" }, "evidence_method": { "const": "bounded_platform_document" } } }] },
+        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "report" }, "evidence_method": { "const": "contained_artifact_scan" } } }] }
+      ],
+      "items": false
+    },
     "cleanup": { "$ref": "#/$defs/cleanup" }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "scenario": { "const": "privacy" } }, "required": ["scenario"] },
+      "then": { "required": ["privacy_evidence"] },
+      "else": { "not": { "required": ["privacy_evidence"] } }
+    },
+    {
+      "if": { "properties": { "scenario": { "const": "privacy" }, "status": { "const": "passed" } }, "required": ["scenario", "status"] },
+      "then": {
+        "properties": {
+          "privacy_evidence": {
+            "items": {
+              "properties": {
+                "status": { "const": "passed" },
+                "counts": {
+                  "properties": {
+                    "synthetic_canary": { "maximum": 0 },
+                    "credential": { "maximum": 0 },
+                    "authorization": { "maximum": 0 },
+                    "token": { "maximum": 0 },
+                    "recognized_pii": { "maximum": 0 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "check": {
       "type": "object",
@@ -74,7 +121,7 @@
         "evidence": {
           "type": "object",
           "additionalProperties": {
-            "type": ["string", "number", "integer", "boolean", "null"]
+            "type": ["number", "integer", "boolean", "null"]
           }
         }
       },
@@ -87,6 +134,47 @@
           "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
           "then": { "properties": { "failure_stage": { "not": { "const": "none" } } } }
         }
+      ]
+    },
+    "privacyEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface", "evidence_method", "attempted", "status", "scanner_policy_version", "counts"],
+      "properties": {
+        "surface": { "type": "string", "enum": ["api", "application_log", "collector_queue", "tempo", "loki", "langfuse_trace", "langfuse_score", "report"] },
+        "evidence_method": { "$ref": "#/$defs/privacyEvidenceMethod" },
+        "attempted": { "const": true },
+        "status": { "type": "string", "enum": ["passed", "failed"] },
+        "scanner_policy_version": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "counts": { "$ref": "#/$defs/privacyCategoryCounts" },
+        "runtime_config_digest_verified": { "type": "boolean" },
+        "prequeue_artifact_hash_verified": { "type": "boolean" },
+        "component_identity_verified": { "type": "boolean" },
+        "export_admission_correlated": { "type": "boolean" }
+      }
+    },
+    "privacyCategoryCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["synthetic_canary", "credential", "authorization", "token", "recognized_pii"],
+      "properties": {
+        "synthetic_canary": { "type": "integer", "minimum": 0 },
+        "credential": { "type": "integer", "minimum": 0 },
+        "authorization": { "type": "integer", "minimum": 0 },
+        "token": { "type": "integer", "minimum": 0 },
+        "recognized_pii": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "privacyEvidenceMethod": {
+      "type": "string",
+      "enum": [
+        "bounded_memory_scan",
+        "projection_and_exact_query",
+        "configuration_and_telemetry",
+        "bounded_trace_document",
+        "exact_structured_query",
+        "bounded_platform_document",
+        "contained_artifact_scan"
       ]
     },
     "cleanup": {

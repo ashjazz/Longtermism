@@ -41,7 +41,7 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 					{observations: []ChatObservation{{Marker: identity.Marker, RequestID: response.RequestID, AITraceID: response.AITraceID, ServiceTraceID: response.ServiceTraceID, SpanID: response.SpanID, ObservedAt: startedAt.Add(-time.Second)}}},
 					{observations: []ChatObservation{{Marker: identity.Marker, RequestID: response.RequestID, AITraceID: response.AITraceID, ServiceTraceID: response.ServiceTraceID, SpanID: response.SpanID, ObservedAt: startedAt.Add(time.Second)}}},
 				},
-				lokiResponses:       []chatSmokeQueryResponse{{observations: []ChatObservation{{Marker: identity.Marker, RequestID: response.RequestID, AITraceID: response.AITraceID, ServiceTraceID: response.ServiceTraceID, SpanID: response.SpanID, ObservedAt: startedAt.Add(2 * time.Second)}}}},
+				lokiResponses:       []chatSmokeQueryResponse{{observations: []ChatObservation{{Marker: identity.Marker, RequestID: response.RequestID, AITraceID: response.AITraceID, ServiceTraceID: response.ServiceTraceID, SpanID: "root-span-t085", ObservedAt: startedAt.Add(2 * time.Second)}}}},
 				langfuseResponses:   []chatSmokeQueryResponse{{observations: []ChatObservation{{Marker: identity.Marker, RequestID: response.RequestID, AITraceID: response.AITraceID, ServiceTraceID: response.ServiceTraceID, SpanID: response.SpanID, ObservedAt: startedAt.Add(3 * time.Second)}}}},
 				baselineLLMRequests: 41,
 				llmRequests:         42,

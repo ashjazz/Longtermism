@@ -57,6 +57,38 @@ func TestScoreProjectionStorePersistsOneCurrentSnapshotPerRun(t *testing.T) {
 	}
 }
 
+func TestCompactTerminalScoreProjectionsBoundsHistoryAndPreservesPending(t *testing.T) {
+	now := time.Now().UTC()
+	records := []scoreProjectionDiskRecord{
+		{RunID: "pending", Status: langfuse.ScoreProjectionStatusRetryWait, ObservedAt: now.Add(-time.Hour)},
+		{RunID: "old-terminal", Status: langfuse.ScoreProjectionStatusSent, ObservedAt: now.Add(-time.Minute)},
+		{RunID: "new-terminal", Status: langfuse.ScoreProjectionStatusFailedPermanent, ObservedAt: now},
+	}
+	compacted := compactTerminalScoreProjections(records, 1)
+	if len(compacted) != 2 || compacted[0].RunID != "pending" || compacted[1].RunID != "new-terminal" {
+		t.Fatalf("compacted records = %#v, want pending plus newest bounded terminal fact", compacted)
+	}
+}
+
+func TestScoreProjectionStoreRejectsReplacedLockBinding(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "score-projections.json")
+	store, err := OpenScoreProjectionStore(ScoreProjectionStoreConfig{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	lockPath := path + ".lock"
+	if err := os.Rename(lockPath, lockPath+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveInitial(context.Background(), "score-run-replaced-lock", newT179Projection(t), 2); !errors.Is(err, ErrScoreProjectionStoreUnavailable) {
+		t.Fatalf("SaveInitial() error = %v, want replaced lock binding rejected", err)
+	}
+}
+
 func TestScoreProjectionStoreRejectsIdentityOrStateRewrites(t *testing.T) {
 	runID := "score-run-t179"
 	projection := newT179Projection(t)

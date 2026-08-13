@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	logicchat "github.com/ashjazz/Longtermism/internal/logic/chat"
 	appobservability "github.com/ashjazz/Longtermism/internal/observability"
 	"github.com/ashjazz/Longtermism/internal/observability/langfuse"
 	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
@@ -77,8 +78,10 @@ func TestBuildLangfuseScoreLifecycleStartsOneConfiguredWorker(t *testing.T) {
 			workerConfig = config
 			return worker, nil
 		},
-		Metrics: &t081MetricsRecorder{},
-		state:   state,
+		Metrics:         &t081MetricsRecorder{},
+		ProjectionStore: &t081DurableStore{},
+		EvidenceStore:   &t179EvidenceLookup{},
+		state:           state,
 	}
 
 	first, err := BuildLangfuseScoreLifecycle(context.Background(), input, dependencies)
@@ -120,12 +123,34 @@ func TestLangfuseScoreLifecycleShutdownFlushesTheWorkerOnce(t *testing.T) {
 	}
 }
 
+func TestLangfuseScoreLifecycleShutdownReleasesProcessOwnerForSafeRebuild(t *testing.T) {
+	state := &langfuseScoreLifecycleState{}
+	deps := LangfuseScoreLifecycleDependencies{
+		NewClient:       func(langfuse.ScoreClientConfig) (langfuse.ScoreSender, error) { return t081Sender{}, nil },
+		NewWorker:       func(langfuse.ScoreWorkerConfig) (LangfuseScoreWorker, error) { return &t081Worker{}, nil },
+		ProjectionStore: &t081DurableStore{}, EvidenceStore: &t179EvidenceLookup{}, state: state,
+	}
+	first, err := BuildLangfuseScoreLifecycle(context.Background(), newT081LifecycleInput(), deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	second, err := BuildLangfuseScoreLifecycle(context.Background(), newT081LifecycleInput(), deps)
+	if err != nil || second == first || second.Status().State != LangfuseScoreLifecycleStateRunning {
+		t.Fatalf("rebuilt lifecycle=(same:%t status:%#v error:%v)", second == first, second.Status(), err)
+	}
+}
+
 func TestLangfuseScoreLifecycleRecordsBoundedQueueMetricsWithoutIdentityLabels(t *testing.T) {
 	metrics := &t081MetricsRecorder{}
 	worker := &t081Worker{queueDepth: 1}
 	lifecycle := newT081ConfiguredLifecycle(t, worker, metrics)
 
-	result := lifecycle.Enqueue(mustNewT081Projection(t))
+	projection := mustNewT081Projection(t)
+	lifecycle.projectionRuns.Store(projection.ProjectionID, "run-t081")
+	result := lifecycle.Enqueue(projection)
 	if result.Status != langfuse.ScoreProjectionStatusQueued {
 		t.Fatalf("Enqueue() = %#v, want immediate queued projection", result)
 	}
@@ -142,7 +167,9 @@ func TestLangfuseScoreLifecycleEnqueueDoesNotBlockAnHTTPRequestOnWorkerDelivery(
 	worker := &t081Worker{enqueueStarted: make(chan struct{})}
 	lifecycle := newT081ConfiguredLifecycle(t, worker, &t081MetricsRecorder{})
 	result := make(chan langfuse.ScoreProjection, 1)
-	go func() { result <- lifecycle.Enqueue(mustNewT081Projection(t)) }()
+	projection := mustNewT081Projection(t)
+	lifecycle.projectionRuns.Store(projection.ProjectionID, "run-t081")
+	go func() { result <- lifecycle.Enqueue(projection) }()
 
 	// HTTP 路径只能等待本地有界队列接纳结果，不能等待 Langfuse sender、重试或 shutdown。
 	select {
@@ -191,6 +218,8 @@ func TestBuildLangfuseScoreLifecycleRejectsPartialOrFailedConfigurationWithoutSe
 				return nil, errors.New(t081LangfuseSecret)
 			}},
 		},
+		{name: "configured without durable projection store", input: newT081LifecycleInput(), deps: LangfuseScoreLifecycleDependencies{EvidenceStore: &t179EvidenceLookup{}}},
+		{name: "configured without evidence store", input: newT081LifecycleInput(), deps: LangfuseScoreLifecycleDependencies{ProjectionStore: &t081DurableStore{}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -213,8 +242,10 @@ func TestLangfuseScoreLifecycleCoarsensWorkerTransitionsAndRejectsPostShutdownEn
 			transition = config.OnTransition
 			return worker, nil
 		},
-		Metrics: metrics,
-		state:   &langfuseScoreLifecycleState{},
+		Metrics:         metrics,
+		ProjectionStore: &t081DurableStore{},
+		EvidenceStore:   &t179EvidenceLookup{},
+		state:           &langfuseScoreLifecycleState{},
 	})
 	if err != nil || transition == nil {
 		t.Fatalf("BuildLangfuseScoreLifecycle() = (%#v, %v), want metrics-enabled lifecycle", lifecycle, err)
@@ -249,7 +280,9 @@ func TestLangfuseScoreLifecycleCoarsensWorkerTransitionsAndRejectsPostShutdownEn
 	if err := lifecycle.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
-	result := lifecycle.Enqueue(mustNewT081Projection(t))
+	projection := mustNewT081Projection(t)
+	lifecycle.projectionRuns.Store(projection.ProjectionID, "run-t081")
+	result := lifecycle.Enqueue(projection)
 	if result.Status != langfuse.ScoreProjectionStatusFailedShutdownTimeout {
 		t.Fatalf("post-shutdown Enqueue() status = %q, want failed_shutdown_timeout", result.Status)
 	}
@@ -287,7 +320,9 @@ func TestBuildLangfuseScoreLifecycleDoesNotStartAfterConstructionContextCancella
 			workerCalls++
 			return &t081Worker{}, nil
 		},
-		state: &langfuseScoreLifecycleState{},
+		ProjectionStore: &t081DurableStore{},
+		EvidenceStore:   &t179EvidenceLookup{},
+		state:           &langfuseScoreLifecycleState{},
 	})
 	if !errors.Is(err, errInvalidLangfuseScoreLifecycle) || workerCalls != 0 {
 		t.Fatalf("BuildLangfuseScoreLifecycle() error=%v worker_calls=%d, want canceled construction before worker start", err, workerCalls)
@@ -340,6 +375,28 @@ func TestLangfuseScoreLifecyclePersistsInitialSnapshotBeforeAdmission(t *testing
 	_, err = lifecycle.EnqueueForRun(context.Background(), "score-run-t179-e", mustNewT081Projection(t))
 	if !errors.Is(err, ErrLangfuseEvidenceNotPersisted) || worker.enqueueCount != 0 {
 		t.Fatalf("conflicting evidence error=%v enqueue=%d", err, worker.enqueueCount)
+	}
+}
+
+func TestLifecycleProjectionRecorderReleasesTerminalRunBinding(t *testing.T) {
+	projection := mustNewT081Projection(t)
+	sending, err := projection.Transition(langfuse.ScoreProjectionStatusSending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, err := sending.Transition(langfuse.ScoreProjectionStatusSent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := &sync.Map{}
+	runs.Store(projection.ProjectionID, "score-run-terminal")
+	recorder := &lifecycleProjectionRecorder{store: &t179LifecycleProjectionStore{}, runs: runs}
+
+	if err := recorder.Record(context.Background(), sent); err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+	if _, exists := runs.Load(projection.ProjectionID); exists {
+		t.Fatal("terminal projection retained an unbounded in-memory run binding")
 	}
 }
 
@@ -397,6 +454,31 @@ func TestLangfuseScoreLifecyclePersistsNotConfiguredAndShutdownAdmissions(t *tes
 	}
 }
 
+func TestChatScoreProjectionQueueMapsNativeGenerationAndUsesExplicitSmokeRun(t *testing.T) {
+	evidence := mustNewT081Projection(t).Evidence
+	store := &t179LifecycleProjectionStore{}
+	lifecycle, err := BuildLangfuseScoreLifecycle(context.Background(), LangfuseScoreLifecycleInput{}, LangfuseScoreLifecycleDependencies{
+		ProjectionStore: store,
+		EvidenceStore:   &t179EvidenceLookup{records: []aieval.EvaluationEvidence{evidence}},
+		state:           &langfuseScoreLifecycleState{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := newChatScoreProjectionQueue(lifecycle, 2)
+	err = queue.TryEnqueue(context.Background(), logicchat.ChatScoreProjectionInput{
+		RunID:      "score-run-t184",
+		Evidence:   evidence,
+		Generation: appobservability.PlatformSpanIdentity{TraceID: t081PlatformTraceID, SpanID: t081PlatformObservation, Projectable: true},
+	})
+	if !errors.Is(err, errChatScoreProjectionUnavailable) {
+		t.Fatalf("TryEnqueue() error = %v, want stable unavailable for durable not_configured admission", err)
+	}
+	if len(store.initials) != 1 || len(store.updates) != 1 || store.updates[0].runID != "score-run-t184" || store.updates[0].projection.Status != langfuse.ScoreProjectionStatusNotConfigured {
+		t.Fatalf("durable queue initials=%#v updates=%#v", store.initials, store.updates)
+	}
+}
+
 func TestBuildLangfuseScoreLifecycleRecoversPendingBeforeStart(t *testing.T) {
 	projection := mustNewT081Projection(t)
 	sending, err := projection.Transition(langfuse.ScoreProjectionStatusSending)
@@ -419,6 +501,24 @@ func TestBuildLangfuseScoreLifecycleRecoversPendingBeforeStart(t *testing.T) {
 	_ = buildT179Lifecycle(t, &t179EvidenceLookup{records: []aieval.EvaluationEvidence{projection.Evidence}}, store, worker)
 	if !reflect.DeepEqual(order, []string{"persist", "recover", "start"}) {
 		t.Fatalf("recovery order=%v", order)
+	}
+}
+
+func TestBuildLangfuseScoreLifecycleRecoversAlreadyDurableQueuedWithoutSameStateRewrite(t *testing.T) {
+	projection := mustNewT081Projection(t)
+	store := &t179LifecycleProjectionStore{pending: []LangfuseStoredProjection{{
+		RunID: "score-run-queued-t179",
+		Snapshot: LangfuseProjectionRecoverySnapshot{
+			ProjectionID: projection.ProjectionID, Evidence: projection.Evidence,
+			TargetKind: projection.Target.Kind(), PlatformTraceID: projection.Target.PlatformTraceID(),
+			PlatformObservationID: projection.Target.PlatformObservationID(), Status: projection.Status,
+			Attempt: projection.Attempt, CreatedAt: projection.CreatedAt, MaxAttempts: 2,
+		},
+	}}}
+	worker := &t081Worker{}
+	_ = buildT179Lifecycle(t, &t179EvidenceLookup{records: []aieval.EvaluationEvidence{projection.Evidence}}, store, worker)
+	if len(store.updates) != 0 || worker.enqueueCount != 1 || worker.startCalls() != 1 {
+		t.Fatalf("queued recovery updates=%d enqueue=%d start=%d, want existing durable snapshot -> enqueue -> start", len(store.updates), worker.enqueueCount, worker.startCalls())
 	}
 }
 
@@ -498,10 +598,12 @@ func newT081LifecycleInput() LangfuseScoreLifecycleInput {
 func newT081ConfiguredLifecycle(t *testing.T, worker *t081Worker, metrics *t081MetricsRecorder) *LangfuseScoreLifecycle {
 	t.Helper()
 	lifecycle, err := BuildLangfuseScoreLifecycle(context.Background(), newT081LifecycleInput(), LangfuseScoreLifecycleDependencies{
-		NewClient: func(langfuse.ScoreClientConfig) (langfuse.ScoreSender, error) { return t081Sender{}, nil },
-		NewWorker: func(langfuse.ScoreWorkerConfig) (LangfuseScoreWorker, error) { return worker, nil },
-		Metrics:   metrics,
-		state:     &langfuseScoreLifecycleState{},
+		NewClient:       func(langfuse.ScoreClientConfig) (langfuse.ScoreSender, error) { return t081Sender{}, nil },
+		NewWorker:       func(langfuse.ScoreWorkerConfig) (LangfuseScoreWorker, error) { return worker, nil },
+		Metrics:         metrics,
+		ProjectionStore: &t081DurableStore{},
+		EvidenceStore:   &t179EvidenceLookup{},
+		state:           &langfuseScoreLifecycleState{},
 	})
 	if err != nil {
 		t.Fatalf("BuildLangfuseScoreLifecycle() error = %v", err)
@@ -563,6 +665,20 @@ func cloneT081Evidence(input aieval.EvaluationEvidence) aieval.EvaluationEvidenc
 }
 
 type t081Sender struct{}
+
+type t081DurableStore struct{}
+
+func (*t081DurableStore) SaveInitial(context.Context, string, langfuse.ScoreProjection, int) error {
+	return nil
+}
+
+func (*t081DurableStore) Update(context.Context, string, langfuse.ScoreProjection) error {
+	return nil
+}
+
+func (*t081DurableStore) LoadPending(context.Context) ([]LangfuseStoredProjection, error) {
+	return nil, nil
+}
 
 func (t081Sender) Create(context.Context, langfuse.ScoreProjection) error { return nil }
 

@@ -235,6 +235,28 @@ func (store *LocalEvidenceStore) ReadAll(ctx context.Context) ([]aieval.Evaluati
 	return evidence, nil
 }
 
+// Find returns defensive copies for one exact eval-run identity. The lifecycle
+// deliberately receives a slice so zero/duplicate facts remain distinguishable
+// and are rejected before any platform projection is admitted.
+func (store *LocalEvidenceStore) Find(ctx context.Context, evalRunID string) ([]aieval.EvaluationEvidence, error) {
+	if strings.TrimSpace(evalRunID) == "" {
+		return nil, ErrEvidenceInvalid
+	}
+	records, err := store.ReadAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]aieval.EvaluationEvidence, 0, 1)
+	for _, record := range records {
+		if record.EvalRunID == evalRunID {
+			cloned := record
+			cloned.Threshold = cloneEvidenceThreshold(record.Threshold)
+			matches = append(matches, cloned)
+		}
+	}
+	return matches, nil
+}
+
 // Close 幂等关闭 sidecar lock。正在进行的读写持有 stateMu 的读锁，因此 Close
 // 会等待它们完成，不会在 Flock 或文件操作中途关闭 descriptor。
 func (store *LocalEvidenceStore) Close() error {

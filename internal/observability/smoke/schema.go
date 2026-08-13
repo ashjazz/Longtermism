@@ -26,8 +26,8 @@ var (
 	errExternalSchemaReference    = errors.New("external smoke report schema references are not allowed")
 	arrayIndexPattern             = regexp.MustCompile(`^[0-9]+$`)
 	safeSmokeReportPathTokens     = map[string]struct{}{
-		"schema_version": {}, "run_id": {}, "marker": {}, "profile": {}, "scenario": {}, "started_at": {}, "finished_at": {}, "status": {}, "request_id": {}, "ai_trace_id": {}, "versions": {}, "checks": {}, "cleanup": {},
-		"backend": {}, "duration_ms": {}, "failure_stage": {}, "error_class": {}, "evidence": {}, "residual_resources": {}, "temporary_credentials": {}, "temporary_data": {},
+		"schema_version": {}, "run_id": {}, "marker": {}, "profile": {}, "scenario": {}, "started_at": {}, "finished_at": {}, "status": {}, "request_id": {}, "ai_trace_id": {}, "versions": {}, "checks": {}, "privacy_evidence": {}, "cleanup": {},
+		"backend": {}, "duration_ms": {}, "failure_stage": {}, "error_class": {}, "evidence": {}, "surface": {}, "evidence_method": {}, "attempted": {}, "scanner_policy_version": {}, "counts": {}, "synthetic_canary": {}, "credential": {}, "token": {}, "recognized_pii": {}, "runtime_config_digest_verified": {}, "prequeue_artifact_hash_verified": {}, "component_identity_verified": {}, "export_admission_correlated": {}, "residual_resources": {}, "temporary_credentials": {}, "temporary_data": {},
 		// 这些是 schema 明确禁止且测试需要定位的低敏字段名；绝不输出它们的值。
 		"authorization": {}, "raw_payload": {}, "temporary_credential_value": {},
 	}

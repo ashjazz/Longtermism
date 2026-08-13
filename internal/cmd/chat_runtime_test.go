@@ -9,6 +9,7 @@ import (
 	"time"
 
 	appeval "github.com/ashjazz/Longtermism/internal/eval"
+	logicchat "github.com/ashjazz/Longtermism/internal/logic/chat"
 	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
 	"github.com/ashjazz/Longtermism/pkg/ai/llm"
 	"github.com/ashjazz/Longtermism/pkg/ai/obs"
@@ -47,6 +48,19 @@ func TestBuildDefaultChatRuntimeKeepsCheckedInDisabledConfigurationOffline(t *te
 	}
 	if runtime.Enabled || runtime.Handler != nil {
 		t.Fatalf("default runtime enabled=%t handler=%t, want checked-in offline gate", runtime.Enabled, runtime.Handler != nil)
+	}
+}
+
+func TestBuildDefaultChatProjectionQueueDoesNoFilesystemWorkWhenLangfuseIsUnconfigured(t *testing.T) {
+	t.Setenv("LANGFUSE_BASE_URL", "")
+	t.Setenv("LANGFUSE_PUBLIC_KEY", "")
+	t.Setenv("LANGFUSE_SECRET_KEY", "")
+	queue, closeFn, err := buildDefaultChatProjectionQueue(context.Background(), &chatRuntimeEvidenceStoreStub{})
+	if err != nil || queue == nil || closeFn == nil {
+		t.Fatalf("unconfigured projection queue = (queue:%T close_present:%t error:%v), want an explicit side-effect-free no-op", queue, closeFn != nil, err)
+	}
+	if err := queue.TryEnqueue(context.Background(), logicchat.ChatScoreProjectionInput{}); err != nil {
+		t.Fatalf("unconfigured projection queue reported a platform failure: %v", err)
 	}
 }
 
@@ -298,6 +312,10 @@ type chatRuntimeEvidenceStoreStub struct {
 
 func (*chatRuntimeEvidenceStoreStub) Append(context.Context, aieval.EvaluationEvidence) error {
 	return nil
+}
+
+func (*chatRuntimeEvidenceStoreStub) Find(context.Context, string) ([]aieval.EvaluationEvidence, error) {
+	return nil, nil
 }
 
 func (store *chatRuntimeEvidenceStoreStub) Close() error {

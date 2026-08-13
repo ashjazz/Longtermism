@@ -111,7 +111,7 @@ Every HTTP completion/error log contains:
 - `ai_trace_id` only for AI requests
 - `smoke_run_id` only for smoke runs
 
-Logs are JSON lines. They never contain Authorization, API keys, raw prompt/query/output/tool args, provider error body or recognized PII. Exportable payload capture is limited to metadata-only or redacted content; `content_raw` only creates a local/test `LocalRawPayload` debug artifact and never enters a log or telemetry sink.
+Production completion logs are OTel LogRecords sent to the Collector. Their body is one of the fixed completion messages and the fields above are attributes; Loki stores the high-cardinality identities as structured metadata. JSONL is an explicit local diagnostic opt-in only and is never a smoke or Loki ingestion prerequisite. Neither form contains Authorization, API keys, raw prompt/query/output/tool args, provider error body or recognized PII. Exportable payload capture is limited to metadata-only or redacted content; `content_raw` only creates a local/test `LocalRawPayload` debug artifact and never enters a log or telemetry sink.
 
 ## 7. Langfuse mapping
 
@@ -143,4 +143,19 @@ Exporter failures never change HTTP business envelopes. Model failures retain th
 
 ## 10. Privacy assertions
 
-Synthetic forbidden markers are injected into controlled requests. A platform privacy smoke passes only when exact marker searches across API response, application log, Collector log/queue report, Tempo, Loki, Langfuse trace/score and generated smoke report return zero unredacted hits.
+Synthetic forbidden markers are injected only through the authenticated, loopback-only fixture trigger. A privacy smoke passes only after the schema-fixed, ordered set of all eight closed surfaces records `attempted=true`, the surface-specific evidence method, scanner policy version and zero counts for every policy category (`synthetic_canary`, `credential`, `authorization`, `token`, `recognized_pii`). Missing, duplicate, skipped or default-zero entries are invalid rather than successful evidence.
+
+| Surface | Required evidence method | Contract |
+| --- | --- | --- |
+| API response | `bounded_memory_scan` | Scan the successful chat response in memory before consuming the run manifest; raw bytes are not JSON-serializable and never reach disk. |
+| application log | `projection_and_exact_query` | Validate the pre-export OTLP completion-record allowlist and correlate it with the exact Loki structured-metadata result for the same run. |
+| Collector queue/report | `configuration_and_telemetry` | Verify the running config digest, bind the same-run pre-queue artifact hash, component identity and export-admission correlation, then obtain component-scoped queue telemetry. This proves the pre-queue contract plus queue component state; it does not claim that queue contents were searched or that a specific record entered/remained in the queue. |
+| Tempo | `bounded_trace_document` | TraceQL locates the same run/trace inside the exact window; a bounded unique trace document is scanned without projecting target-only fields into the result. |
+| Loki | `exact_structured_query` | Query the same run/request/AI/native trace through structured metadata and scan returned body plus metadata; high-cardinality identity remains non-indexed. |
+| Langfuse trace | `bounded_platform_document` | For locked self-hosted Langfuse 3.185, use v1 `/api/public/observations`, bounded to the exact trace/window/filter and 100 rows, then scan fields actually returned by the platform. v2 observations is a v4 capability and is forbidden in this profile. |
+| Langfuse score | `bounded_platform_document` | Use v3 `/api/public/v3/scores` with stable projection/trace/observation/window identity and `details,subject`; scan the unique returned score document without treating local projection data as platform facts. |
+| report | `contained_artifact_scan` | Scan only the typed manifest-registered, hash-verified prior chat fixture report for this run/window. The current privacy report is protected separately by its serialization guard. |
+
+Every remote response is limited to 1 MiB before decoding or scanning, every result set is limited to 100, and every surface has an independent short context. A zero count without successful read/query/scan proof is `unexpected_evidence`, not success. Unsupported platform capabilities fail closed; adapters must not substitute a broad query, default zero, target-derived identity or direct reads of Collector internal queue files.
+
+Scanner policy `1` is a versioned, closed detector set: synthetic canary; configured credential/key/secret patterns; Authorization/Bearer patterns; configured token patterns; and explicitly recognized PII patterns such as supported email/phone formats. Each category is a non-negative integer. `recognized_pii=0` means only that policy version's documented patterns were not observed, not that arbitrary personal data is universally absent. For the Collector composite, category counts apply to the bound pre-queue artifact, while four required boolean bindings prove config/artifact/component/admission integrity.

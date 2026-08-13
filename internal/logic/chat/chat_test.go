@@ -126,6 +126,7 @@ func TestChatUsecaseHandsTrustedSmokeIdentityToTelemetryAndManifest(t *testing.T
 		obs.WithServiceSpan("forged-domain-trace", "forged-domain-span"),
 	))
 
+	ctx = appobs.ContextWithChatSmokeRunID(ctx, marker)
 	result, err := usecase.Execute(ctx, ChatCommand{Message: "controlled smoke", SmokeRunID: marker})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -174,6 +175,15 @@ func TestOrdinaryChatDoesNotWriteSmokeRunManifest(t *testing.T) {
 	}
 }
 
+func TestChatCommandCannotElevateAnUntrustedSmokeMarker(t *testing.T) {
+	writer := &recordingChatRunManifestWriter{}
+	usecase := NewChatUsecase(ChatUsecaseDependencies{RunManifestWriter: writer})
+	_, err := usecase.Execute(context.Background(), ChatCommand{Message: "untrusted", SmokeRunID: "run-t182-command-only"})
+	if !errors.Is(err, ErrChatConfiguration) || writer.calls != 0 {
+		t.Fatalf("command-only marker = error:%v writes:%d, want fail-closed", err, writer.calls)
+	}
+}
+
 func TestChatSmokeManifestRejectsBridgeIdentityWithoutActiveSpanContext(t *testing.T) {
 	writer := &recordingChatRunManifestWriter{}
 	usecase := NewChatUsecase(ChatUsecaseDependencies{
@@ -191,6 +201,7 @@ func TestChatSmokeManifestRejectsBridgeIdentityWithoutActiveSpanContext(t *testi
 		RunManifestWriter: writer,
 	})
 	ctx := obs.ContextWithCorrelationIdentity(context.Background(), obs.NewCorrelationIdentity("req-t177-no-native-span"))
+	ctx = appobs.ContextWithChatSmokeRunID(ctx, "run-t177-no-native-span")
 	if _, err := usecase.Execute(ctx, ChatCommand{Message: "controlled smoke", SmokeRunID: "run-t177-no-native-span"}); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}

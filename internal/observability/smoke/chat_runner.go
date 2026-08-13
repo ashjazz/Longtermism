@@ -197,7 +197,7 @@ func pollChatBackend(ctx context.Context, target ChatSmokeTarget, state *chatPol
 		if observation.ObservedAt.Before(target.StartedAt) || observation.ObservedAt.After(target.Deadline) || observation.Marker != target.Marker {
 			continue
 		}
-		if chatObservationMatches(observation, target) {
+		if chatObservationMatches(state.backend, observation, target) {
 			state.passed = true
 			return
 		}
@@ -219,8 +219,14 @@ func chatPollChecks(states []*chatPollState) []BackendCheckInput {
 	return checks
 }
 
-func chatObservationMatches(observation ChatObservation, target ChatSmokeTarget) bool {
-	return observation.RequestID == target.RequestID && observation.AITraceID == target.AITraceID && observation.ServiceTraceID == target.ServiceTraceID && observation.SpanID == target.SpanID
+func chatObservationMatches(backend string, observation ChatObservation, target ChatSmokeTarget) bool {
+	if observation.RequestID != target.RequestID || observation.AITraceID != target.AITraceID || observation.ServiceTraceID != target.ServiceTraceID {
+		return false
+	}
+	// HTTP completion logs belong to the root HTTP span. Tempo and Langfuse deliberately
+	// verify the ai.chat bridge span recorded in the manifest, while Loki proves the same
+	// correlated trace and must report its own real root span rather than inventing a shared ID.
+	return (backend == "loki" && isSafePollMarker(observation.SpanID)) || observation.SpanID == target.SpanID
 }
 
 func validChatAPIResult(result ChatSmokeAPIResult) bool {

@@ -563,7 +563,7 @@ func assertGenerationInputDoesNotOfferRawPayload(t *testing.T) {
 	allowed := map[string]struct{}{
 		"Feature": {}, "StartedAt": {}, "CompletedAt": {}, "Identity": {}, "Provider": {}, "RequestedModel": {}, "ActualModel": {}, "FinishReason": {}, "Usage": {},
 		"TotalLatency": {}, "TTFT": {}, "Outcome": {}, "FailureStatus": {}, "PromptTemplateVersion": {}, "PromptHash": {},
-		"PayloadMode": {}, "PayloadRedacted": {},
+		"PayloadMode": {}, "PayloadRedacted": {}, "SmokeRunID": {},
 	}
 	for index := range typeOfInput.NumField() {
 		field := typeOfInput.Field(index)

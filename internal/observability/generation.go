@@ -31,6 +31,7 @@ const (
 // raw prompt、用户输入、模型输出和 provider body 不属于该类型，避免它们先进入
 // OTel 再寄希望于 Collector 或平台做下游清理。
 type GenerationSpanInput struct {
+	SmokeRunID            string
 	Feature               string
 	StartedAt             time.Time
 	CompletedAt           time.Time
@@ -115,6 +116,9 @@ func cloneGenerationSpanInput(input GenerationSpanInput) GenerationSpanInput {
 }
 
 func validateGenerationSpanInput(input GenerationSpanInput) error {
+	if input.SmokeRunID != "" && !isSafeObservationIdentifier(input.SmokeRunID) {
+		return errors.New("generation smoke run identity is invalid")
+	}
 	if err := validateGenerationTextFacts(input); err != nil {
 		return err
 	}
@@ -306,6 +310,9 @@ func generationSpanAttributes(input GenerationSpanInput, routing map[string]stri
 	}
 	if input.FailureStatus != "" {
 		attributes = append(attributes, attribute.String("ai.failure_status", input.FailureStatus))
+	}
+	if input.SmokeRunID != "" {
+		attributes = append(attributes, attribute.String("longtermism.smoke.run_id", input.SmokeRunID))
 	}
 	return attributes
 }

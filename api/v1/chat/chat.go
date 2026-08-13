@@ -6,6 +6,11 @@ package chat
 
 import "github.com/gogf/gf/v2/frame/g"
 
+const (
+	ChatSmokeRunIDHeader         = "X-Observability-Smoke-Run-ID"
+	ChatSmokeAuthorizationHeader = "X-Observability-Smoke-Authorization"
+)
+
 type ChatReq struct {
 	g.Meta `path:"/chat" method:"post" tags:"Chat" summary:"Run a server-configured non-streaming chat" json:"-"`
 	// v tag is declarative DTO metadata. The controller executes it through gvalid;

@@ -19,18 +19,18 @@ import (
 func TestLangfuseChatSmokeQueryUsesCompleteStructuredIdentity(t *testing.T) {
 	target := chatSmokeTargetForTest()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/api/public/v2/observations" {
+		if request.Method != http.MethodGet || request.URL.Path != "/api/public/observations" {
 			t.Errorf("request = %s %s, want read-only observations query", request.Method, request.URL.Path)
 		}
 		if request.Header.Get("Authorization") != "Basic cHVibGljOnJlYWQtc2VjcmV0" {
 			t.Error("query did not use configured read credential")
 		}
 		query := request.URL.Query()
-		if query.Get("fields") != "core" || query.Get("limit") != "100" || query.Get("cursor") != "" || query.Get("expandMetadata") != "" {
-			t.Errorf("Langfuse query = %v, want bounded core-only first page", query)
+		if query.Get("limit") != "100" || query.Get("page") != "1" || query.Get("fromStartTime") == "" || query.Get("toStartTime") == "" || query.Get("fields") != "" || query.Get("cursor") != "" {
+			t.Errorf("Langfuse query = %v, want bounded v1 observations first page", query)
 		}
 		assertLangfuseChatFilter(t, query.Get("filter"), target)
-		_, _ = fmt.Fprintf(writer, `{"data":[{"id":"platform-observation-t178","traceId":"platform-trace-t178","startTime":"%s","metadata":{"longtermism.smoke.run_id":"%s","request_id":"%s","ai_trace_id":"%s","service_trace_id":"%s","span_id":"%s"},"input":"raw-t178-input","output":"raw-t178-output"}],"meta":{"cursor":null}}`, target.StartedAt.Add(time.Second).Format(time.RFC3339Nano), target.Marker, target.RequestID, target.AITraceID, target.ServiceTraceID, target.SpanID)
+		_, _ = fmt.Fprintf(writer, `{"data":[{"id":"%s","traceId":"%s","startTime":"%s","metadata":{"longtermism.smoke.run_id":"%s","request_id":"%s","ai_trace_id":"%s"},"input":"raw-t178-input","output":"raw-t178-output"}],"meta":{"page":1,"totalPages":1}}`, target.SpanID, target.ServiceTraceID, target.StartedAt.Add(time.Second).Format(time.RFC3339Nano), target.Marker, target.RequestID, target.AITraceID)
 	}))
 	defer server.Close()
 
@@ -59,8 +59,9 @@ func TestLangfuseChatSmokeQueryFailsClosed(t *testing.T) {
 		{name: "malformed response", status: http.StatusOK, body: `{`, wantClass: "malformed_response"},
 		{name: "oversized response", status: http.StatusOK, body: strings.Repeat("x", maximumBackendResponseSize+1), wantClass: "malformed_response"},
 		{name: "missing response identity", status: http.StatusOK, body: `{"data":[{"startTime":"2026-01-01T00:00:00Z","metadata":{}}]}`, wantClass: "malformed_response"},
-		{name: "conflicting response identity", status: http.StatusOK, body: `{"data":[{"startTime":"2026-01-01T00:00:00Z","metadata":{"longtermism.smoke.run_id":"foreign-t178","request_id":"request-t178","ai_trace_id":"ai-trace-t178","service_trace_id":"0123456789abcdef0123456789abcdef","span_id":"0123456789abcdef"}}]}`, wantClass: "malformed_response"},
-		{name: "truncated page", status: http.StatusOK, body: `{"data":[],"meta":{"cursor":"next-page-t178"}}`, wantClass: "malformed_response"},
+		{name: "conflicting response identity", status: http.StatusOK, body: `{"data":[{"id":"0123456789abcdef","traceId":"0123456789abcdef0123456789abcdef","startTime":"2026-01-01T00:00:00Z","metadata":{"longtermism.smoke.run_id":"foreign-t178","request_id":"request-t178","ai_trace_id":"ai-trace-t178"}}]}`, wantClass: "malformed_response"},
+		{name: "truncated page", status: http.StatusOK, body: `{"data":[],"meta":{"page":1,"totalPages":2}}`, wantClass: "malformed_response"},
+		{name: "missing pagination metadata", status: http.StatusOK, body: fmt.Sprintf(`{"data":[{"id":"%s","traceId":"%s","startTime":"%s","metadata":{"longtermism.smoke.run_id":"%s","request_id":"%s","ai_trace_id":"%s"}}]}`, target.SpanID, target.ServiceTraceID, target.StartedAt.Add(time.Second).Format(time.RFC3339Nano), target.Marker, target.RequestID, target.AITraceID), wantClass: "malformed_response"},
 		{name: "too many results", status: http.StatusOK, body: langfuseChatResultsForTest(101, target), wantClass: "malformed_response"},
 	}
 	for _, tt := range tests {
@@ -126,8 +127,8 @@ func assertLangfuseChatFilter(t *testing.T, rendered string, target smoke.ChatSm
 		"stringObject|metadata|longtermism.smoke.run_id|=": target.Marker,
 		"stringObject|metadata|request_id|=":               target.RequestID,
 		"stringObject|metadata|ai_trace_id|=":              target.AITraceID,
-		"stringObject|metadata|service_trace_id|=":         target.ServiceTraceID,
-		"stringObject|metadata|span_id|=":                  target.SpanID,
+		"string|traceId||=":                                target.ServiceTraceID,
+		"string|id||=":                                     target.SpanID,
 		"datetime|startTime||>=":                           target.StartedAt.UTC().Format(time.RFC3339Nano),
 		"datetime|startTime||<=":                           target.Deadline.UTC().Format(time.RFC3339Nano),
 	}
@@ -151,10 +152,12 @@ func langfuseChatResultsForTest(count int, target smoke.ChatSmokeTarget) string 
 	data := make([]map[string]any, 0, count)
 	for index := 0; index < count; index++ {
 		data = append(data, map[string]any{
+			"id":        target.SpanID,
+			"traceId":   target.ServiceTraceID,
 			"startTime": target.StartedAt.Add(time.Second).Format(time.RFC3339Nano),
-			"metadata":  map[string]string{"longtermism.smoke.run_id": target.Marker, "request_id": target.RequestID, "ai_trace_id": target.AITraceID, "service_trace_id": target.ServiceTraceID, "span_id": target.SpanID},
+			"metadata":  map[string]string{"longtermism.smoke.run_id": target.Marker, "request_id": target.RequestID, "ai_trace_id": target.AITraceID},
 		})
 	}
-	encoded, _ := json.Marshal(map[string]any{"data": data, "meta": map[string]any{"cursor": nil}})
+	encoded, _ := json.Marshal(map[string]any{"data": data, "meta": map[string]any{"page": 1, "totalPages": 1}})
 	return string(encoded)
 }

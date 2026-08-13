@@ -62,6 +62,11 @@ ai:
       evidence:
         path: "resource/eval/chat-evidence.jsonl"
         retention: "2160h"
+      # Projection 状态与 evidence 分离持久化；文件仅保存低敏身份和状态机快照。
+      projection:
+        path: "build/observability/score-projections.json"
+        queue_capacity: 64
+        request_timeout: "10s"
   llm:
     default_provider: "openai"
     providers:
@@ -114,6 +119,12 @@ observability:
   smoke:
     # infra-smoke route 默认不注册；真实后端扫描另由命令层显式 opt-in。
     enabled: false
+    chat:
+      enabled: false
+      authorization_env: "LONGTERMISM_CHAT_SMOKE_AUTHORIZATION"
+      replay_capacity: 64
+      replay_ttl: "2m"
+      manifest_path: "build/observability/smoke-manifests"
     rate_limit:
       # 仅保护诊断路由，避免与 health/chat 共用令牌桶或把高基数身份放入限流状态。
       rate: 10
