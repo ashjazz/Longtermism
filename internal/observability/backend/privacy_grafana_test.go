@@ -106,7 +106,12 @@ func TestPrivacyGrafanaSurfacesReadRealTempoAndLokiFacts(t *testing.T) {
 					return
 				}
 				document := t190TempoDocument(request, "safe")
-				span := document["trace"].(map[string]any)["batches"].([]any)[0].(map[string]any)["scopeSpans"].([]any)[0].(map[string]any)["spans"].([]any)[0].(map[string]any)
+				batch := document["trace"].(map[string]any)["batches"].([]any)[0].(map[string]any)
+				resource := batch["resource"].(map[string]any)
+				resource["attributes"] = append(resource["attributes"].([]any), map[string]any{
+					"key": "service.instance.count", "value": map[string]any{"intValue": "1"},
+				})
+				span := batch["scopeSpans"].([]any)[0].(map[string]any)["spans"].([]any)[0].(map[string]any)
 				sibling := make(map[string]any, len(span))
 				for key, value := range span {
 					sibling[key] = value
@@ -209,6 +214,48 @@ func TestPrivacyGrafanaSurfacesDetectEveryClosedCategory(t *testing.T) {
 			})
 		}
 	}
+
+	for _, tt := range tests {
+		t.Run("tempo search/"+tt.name, func(t *testing.T) {
+			request := t190Request(smoke.PrivacySmokeSurfaceTempo)
+			handler := http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {
+				if incoming.URL.Path == "/api/search" {
+					response := t190TempoSearch(request, 1)
+					response["unknown_nested"] = map[string]any{"value": tt.text}
+					writeT190JSON(writer, response)
+					return
+				}
+				writeT190JSON(writer, t190TempoDocument(request, "safe-value"))
+			})
+			surfaces, _, closeServer := t190Surfaces(t, handler)
+			defer closeServer()
+			evidence, err := surfaces.Scan(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Tempo search scan failed: %q", t190ErrorClass(err))
+			}
+			assertT190Counts(t, evidence.Counts(), tt.category)
+		})
+	}
+
+	t.Run("Tempo search decoded unicode escape", func(t *testing.T) {
+		request := t190Request(smoke.PrivacySmokeSurfaceTempo)
+		handler := http.HandlerFunc(func(writer http.ResponseWriter, incoming *http.Request) {
+			if incoming.URL.Path == "/api/search" {
+				response, _ := json.Marshal(t190TempoSearch(request, 1))
+				response = response[:len(response)-1]
+				_, _ = writer.Write(append(response, []byte(`,"unknown_nested":{"value":"\u0054190_SYNTHETIC_CANARY"}}`)...))
+				return
+			}
+			writeT190JSON(writer, t190TempoDocument(request, "safe-value"))
+		})
+		surfaces, _, closeServer := t190Surfaces(t, handler)
+		defer closeServer()
+		evidence, err := surfaces.Scan(context.Background(), request)
+		if err != nil {
+			t.Fatalf("Tempo escaped search content was not scanned: %q", t190ErrorClass(err))
+		}
+		assertT190Counts(t, evidence.Counts(), "synthetic_canary")
+	})
 
 	t.Run("decoded unicode escape", func(t *testing.T) {
 		request := t190Request(smoke.PrivacySmokeSurfaceLoki)
@@ -460,6 +507,20 @@ func TestPrivacyGrafanaSurfacesFailClosedOnMissingAmbiguousOrForeignFacts(t *tes
 		requests := log.snapshot()
 		if len(requests) != 1 || requests[0].URL.Query().Get("limit") != "1" {
 			t.Fatal("bounded request limit was not sent to Loki")
+		}
+	})
+
+	t.Run("Tempo result at limit is incomplete", func(t *testing.T) {
+		request := t190Request(smoke.PrivacySmokeSurfaceTempo)
+		request.Limit = 1
+		surfaces, log, closeServer := t190Surfaces(t, t190Handler(request, "safe"))
+		defer closeServer()
+		if evidence, err := surfaces.Scan(context.Background(), request); err == nil || !reflect.ValueOf(evidence).IsZero() {
+			t.Fatal("Tempo result count equal to limit became complete unique evidence")
+		}
+		requests := log.snapshot()
+		if len(requests) != 1 || requests[0].URL.Query().Get("limit") != "1" {
+			t.Fatal("Tempo bounded search limit was not sent or invalid search reached document retrieval")
 		}
 	})
 }

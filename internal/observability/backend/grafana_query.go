@@ -154,6 +154,51 @@ func (c *GrafanaQueryClient) QueryTempoSince(ctx context.Context, traceQL string
 	return c.query(ctx, "tempo", c.tempoURL, "/api/search", url.Values{"q": {traceQL}, "start": {strconv.FormatInt(startedAt.Unix(), 10)}, "end": {strconv.FormatInt(endedAt.Unix(), 10)}, "limit": {backendQueryLimit}})
 }
 
+// privacyTempoSearch keeps the privacy adapter on the same protected transport while allowing
+// its already-validated result limit to participate in the completeness proof.
+func (c *GrafanaQueryClient) privacyTempoSearch(ctx context.Context, traceQL string, startedAt, endedAt time.Time, limit int) (BackendQueryResult, error) {
+	if err := validateCurrentQueryWindow(startedAt, endedAt); err != nil || limit < 1 || limit > 100 {
+		return BackendQueryResult{}, newBackendQueryError("tempo", "invalid_query")
+	}
+	return c.query(ctx, "tempo", c.tempoURL, "/api/search", url.Values{
+		"q": {traceQL}, "start": {strconv.FormatInt(startedAt.Unix(), 10)},
+		"end": {strconv.FormatInt(endedAt.Unix(), 10)}, "limit": {strconv.Itoa(limit)},
+	})
+}
+
+// privacyTempoTrace fetches the real bounded trace document. The path component is accepted only
+// after validating the native trace identity, so it cannot become a caller-controlled URL path.
+func (c *GrafanaQueryClient) privacyTempoTrace(ctx context.Context, traceID string, startedAt, endedAt time.Time) (BackendQueryResult, error) {
+	if err := validateCurrentQueryWindow(startedAt, endedAt); err != nil || !isLowerHex(traceID, 32) {
+		return BackendQueryResult{}, newBackendQueryError("tempo", "invalid_query")
+	}
+	return c.query(ctx, "tempo", c.tempoURL, "/api/v2/traces/"+traceID, url.Values{
+		"start": {strconv.FormatInt(startedAt.Unix(), 10)}, "end": {strconv.FormatInt(endedAt.Unix(), 10)},
+	})
+}
+
+func (c *GrafanaQueryClient) privacyLokiRange(ctx context.Context, logQL string, startedAt, endedAt time.Time, limit int) (BackendQueryResult, error) {
+	if err := validateCurrentQueryWindow(startedAt, endedAt); err != nil || limit < 1 || limit > 100 {
+		return BackendQueryResult{}, newBackendQueryError("loki", "invalid_query")
+	}
+	return c.query(ctx, "loki", c.lokiURL, "/loki/api/v1/query_range", url.Values{
+		"query": {logQL}, "start": {startedAt.UTC().Format(time.RFC3339Nano)},
+		"end": {endedAt.UTC().Format(time.RFC3339Nano)}, "limit": {strconv.Itoa(limit)},
+	})
+}
+
+func isLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *GrafanaQueryClient) query(ctx context.Context, backend, baseURL, path string, values url.Values) (BackendQueryResult, error) {
 	if !isSafeQuery(values) {
 		return BackendQueryResult{}, newBackendQueryError(backend, "invalid_query")
