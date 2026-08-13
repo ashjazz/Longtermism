@@ -204,9 +204,12 @@ func TestPrivacyLocalSurfacesDetectEveryClosedScannerCategory(t *testing.T) {
 		{name: "token", text: "token=t189-secret", category: "token"},
 		{name: "recognized PII", text: "privacy-t189@example.com", category: "recognized_pii"},
 	}
+	// Application and report contain bounded semantic strings whose unexpected values can carry
+	// every scanner category. Collector has no free sensitive string: its only variable string is
+	// externally bound admission identity, so changing it to a secret invalidates the proof before
+	// a scanner result can be sealed.
 	for _, surface := range []smoke.PrivacySmokeSurface{
 		smoke.PrivacySmokeSurfaceApplicationLog,
-		smoke.PrivacySmokeSurfaceCollectorQueue,
 		smoke.PrivacySmokeSurfaceReport,
 	} {
 		for _, tt := range tests {
@@ -225,6 +228,33 @@ func TestPrivacyLocalSurfacesDetectEveryClosedScannerCategory(t *testing.T) {
 	}
 }
 
+func TestPrivacyCollectorHitCannotBypassTrustedBindings(t *testing.T) {
+	request := t189Request(smoke.PrivacySmokeSurfaceCollectorQueue)
+	documents := t189SafeDocuments(t, request)
+	documents[privacyLocalArtifactCollectorComposite] = t189DocumentWithSemanticText(
+		t, privacyLocalArtifactCollectorComposite, request, t189Canary,
+	)
+	evidence, err := t189NewSurfaces(t, &t189LocalArtifactReader{documents: documents}).Scan(context.Background(), request)
+	if err == nil || !reflect.ValueOf(evidence).IsZero() {
+		t.Fatal("collector leak text bypassed admission/configuration/telemetry binding")
+	}
+	assertT189LowSensitiveError(t, err, t189Canary, request.ManifestRef)
+
+	// A confirmed hit is still reportable when the same field is bound by trusted runtime
+	// configuration. This separates "a leak was observed" from a forged binding proof.
+	config := t189Config()
+	config.ExportAdmissionCorrelation = t189Canary
+	bound, err := newPrivacyLocalSurfacesForTest(config, &t189LocalArtifactReader{documents: documents})
+	if err != nil {
+		t.Fatal("matching trusted collector configuration was rejected")
+	}
+	evidence, err = bound.Scan(context.Background(), request)
+	if err != nil {
+		t.Fatal("verified collector binding suppressed confirmed leak evidence")
+	}
+	assertT189Counts(t, evidence.Counts(), map[string]int{"synthetic_canary": 1})
+}
+
 // JSON unicode escapes are decoded before the scanner runs. Scanning raw JSON bytes alone would
 // miss the exact semantic canary and create a false zero.
 func TestPrivacyLocalSurfacesScanDecodedSemanticsNotOnlyRawJSON(t *testing.T) {
@@ -234,7 +264,15 @@ func TestPrivacyLocalSurfacesScanDecodedSemanticsNotOnlyRawJSON(t *testing.T) {
 			kind := t189Kind(surface)
 			documents := t189SafeDocuments(t, request)
 			documents[kind] = t189EscapedCanaryDocument(t, kind, request)
-			evidence, err := t189NewSurfaces(t, &t189LocalArtifactReader{documents: documents}).Scan(context.Background(), request)
+			config := t189Config()
+			if surface == smoke.PrivacySmokeSurfaceCollectorQueue {
+				config.ExportAdmissionCorrelation = t189Canary
+			}
+			surfaces, err := newPrivacyLocalSurfacesForTest(config, &t189LocalArtifactReader{documents: documents})
+			if err != nil {
+				t.Fatal("valid local surface configuration was rejected")
+			}
+			evidence, err := surfaces.Scan(context.Background(), request)
 			if err != nil {
 				t.Fatal("escaped semantic content could not be scanned")
 			}
@@ -264,8 +302,23 @@ func TestPrivacyCollectorCompositeRequiresTrustedConfigurationBindings(t *testin
 		{name: "stale telemetry", mutate: func(payload map[string]any) {
 			payload["component_telemetry"].(map[string]any)["observed_at"] = "2020-01-01T00:00:00Z"
 		}},
+		{name: "future telemetry", mutate: func(payload map[string]any) {
+			payload["component_telemetry"].(map[string]any)["observed_at"] = "2026-08-13T10:01:01Z"
+		}},
+		{name: "foreign telemetry start", mutate: func(payload map[string]any) {
+			payload["component_telemetry"].(map[string]any)["window_started_at"] = "2026-08-13T09:59:59Z"
+		}},
+		{name: "foreign telemetry deadline", mutate: func(payload map[string]any) {
+			payload["component_telemetry"].(map[string]any)["window_deadline"] = "2026-08-13T10:01:01Z"
+		}},
+		{name: "negative enqueued", mutate: func(payload map[string]any) { payload["component_telemetry"].(map[string]any)["enqueued"] = -1 }},
+		{name: "negative sent", mutate: func(payload map[string]any) { payload["component_telemetry"].(map[string]any)["sent"] = -1 }},
 		{name: "negative telemetry", mutate: func(payload map[string]any) { payload["component_telemetry"].(map[string]any)["failed"] = -1 }},
+		{name: "negative queue size", mutate: func(payload map[string]any) { payload["component_telemetry"].(map[string]any)["queue_size"] = -1 }},
+		{name: "zero queue capacity", mutate: func(payload map[string]any) { payload["component_telemetry"].(map[string]any)["queue_capacity"] = 0 }},
 		{name: "queue over capacity", mutate: func(payload map[string]any) { payload["component_telemetry"].(map[string]any)["queue_size"] = 101 }},
+		{name: "negative oldest age", mutate: func(payload map[string]any) { payload["component_telemetry"].(map[string]any)["oldest_age_ms"] = -1 }},
+		{name: "sent exceeds enqueued", mutate: func(payload map[string]any) { payload["component_telemetry"].(map[string]any)["sent"] = 2 }},
 		{name: "self-reported verification", mutate: func(payload map[string]any) { payload["queue_contents_scanned"] = true }},
 		{name: "fake zero queue", mutate: func(payload map[string]any) { payload["queue_depth"] = 0 }},
 	}
@@ -281,6 +334,28 @@ func TestPrivacyCollectorCompositeRequiresTrustedConfigurationBindings(t *testin
 				encoded, _ := json.Marshal(payload)
 				assertT189LowSensitiveError(t, err, string(encoded), request.RunID, request.ManifestRef)
 			}
+
+			// A detected canary must not create a shortcut around any Collector binding.
+			// Keep the admission value trusted while independently corrupting each other
+			// configuration/telemetry fact, then require a zero evidence result.
+			hitPayload := t189CollectorPayload()
+			hitPayload["export_admission_correlation"] = t189Canary
+			tt.mutate(hitPayload)
+			hitDocument := t189ArtifactDocument(t, privacyLocalArtifactCollectorComposite, request, "collector_composite_proof", hitPayload)
+			hitConfig := t189Config()
+			hitConfig.ExportAdmissionCorrelation = t189Canary
+			hitSurfaces, constructorErr := newPrivacyLocalSurfacesForTest(hitConfig, &t189LocalArtifactReader{
+				documents: map[privacyLocalArtifactKind][]byte{privacyLocalArtifactCollectorComposite: hitDocument},
+			})
+			if constructorErr != nil {
+				t.Fatal("valid trusted Collector configuration was rejected")
+			}
+			hitEvidence, hitErr := hitSurfaces.Scan(context.Background(), request)
+			if hitErr == nil || !reflect.ValueOf(hitEvidence).IsZero() {
+				t.Fatal("confirmed hit bypassed an invalid Collector binding")
+			}
+			encoded, _ := json.Marshal(hitPayload)
+			assertT189LowSensitiveError(t, hitErr, string(encoded), t189Canary, request.ManifestRef)
 		})
 	}
 }
