@@ -451,6 +451,9 @@ func TestProtectedPrivacyFixtureTriggerRequiresStrictBoundedChatSuccessEnvelope(
 		{name: "empty body", status: http.StatusOK, header: "request-t187"},
 		{name: "malformed JSON", status: http.StatusOK, header: "request-t187", body: []byte(`{"code":0`)},
 		{name: "trailing JSON", status: http.StatusOK, header: "request-t187", body: append(t187SuccessfulChatEnvelope("safe"), []byte(` {}`)...)},
+		{name: "noncanonical field alias", status: http.StatusOK, header: "request-t187", body: []byte(`{"Code":0,"message":"success","data":{"content":"safe","model":"test-model","finish_reason":"stop","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}},"meta":{"request_id":"request-t187","ai_trace_id":"ai-trace-t187"}}`)},
+		{name: "case-folded duplicate field", status: http.StatusOK, header: "request-t187", body: []byte(`{"code":502,"Code":0,"message":"success","data":{"content":"safe","model":"test-model","finish_reason":"stop","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}},"meta":{"request_id":"request-t187","ai_trace_id":"ai-trace-t187"}}`)},
+		{name: "nested noncanonical field alias", status: http.StatusOK, header: "request-t187", body: []byte(`{"code":0,"message":"success","data":{"content":"safe","model":"test-model","finish_reason":"stop","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}},"meta":{"Request_ID":"request-t187","ai_trace_id":"ai-trace-t187"}}`)},
 		{name: "unknown field", status: http.StatusOK, header: "request-t187", body: []byte(`{"code":0,"message":"success","unexpected":true,"data":{"content":"safe","model":"test-model","finish_reason":"stop","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}},"meta":{"request_id":"request-t187","ai_trace_id":"ai-trace-t187"}}`)},
 		{name: "nested unknown field", status: http.StatusOK, header: "request-t187", body: []byte(`{"code":0,"message":"success","data":{"content":"safe","model":"test-model","finish_reason":"stop","unexpected":true,"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}},"meta":{"request_id":"request-t187","ai_trace_id":"ai-trace-t187"}}`)},
 		{name: "invalid UTF-8", status: http.StatusOK, header: "request-t187", body: append(t187SuccessfulChatEnvelope("safe"), 0xff)},
@@ -533,6 +536,15 @@ func TestPrivacyFixtureTransportProofCannotBeCallerReported(t *testing.T) {
 			t.Fatalf("PrivacyFixtureTriggerResult exposes caller-writable proof/raw field %s", field.Name)
 		}
 	}
+	backing := []byte(t187RawResponse)
+	raw := privacyFixtureRawResponse{body: backing}
+	if encoded, err := json.Marshal(raw); err == nil || len(encoded) != 0 {
+		t.Fatalf("raw response serialized as %q, want serialization forbidden", encoded)
+	}
+	raw.release()
+	if raw.body != nil || bytes.Count(backing, []byte{0}) != len(backing) {
+		t.Fatal("raw response release must erase the complete backing buffer")
+	}
 }
 
 // The concrete trigger is a security boundary, not an operational logging surface. Keeping the
@@ -550,7 +562,7 @@ func TestProtectedPrivacyFixtureTriggerHasNoLoggingCapability(t *testing.T) {
 	}
 	for _, imported := range file.Imports {
 		path := strings.Trim(imported.Path.Value, `"`)
-		if path == "os" || strings.Contains(path, "log") || strings.Contains(path, "observability") {
+		if path == "os" || strings.Contains(path, "log") || (strings.Contains(path, "observability") && !strings.HasSuffix(path, "/observability/privacy")) {
 			t.Fatalf("protected trigger imports forbidden output capability %q", path)
 		}
 	}
@@ -703,6 +715,12 @@ func (body *t187CountingBody) Close() error {
 func assertT187LowSensitiveValue(t *testing.T, value any) {
 	t.Helper()
 	encoded, err := json.Marshal(value)
+	if _, sealed := value.(PrivacyFixtureTriggerResult); sealed {
+		if err == nil {
+			t.Fatal("sealed trigger receipt must reject serialization")
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("marshal low-sensitive fixture result: %v", err)
 	}

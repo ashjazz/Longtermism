@@ -3,11 +3,14 @@ package smoke
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ashjazz/Longtermism/internal/observability/privacy"
 )
 
 const (
@@ -19,12 +22,7 @@ const (
 func TestPrivacyFixtureRequiresOneSuccessfulProtectedChatBeforePersistingLowSensitiveArtifacts(t *testing.T) {
 	startedAt := time.Now().UTC()
 	order := make([]string, 0, 3)
-	trigger := &t180PrivacyTrigger{result: PrivacyFixtureTriggerResult{
-		Attempted:  true,
-		Protected:  true,
-		StatusCode: 200,
-		Body:       []byte(`{"code":0,"message":"success","data":{"reply":"safe"},"meta":{"request_id":"req-t180","ai_trace_id":"ai-t1800"}}`),
-	}, order: &order}
+	trigger := &t180PrivacyTrigger{result: t180SealedTriggerResult("run-t180", "marker-t180", "req-t180", "ai-t1800"), order: &order}
 	manifest := &t180ManifestConsumer{manifest: ChatRunManifestInput{
 		SmokeRunID: "marker-t180", RequestID: "req-t180", AITraceID: "ai-t1800",
 		ServiceTraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef",
@@ -59,7 +57,7 @@ func TestPrivacyFixtureRequiresOneSuccessfulProtectedChatBeforePersistingLowSens
 	if result.APISummaryRef != writer.refs.APISummaryRef || result.ApplicationLogRef != writer.refs.ApplicationLogRef {
 		t.Fatalf("local fixture refs = %#v, want API and application-log registrations", result)
 	}
-	if encoded, marshalErr := json.Marshal(trigger.result); marshalErr == nil || bytes.Contains(encoded, trigger.result.Body) {
+	if encoded, marshalErr := json.Marshal(trigger.result); marshalErr == nil || bytes.Contains(encoded, []byte(t180Raw)) {
 		t.Fatalf("raw trigger result marshaled as %s, want serialization forbidden", encoded)
 	}
 	if result.RequestID != manifest.manifest.RequestID || result.AITraceID != manifest.manifest.AITraceID ||
@@ -85,12 +83,7 @@ func TestPrivacyFixtureRequiresOneSuccessfulProtectedChatBeforePersistingLowSens
 
 func TestPrivacyFixtureArtifactFailureDoesNotExposeRawFacts(t *testing.T) {
 	startedAt := time.Now().UTC()
-	trigger := &t180PrivacyTrigger{result: PrivacyFixtureTriggerResult{
-		Attempted:  true,
-		Protected:  true,
-		StatusCode: 200,
-		Body:       []byte(`{"code":0,"message":"success","data":{},"meta":{"request_id":"req-t180","ai_trace_id":"ai-t1800"}}`),
-	}}
+	trigger := &t180PrivacyTrigger{result: t180SealedTriggerResult("run-t180", "marker-t180", "req-t180", "ai-t1800")}
 	consumer := &t180ManifestConsumer{manifest: ChatRunManifestInput{
 		SmokeRunID: "marker-t180", RequestID: "req-t180", AITraceID: "ai-t1800",
 		ServiceTraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef",
@@ -113,17 +106,18 @@ func TestPrivacyFixtureFailsClosedBeforeArtifactsOrBackendProof(t *testing.T) {
 		manifest     ChatRunManifestInput
 		wantConsumes int
 	}{
-		{name: "request not attempted", trigger: PrivacyFixtureTriggerResult{StatusCode: 200}, wantConsumes: 0},
-		{name: "request not protected", trigger: PrivacyFixtureTriggerResult{Attempted: true, StatusCode: 200}, wantConsumes: 0},
-		{name: "request not successful", trigger: PrivacyFixtureTriggerResult{Attempted: true, Protected: true, StatusCode: 503, Body: []byte(t180Raw)}, wantConsumes: 0},
-		{name: "oversized response", trigger: PrivacyFixtureTriggerResult{Attempted: true, Protected: true, StatusCode: 200, Body: make([]byte, (1<<20)+1)}, wantConsumes: 0},
-		{name: "malformed response", trigger: PrivacyFixtureTriggerResult{Attempted: true, Protected: true, StatusCode: 200, Body: []byte(`{"code":0`)}, wantConsumes: 0},
-		{name: "business failure", trigger: PrivacyFixtureTriggerResult{Attempted: true, Protected: true, StatusCode: 200, Body: []byte(`{"code":10001,"message":"failed","data":null,"meta":{"request_id":"req-t180","ai_trace_id":"ai-t1800"}}`)}, wantConsumes: 0},
-		{name: "missing response identity", trigger: PrivacyFixtureTriggerResult{Attempted: true, Protected: true, StatusCode: 200, Body: []byte(`{"code":0,"message":"success","data":{}}`)}, wantConsumes: 0},
-		{name: "canary leaked in API response", trigger: PrivacyFixtureTriggerResult{Attempted: true, Protected: true, StatusCode: 200, Body: []byte(`{"code":0,"message":"success","data":{"reply":"` + t180Canary + `"},"meta":{"request_id":"req-t180","ai_trace_id":"ai-t1800"}}`)}, wantConsumes: 0},
-		{name: "foreign manifest", trigger: PrivacyFixtureTriggerResult{Attempted: true, Protected: true, StatusCode: 200, Body: []byte(`{"code":0,"message":"success","data":{},"meta":{"request_id":"req-t180","ai_trace_id":"ai-t1800"}}`)}, manifest: ChatRunManifestInput{SmokeRunID: "foreign-marker", RequestID: "req-t180", AITraceID: "ai-t1800", ServiceTraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef"}, wantConsumes: 1},
-		{name: "request identity conflict", trigger: PrivacyFixtureTriggerResult{Attempted: true, Protected: true, StatusCode: 200, Body: []byte(`{"code":0,"message":"success","data":{},"meta":{"request_id":"req-t180","ai_trace_id":"ai-t1800"}}`)}, manifest: ChatRunManifestInput{SmokeRunID: "marker-t180", RequestID: "req-foreign", AITraceID: "ai-t1800", ServiceTraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef"}, wantConsumes: 1},
-		{name: "AI identity conflict", trigger: PrivacyFixtureTriggerResult{Attempted: true, Protected: true, StatusCode: 200, Body: []byte(`{"code":0,"message":"success","data":{},"meta":{"request_id":"req-t180","ai_trace_id":"ai-t1800"}}`)}, manifest: ChatRunManifestInput{SmokeRunID: "marker-t180", RequestID: "req-t180", AITraceID: "ai-foreign", ServiceTraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef"}, wantConsumes: 1},
+		{name: "request not attempted", trigger: PrivacyFixtureTriggerResult{}, wantConsumes: 0},
+		{name: "request not protected", trigger: PrivacyFixtureTriggerResult{}, wantConsumes: 0},
+		{name: "request not successful", trigger: PrivacyFixtureTriggerResult{}, wantConsumes: 0},
+		{name: "oversized response", trigger: PrivacyFixtureTriggerResult{}, wantConsumes: 0},
+		{name: "malformed response", trigger: PrivacyFixtureTriggerResult{}, wantConsumes: 0},
+		{name: "business failure", trigger: PrivacyFixtureTriggerResult{}, wantConsumes: 0},
+		{name: "missing response identity", trigger: PrivacyFixtureTriggerResult{}, wantConsumes: 0},
+		{name: "canary leaked in API response", trigger: PrivacyFixtureTriggerResult{}, wantConsumes: 0},
+		{name: "receipt belongs to another canary", trigger: t180SealedTriggerResultForCanary("run-t180", "marker-t180", "req-t180", "ai-t1800", "CANARY_OTHER_T180_1234567890"), wantConsumes: 0},
+		{name: "foreign manifest", trigger: t180SealedTriggerResult("run-t180", "marker-t180", "req-t180", "ai-t1800"), manifest: ChatRunManifestInput{SmokeRunID: "foreign-marker", RequestID: "req-t180", AITraceID: "ai-t1800", ServiceTraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef"}, wantConsumes: 1},
+		{name: "request identity conflict", trigger: t180SealedTriggerResult("run-t180", "marker-t180", "req-t180", "ai-t1800"), manifest: ChatRunManifestInput{SmokeRunID: "marker-t180", RequestID: "req-foreign", AITraceID: "ai-t1800", ServiceTraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef"}, wantConsumes: 1},
+		{name: "AI identity conflict", trigger: t180SealedTriggerResult("run-t180", "marker-t180", "req-t180", "ai-t1800"), manifest: ChatRunManifestInput{SmokeRunID: "marker-t180", RequestID: "req-t180", AITraceID: "ai-foreign", ServiceTraceID: "1234567890abcdef1234567890abcdef", SpanID: "1234567890abcdef"}, wantConsumes: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -178,6 +172,19 @@ type t180PrivacyTrigger struct {
 	result PrivacyFixtureTriggerResult
 	err    error
 	order  *[]string
+}
+
+func t180SealedTriggerResult(runID, marker, requestID, aiTraceID string) PrivacyFixtureTriggerResult {
+	return t180SealedTriggerResultForCanary(runID, marker, requestID, aiTraceID, t180Canary)
+}
+
+func t180SealedTriggerResultForCanary(runID, marker, requestID, aiTraceID, canary string) PrivacyFixtureTriggerResult {
+	return PrivacyFixtureTriggerResult{proof: &privacyFixtureTriggerProof{
+		runID: runID, marker: marker,
+		canaryDigest: sha256.Sum256([]byte(canary)),
+		identity:     privacyFixtureResponseIdentity{RequestID: requestID, AITraceID: aiTraceID},
+		summary:      privacy.ScanResult{Counts: map[string]int{}},
+	}}
 }
 
 func (trigger *t180PrivacyTrigger) Trigger(_ context.Context, request PrivacyFixtureTriggerRequest) (PrivacyFixtureTriggerResult, error) {

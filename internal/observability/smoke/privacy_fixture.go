@@ -1,9 +1,8 @@
 package smoke
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"crypto/sha256"
 	"errors"
 	"regexp"
 	"time"
@@ -28,12 +27,11 @@ type PrivacyFixtureTriggerRequest struct {
 	RunID, Marker, ForbiddenCanary string
 }
 
-// PrivacyFixtureTriggerResult keeps the raw response in memory only. It intentionally has no
-// JSON tags and is never embedded into the result or artifact input.
+// PrivacyFixtureTriggerResult is a sealed receipt. Its zero value is invalid and every field is
+// private, so callers outside this package cannot report their own transport attempt or attach a
+// raw provider body. Production composition additionally accepts only the concrete trigger.
 type PrivacyFixtureTriggerResult struct {
-	Attempted, Protected bool
-	StatusCode           int
-	Body                 []byte
+	proof *privacyFixtureTriggerProof
 }
 
 func (PrivacyFixtureTriggerResult) MarshalJSON() ([]byte, error) {
@@ -82,15 +80,11 @@ func RunPrivacyFixture(ctx context.Context, request PrivacyFixtureRequest, deps 
 		return PrivacyFixtureResult{}, errPrivacyFixtureFailed
 	}
 	triggered, err := deps.Trigger.Trigger(ctx, PrivacyFixtureTriggerRequest{RunID: request.RunID, Marker: request.Marker, ForbiddenCanary: request.ForbiddenCanary})
-	if err != nil || !triggered.Attempted || !triggered.Protected || triggered.StatusCode < 200 || triggered.StatusCode >= 300 || len(triggered.Body) > maximumPrivacyFixtureResponseBytes {
-		return PrivacyFixtureResult{}, errPrivacyFixtureFailed
-	}
-	responseIdentity, summary, err := inspectPrivacyFixtureResponse(triggered.Body, request.ForbiddenCanary)
-	if err != nil {
+	if err != nil || !validPrivacyFixtureTriggerProof(triggered.proof, request) {
 		return PrivacyFixtureResult{}, errPrivacyFixtureFailed
 	}
 	manifest, err := deps.Manifest.Consume(ctx, request.Marker)
-	if err != nil || !validPrivacyManifest(request, responseIdentity, manifest) {
+	if err != nil || !validPrivacyManifest(request, triggered.proof.identity, manifest) {
 		return PrivacyFixtureResult{}, errPrivacyFixtureFailed
 	}
 	report, err := buildPrivacyFixtureChatReport(request, manifest)
@@ -100,7 +94,7 @@ func RunPrivacyFixture(ctx context.Context, request PrivacyFixtureRequest, deps 
 	input := PrivacyFixtureArtifactInput{
 		RunID: request.RunID, Marker: request.Marker, RequestID: manifest.RequestID, AITraceID: manifest.AITraceID,
 		ServiceTraceID: manifest.ServiceTraceID, SpanID: manifest.SpanID, StartedAt: request.StartedAt.UTC(), Deadline: request.Deadline.UTC(),
-		APIScanSummary: clonePrivacyCounts(summary.Counts), ChatReport: report,
+		APIScanSummary: clonePrivacyCounts(triggered.proof.summary.Counts), ChatReport: report,
 	}
 	refs, err := deps.Writer.Write(ctx, input)
 	if err != nil || !safePrivacyArtifactRef(refs.ManifestRef) || !safePrivacyArtifactRef(refs.APISummaryRef) || !safePrivacyArtifactRef(refs.ApplicationLogRef) ||
@@ -118,33 +112,18 @@ func RunPrivacyFixture(ctx context.Context, request PrivacyFixtureRequest, deps 
 
 type privacyFixtureResponseIdentity struct{ RequestID, AITraceID string }
 
-func inspectPrivacyFixtureResponse(body []byte, canary string) (privacyFixtureResponseIdentity, privacy.ScanResult, error) {
-	if len(body) == 0 || len(body) > maximumPrivacyFixtureResponseBytes || !json.Valid(body) {
-		return privacyFixtureResponseIdentity{}, privacy.ScanResult{}, errPrivacyFixtureFailed
-	}
-	scanner, err := privacy.NewScanner([]string{canary})
-	if err != nil {
-		return privacyFixtureResponseIdentity{}, privacy.ScanResult{}, errPrivacyFixtureFailed
-	}
-	summary, err := scanner.Scan([]privacy.SurfaceText{{Surface: privacy.SurfaceAPI, Text: string(body)}})
-	if err != nil || privacyScanHasHits(summary) {
-		return privacyFixtureResponseIdentity{}, privacy.ScanResult{}, errPrivacyFixtureFailed
-	}
-	var envelope struct {
-		Code    int             `json:"code"`
-		Message string          `json:"message"`
-		Data    json.RawMessage `json:"data"`
-		Meta    struct {
-			RequestID string `json:"request_id"`
-			AITraceID string `json:"ai_trace_id"`
-		} `json:"meta"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&envelope) != nil || envelope.Code != 0 || !safePrivacyOpaqueID(envelope.Meta.RequestID) || !safePrivacyOpaqueID(envelope.Meta.AITraceID) {
-		return privacyFixtureResponseIdentity{}, privacy.ScanResult{}, errPrivacyFixtureFailed
-	}
-	return privacyFixtureResponseIdentity{RequestID: envelope.Meta.RequestID, AITraceID: envelope.Meta.AITraceID}, summary, nil
+type privacyFixtureTriggerProof struct {
+	runID, marker string
+	canaryDigest  [sha256.Size]byte
+	identity      privacyFixtureResponseIdentity
+	summary       privacy.ScanResult
+}
+
+func validPrivacyFixtureTriggerProof(proof *privacyFixtureTriggerProof, request PrivacyFixtureRequest) bool {
+	return proof != nil && proof.runID == request.RunID && proof.marker == request.Marker &&
+		proof.canaryDigest == sha256.Sum256([]byte(request.ForbiddenCanary)) &&
+		safePrivacyOpaqueID(proof.identity.RequestID) && safePrivacyOpaqueID(proof.identity.AITraceID) &&
+		!privacyScanHasHits(proof.summary)
 }
 
 func privacyScanHasHits(summary privacy.ScanResult) bool {
