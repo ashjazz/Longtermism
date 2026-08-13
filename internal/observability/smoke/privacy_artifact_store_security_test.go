@@ -3,6 +3,7 @@ package smoke
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -82,6 +83,29 @@ func TestPrivacyArtifactStoreRejectsUnsafeRootAndRuntimeReplacement(t *testing.T
 		if _, err := store.Read(context.Background(), t188ReadRequest(refs.ManifestRef, kind, input)); err != nil {
 			t.Fatalf("Read(%q) followed the replaced root instead of the opened directory inode", kind)
 		}
+	}
+}
+
+// TestPrivacyArtifactStoreSyscallGuardsFailClosed verifies the lowest-level helpers before
+// they reach openat/linkat. During shutdown, a nil directory or unsafe basename must never be
+// translated into an operation relative to an unintended recycled descriptor.
+func TestPrivacyArtifactStoreSyscallGuardsFailClosed(t *testing.T) {
+	if validOpenPrivacyArtifactDirectory(nil) || validOpenPrivacyArtifactFile(nil, 1) || validCompletedPrivacyArtifactFile(nil, 1) {
+		t.Fatal("nil descriptors must never satisfy artifact metadata validation")
+	}
+	if _, err := readPrivacyArtifactAt(nil, "artifact.json"); err == nil {
+		t.Fatal("nil directory read was accepted")
+	}
+	if err := publishPrivacyArtifactAt(nil, "artifact.json", []byte(`{}`)); err == nil {
+		t.Fatal("nil directory publish was accepted")
+	}
+	if err := unlinkPrivacyArtifactAt(nil, "artifact.json"); err == nil {
+		t.Fatal("nil directory unlink was accepted")
+	}
+	unlockPrivacyArtifactDirectory(nil)
+	var store *PrivacyArtifactStore
+	if err := store.Close(); err != nil {
+		t.Fatalf("nil store Close() must be harmless, got %q", t188ErrorClass(err))
 	}
 }
 
@@ -187,11 +211,21 @@ func TestPrivacyArtifactStoreRejectsUnsafeFileTypesPermissionsAndTampering(t *te
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
-			listener, err := net.Listen("unix", path)
+			shortDir, err := os.MkdirTemp("/tmp", "t194-socket-")
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = os.RemoveAll(shortDir) })
+			shortPath := filepath.Join(shortDir, "socket")
+			listener, err := net.Listen("unix", shortPath)
+			if err != nil {
+				t188SkipUnavailableUnixSocket(t, err)
+				t.Fatal(err)
+			}
 			t.Cleanup(func() { _ = listener.Close() })
+			if err := os.Rename(shortPath, path); err != nil {
+				t.Fatal(err)
+			}
 		}},
 		{name: "device", isolated: true, mutate: func(t *testing.T, path string, _ []byte) {
 			t.Helper()
@@ -296,11 +330,21 @@ func TestPrivacyArtifactStoreSpecialFileChild(t *testing.T) {
 			t.Fatal(err)
 		}
 	case "unix socket":
-		listener, err := net.Listen("unix", path)
+		shortDir, err := os.MkdirTemp("/tmp", "t194-socket-")
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer os.RemoveAll(shortDir)
+		shortPath := filepath.Join(shortDir, "socket")
+		listener, err := net.Listen("unix", shortPath)
+		if err != nil {
+			t188SkipUnavailableUnixSocket(t, err)
+			t.Fatal(err)
+		}
 		defer listener.Close()
+		if err := os.Rename(shortPath, path); err != nil {
+			t.Fatal(err)
+		}
 	case "device":
 		if err := unix.Mknod(path, unix.S_IFCHR|0o600, 0); err != nil {
 			t.Skip("creating a device node requires an unavailable local capability")
@@ -310,6 +354,13 @@ func TestPrivacyArtifactStoreSpecialFileChild(t *testing.T) {
 	}
 	if err := t188ReadTarget(store, refs.ManifestRef, kind, input); err == nil {
 		t.Fatal("special file was accepted")
+	}
+}
+
+func t188SkipUnavailableUnixSocket(t *testing.T, err error) {
+	t.Helper()
+	if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.EOPNOTSUPP) {
+		t.Skip("creating a Unix socket requires an unavailable local capability")
 	}
 }
 
@@ -323,6 +374,7 @@ func TestPrivacyArtifactStoreRequiresStrictManifestAndArtifactJSON(t *testing.T)
 		{name: "manifest trailing JSON", manifest: true, transform: func(payload []byte) []byte { return append(payload, []byte(` {}`)...) }},
 		{name: "manifest duplicate key", manifest: true, transform: t188DuplicateFirstKey},
 		{name: "manifest nested duplicate key", manifest: true, transform: func(payload []byte) []byte { return t188DuplicateNamedKey(payload, "kind") }},
+		{name: "manifest invalid UTF-8", manifest: true, transform: func(payload []byte) []byte { return append(payload, 0xff) }},
 		{name: "artifact unknown field", transform: t188AppendUnknownField},
 		{name: "artifact trailing JSON", transform: func(payload []byte) []byte { return append(payload, []byte(` {}`)...) }},
 		{name: "artifact duplicate key", transform: t188DuplicateFirstKey},
@@ -435,6 +487,9 @@ func TestPrivacyArtifactStoreRejectsArtifactIdentityEvenWithMatchingManifestHash
 	}
 	for _, target := range targets {
 		for _, tt := range tests {
+			if tt.field == "kind" && tt.value == string(target.kind) {
+				continue
+			}
 			t.Run(string(target.kind)+"/"+tt.name, func(t *testing.T) {
 				root := filepath.Join(t.TempDir(), "privacy-artifacts")
 				store := t188OpenStore(t, root)

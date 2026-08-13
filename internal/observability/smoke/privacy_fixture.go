@@ -53,7 +53,10 @@ type PrivacyFixtureArtifactRefs struct {
 type PrivacyFixtureArtifactInput struct {
 	RunID, Marker, RequestID, AITraceID, ServiceTraceID, SpanID string
 	StartedAt, Deadline                                         time.Time
+	ForbiddenCanary                                             string
 	APIScanSummary                                              map[string]int
+	ApplicationLogProjection                                    PrivacyApplicationLogProjection
+	CollectorCompositeProof                                     PrivacyCollectorCompositeProof
 	ChatReport                                                  *SmokeReport
 }
 

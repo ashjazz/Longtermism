@@ -9,10 +9,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 func TestPrivacyArtifactStorePublishesTypedManifestLast(t *testing.T) {
@@ -82,7 +81,7 @@ func TestPrivacyArtifactStorePublishesTypedManifestLast(t *testing.T) {
 		if statErr != nil {
 			t.Fatalf("published file %q cannot be inspected", entry.Name())
 		}
-		stat, ok := info.Sys().(*unix.Stat_t)
+		stat, ok := info.Sys().(*syscall.Stat_t)
 		if !ok || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || stat.Nlink != 1 || int(stat.Uid) != os.Geteuid() {
 			t.Fatalf("published file %q is not owned regular mode-0600 nlink=1", entry.Name())
 		}
@@ -91,11 +90,38 @@ func TestPrivacyArtifactStorePublishesTypedManifestLast(t *testing.T) {
 	if err != nil {
 		t.Fatal("artifact root cannot be inspected")
 	}
-	rootStat, ok := rootInfo.Sys().(*unix.Stat_t)
+	rootStat, ok := rootInfo.Sys().(*syscall.Stat_t)
 	if !ok || !rootInfo.IsDir() || rootInfo.Mode().Perm() != 0o700 || int(rootStat.Uid) != os.Geteuid() {
 		t.Fatal("artifact root must be an owned real mode-0700 directory")
 	}
 	assertT188TreeContainsNoForbiddenBytes(t, root)
+}
+
+// TestPrivacyArtifactStoreCloseIsIdempotentAndFailClosed protects the directory-fd
+// ownership boundary: once shutdown starts, no later call may accidentally operate on a
+// recycled descriptor or revive the store through a second Close.
+func TestPrivacyArtifactStoreCloseIsIdempotentAndFailClosed(t *testing.T) {
+	store, err := OpenPrivacyArtifactStore(filepath.Join(t.TempDir(), "privacy-artifacts"))
+	if err != nil {
+		t.Fatalf("OpenPrivacyArtifactStore() failed with class %q", t188ErrorClass(err))
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("first Close() failed with class %q", t188ErrorClass(err))
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("second Close() must be idempotent, got class %q", t188ErrorClass(err))
+	}
+
+	input := t188ArtifactInput(t)
+	_, writeErr := store.Write(context.Background(), input)
+	_, resolveErr := store.Resolve(context.Background(), t188ResolveRequest("privacy-closed-manifest.json", input))
+	_, readErr := store.Read(context.Background(), t188ReadRequest("privacy-closed-manifest.json", PrivacyArtifactKindAPISummary, input))
+	for _, operationErr := range []error{writeErr, resolveErr, readErr} {
+		assertT188LowSensitiveError(t, operationErr)
+	}
+	if class := (privacyArtifactStoreError{}).Class(); class != "artifact_unavailable" {
+		t.Fatalf("stable error class = %q", class)
+	}
 }
 
 // TestPrivacyArtifactStoreKeepsManifestInvisibleUntilEveryArtifactIsDurable 使用包内
@@ -210,6 +236,9 @@ func TestPrivacyArtifactStoreBindsOneFixtureOnceAcrossConcurrentHandles(t *testi
 	newFixture.Marker = "marker-t188-second"
 	newFixture.RequestID = "request-t188-second"
 	newFixture.AITraceID = "ai-trace-t188-second"
+	newFixture.ApplicationLogProjection.Attributes["request_id"] = newFixture.RequestID
+	newFixture.ApplicationLogProjection.Attributes["ai_trace_id"] = newFixture.AITraceID
+	newFixture.ApplicationLogProjection.Attributes["smoke_run_id"] = newFixture.Marker
 	newFixture.ChatReport = t188ChatReport(t, newFixture, "chat", nil)
 	if _, err := first.Write(context.Background(), newFixture); err != nil {
 		t.Fatal("a completely new fixture must not be blocked by prior one-time bindings")
