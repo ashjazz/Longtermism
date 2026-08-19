@@ -26,8 +26,8 @@ groups:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
               expr: >-
-                sum(rate(longtermism_http_server_request_count{http_response_status_class="5xx"}[5m])) /
-                clamp_min(sum(rate(longtermism_http_server_request_count[5m])), 1) > 0.05
+                sum(rate(longtermism_http_server_request_count_total{http_response_status_class="5xx"}[5m])) /
+                clamp_min(sum(rate(longtermism_http_server_request_count_total[5m])), 1) > 0.05
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -50,7 +50,7 @@ groups:
           severity: critical
           domain: exporter
         annotations:
-          summary: A Collector exporter recorded send or enqueue failures.
+          summary: A Collector exporter recorded send failures.
           runbook: docs/observability/grafana-alert-response
         data:
           - refId: A
@@ -60,12 +60,11 @@ groups:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
               expr: >-
-                (sum by (exporter) (increase(otelcol_exporter_send_failed_spans_total{exporter=~"otlp/tempo"}[5m])) +
-                sum by (exporter) (increase(otelcol_exporter_enqueue_failed_spans_total{exporter=~"otlp/tempo"}[5m]))) or
-                (sum by (exporter) (increase(otelcol_exporter_send_failed_log_records_total{exporter=~"otlphttp/loki"}[5m])) +
-                sum by (exporter) (increase(otelcol_exporter_enqueue_failed_log_records_total{exporter=~"otlphttp/loki"}[5m]))) or
-                (sum by (exporter) (increase(otelcol_exporter_send_failed_spans_total{exporter=~"otlphttp/langfuse"}[5m])) +
-                sum by (exporter) (increase(otelcol_exporter_enqueue_failed_spans_total{exporter=~"otlphttp/langfuse"}[5m]))) > 0
+                (sum by (exporter) (increase(otelcol_exporter_send_failed_spans_total{exporter=~"otlp/tempo"}[5m]))
+                or
+                sum by (exporter) (increase(otelcol_exporter_send_failed_log_records_total{exporter=~"otlphttp/loki"}[5m]))
+                or
+                sum by (exporter) (increase(otelcol_exporter_send_failed_spans_total{exporter=~"otlphttp/langfuse"}[5m]))) > 0
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -98,8 +97,10 @@ groups:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
               expr: >-
-                max by (exporter) (otelcol_exporter_queue_size{exporter=~"otlp/tempo"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~"otlp/tempo"}, 1) or
-                otelcol_exporter_queue_size{exporter=~"otlphttp/loki"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~"otlphttp/loki"}, 1) or
+                max by (exporter) (otelcol_exporter_queue_size{exporter=~"otlp/tempo"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~"otlp/tempo"}, 1)
+                or
+                otelcol_exporter_queue_size{exporter=~"otlphttp/loki"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~"otlphttp/loki"}, 1)
+                or
                 otelcol_exporter_queue_size{exporter=~"otlphttp/langfuse"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~"otlphttp/langfuse"}, 1)) > 0.8
               instant: true
               intervalMs: 1000
@@ -133,9 +134,11 @@ groups:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
               expr: >-
-                max by (exporter) (otelcol_exporter_queue_age_seconds{exporter=~"otlp/tempo"} or
-                otelcol_exporter_queue_age_seconds{exporter=~"otlphttp/loki"} or
-                otelcol_exporter_queue_age_seconds{exporter=~"otlphttp/langfuse"}) > 300
+                max by (exporter) (otelcol_exporter_queue_size{exporter=~"otlp/tempo"}
+                or
+                otelcol_exporter_queue_size{exporter=~"otlphttp/loki"}
+                or
+                otelcol_exporter_queue_size{exporter=~"otlphttp/langfuse"}) > 0
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200
@@ -151,14 +154,14 @@ groups:
       - uid: longtermism-collector-storage-pressure
         title: Collector persistent storage pressure
         condition: B
-        for: 5m
+        for: 2m
         noDataState: OK
         execErrState: Error
         labels:
-          severity: warning
+          severity: critical
           domain: storage
         annotations:
-          summary: Collector persistent storage exceeded 80 percent utilization.
+          summary: A Collector exporter rejected records before queueing (queue capacity or persistent storage failure).
           runbook: docs/observability/grafana-alert-response
         data:
           - refId: A
@@ -168,9 +171,11 @@ groups:
               datasource: { type: prometheus, uid: prometheus }
               editorMode: code
               expr: >-
-                max by (storage) (longtermism_collector_storage_utilization_ratio{storage=~"file_storage/tempo"} or
-                longtermism_collector_storage_utilization_ratio{storage=~"file_storage/loki"} or
-                longtermism_collector_storage_utilization_ratio{storage=~"file_storage/langfuse"}) > 0.8
+                (sum by (exporter) (increase(otelcol_exporter_enqueue_failed_spans_total{exporter=~"otlp/tempo"}[5m]))
+                or
+                sum by (exporter) (increase(otelcol_exporter_enqueue_failed_log_records_total{exporter=~"otlphttp/loki"}[5m]))
+                or
+                sum by (exporter) (increase(otelcol_exporter_enqueue_failed_spans_total{exporter=~"otlphttp/langfuse"}[5m]))) > 0
               instant: true
               intervalMs: 1000
               maxDataPoints: 43200

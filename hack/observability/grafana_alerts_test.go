@@ -73,12 +73,12 @@ func TestGrafanaAlertRulesContract(t *testing.T) {
 		{
 			name:           "HTTP error rate",
 			uid:            "longtermism-http-error-rate",
-			queryFragments: []string{"rate(", "longtermism_http_server_request_count", "http_response_status_class", "5xx", "clamp_min", ">"},
+			queryFragments: []string{"rate(", "longtermism_http_server_request_count_total", "http_response_status_class", "5xx", "clamp_min", ">"},
 		},
 		{
 			name:           "exporter delivery failure",
 			uid:            "longtermism-exporter-delivery-failure",
-			queryFragments: []string{"otelcol_exporter_send_failed", "otelcol_exporter_enqueue_failed", ">"},
+			queryFragments: []string{"otelcol_exporter_send_failed", ">"},
 			components:     []string{"otlp/tempo", "otlphttp/loki", "otlphttp/langfuse"},
 		},
 		{
@@ -90,13 +90,14 @@ func TestGrafanaAlertRulesContract(t *testing.T) {
 		{
 			name:           "exporter queue age",
 			uid:            "longtermism-exporter-queue-age",
-			queryFragments: []string{"queue", "age", ">"},
+			queryFragments: []string{"otelcol_exporter_queue_size", ">"},
 			components:     []string{"otlp/tempo", "otlphttp/loki", "otlphttp/langfuse"},
 		},
 		{
 			name:           "Collector storage pressure",
 			uid:            "longtermism-collector-storage-pressure",
-			queryFragments: []string{"longtermism_collector_storage_utilization_ratio", ">"},
+			queryFragments: []string{"otelcol_exporter_enqueue_failed", ">"},
+			components:     []string{"otlp/tempo", "otlphttp/loki", "otlphttp/langfuse"},
 		},
 	}
 
@@ -404,9 +405,20 @@ func assertComponentMetrics(t *testing.T, rule alertRule, query string) {
 	components := []string{"otlp/tempo", "otlphttp/loki", "otlphttp/langfuse"}
 	if rule.UID == "longtermism-exporter-delivery-failure" {
 		for _, component := range components {
-			metrics := []string{"otelcol_exporter_send_failed_spans_total", "otelcol_exporter_enqueue_failed_spans_total"}
+			metrics := []string{"otelcol_exporter_send_failed_spans_total"}
 			if component == "otlphttp/loki" {
-				metrics = []string{"otelcol_exporter_send_failed_log_records_total", "otelcol_exporter_enqueue_failed_log_records_total"}
+				metrics = []string{"otelcol_exporter_send_failed_log_records_total"}
+			}
+			assertMetricSelectorsForComponent(t, rule, query, component, metrics)
+		}
+	}
+	if rule.UID == "longtermism-collector-storage-pressure" {
+		// 存储压力校准到真实信号：官方 exporterhelper 文档明确 enqueue 失败
+		// 覆盖"持久队列底层存储无法接收数据（磁盘不足 / I/O 错误）"。
+		for _, component := range components {
+			metrics := []string{"otelcol_exporter_enqueue_failed_spans_total"}
+			if component == "otlphttp/loki" {
+				metrics = []string{"otelcol_exporter_enqueue_failed_log_records_total"}
 			}
 			assertMetricSelectorsForComponent(t, rule, query, component, metrics)
 		}
@@ -417,13 +429,10 @@ func assertComponentMetrics(t *testing.T, rule alertRule, query string) {
 		}
 	}
 	if rule.UID == "longtermism-exporter-queue-age" {
+		// 队列年龄校准到真实信号：`for: 5m` 承载"持续积压"的时长语义，
+		// 表达式只用真实存在的 otelcol_exporter_queue_size。
 		for _, component := range components {
-			assertQueueAgeSelectorForComponent(t, rule, query, component)
-		}
-	}
-	if rule.UID == "longtermism-collector-storage-pressure" {
-		for _, storage := range []string{"file_storage/tempo", "file_storage/loki", "file_storage/langfuse"} {
-			assertStorageSelector(t, rule, query, storage)
+			assertMetricSelectorsForComponent(t, rule, query, component, []string{"otelcol_exporter_queue_size"})
 		}
 	}
 }
@@ -443,28 +452,6 @@ func assertMetricSelectorsForComponent(t *testing.T, rule alertRule, query, comp
 			t.Fatalf("rule %q must scope %q to exporter %q", rule.UID, metric, component)
 		}
 	}
-}
-
-func assertQueueAgeSelectorForComponent(t *testing.T, rule alertRule, query, component string) {
-	t.Helper()
-	pattern := regexp.MustCompile(`(?i)[a-z_:][a-z0-9_:]*queue[a-z0-9_:]*age[a-z0-9_:]*\s*\{([^}]*)\}`)
-	for _, selector := range pattern.FindAllStringSubmatch(query, -1) {
-		if hasExporterSelector(selector[1], component) {
-			return
-		}
-	}
-	t.Fatalf("rule %q must scope a queue-age metric to exporter %q", rule.UID, component)
-}
-
-func assertStorageSelector(t *testing.T, rule alertRule, query, storage string) {
-	t.Helper()
-	pattern := regexp.MustCompile(`longtermism_collector_storage_utilization_ratio\s*\{([^}]*)\}`)
-	for _, selector := range pattern.FindAllStringSubmatch(query, -1) {
-		if strings.Contains(selector[1], storage) && regexp.MustCompile(`(?:^|,)\s*storage\s*=~?\s*"`).MatchString(selector[1]) {
-			return
-		}
-	}
-	t.Fatalf("rule %q must scope storage evidence to %q", rule.UID, storage)
 }
 
 func hasExporterSelector(query, component string) bool {

@@ -32,13 +32,13 @@ func TestGrafanaOverviewDashboardContract(t *testing.T) {
 			name:           "request rate uses Prometheus",
 			title:          "HTTP Request Rate",
 			datasourceUID:  "prometheus",
-			queryFragments: []string{"longtermism_http_server_request_count"},
+			queryFragments: []string{"longtermism_http_server_request_count_total"},
 		},
 		{
 			name:           "error rate uses Prometheus",
 			title:          "HTTP Error Rate",
 			datasourceUID:  "prometheus",
-			queryFragments: []string{"longtermism_http_server_request_count", "http_response_status_class", "5xx"},
+			queryFragments: []string{"longtermism_http_server_request_count_total", "http_response_status_class", "5xx"},
 		},
 		{
 			name:           "latency uses Prometheus",
@@ -50,13 +50,37 @@ func TestGrafanaOverviewDashboardContract(t *testing.T) {
 			name:           "export failure uses Collector metrics",
 			title:          "Collector Export Failures",
 			datasourceUID:  "prometheus",
-			queryFragments: []string{"otelcol_exporter"},
+			queryFragments: []string{"otelcol_exporter_send_failed"},
+		},
+		{
+			name:           "enqueue failure is a separate ingress fact",
+			title:          "Collector Enqueue Failures",
+			datasourceUID:  "prometheus",
+			queryFragments: []string{"otelcol_exporter_enqueue_failed"},
 		},
 		{
 			name:           "queue backlog uses Collector metrics",
 			title:          "Collector Queue Backlog",
 			datasourceUID:  "prometheus",
 			queryFragments: []string{"otelcol_exporter_queue"},
+		},
+		{
+			name:           "queue age derives from real queue size",
+			title:          "Collector Queue Age",
+			datasourceUID:  "prometheus",
+			queryFragments: []string{"avg_over_time", "otelcol_exporter_queue_size"},
+		},
+		{
+			name:           "scrape health is the pull plane",
+			title:          "Prometheus Scrape Health",
+			datasourceUID:  "prometheus",
+			queryFragments: []string{"up"},
+		},
+		{
+			name:           "score worker failure uses worker telemetry",
+			title:          "Score Worker Delivery Failures",
+			datasourceUID:  "prometheus",
+			queryFragments: []string{"longtermism_score_projection_total", "status=~", "failed_", "dropped_"},
 		},
 		{
 			name:          "logs link to Tempo trace",
@@ -79,8 +103,14 @@ func TestGrafanaOverviewDashboardContract(t *testing.T) {
 			if tt.title == "Collector Export Failures" {
 				assertComponentScopedFailureQueries(t, panel)
 			}
+			if tt.title == "Collector Enqueue Failures" {
+				assertComponentScopedEnqueueQueries(t, panel)
+			}
 			if tt.title == "Collector Queue Backlog" {
 				assertComponentScopedQueueQueries(t, panel)
+			}
+			if tt.title == "Collector Queue Age" {
+				assertComponentScopedQueueAgeQueries(t, panel)
 			}
 			if tt.requiresTraceCorrelation {
 				assertLokiTempoDerivedField(t, panel)
@@ -260,13 +290,32 @@ func assertLokiTempoDerivedField(t *testing.T, panel map[string]any) {
 
 func assertComponentScopedFailureQueries(t *testing.T, panel map[string]any) {
 	t.Helper()
+	// 推送平面失败只包含 send_failed：enqueue 失败属于 queue/storage ingress
+	// 事实（T132 校准后的独立面板），两个平面不得在同一面板混用。
 	requirements := []struct {
 		component string
 		fragments []string
 	}{
-		{"otlp/tempo", []string{"otelcol_exporter_send_failed_spans_total", "otelcol_exporter_enqueue_failed_spans_total"}},
-		{"otlphttp/loki", []string{"otelcol_exporter_send_failed_log_records_total", "otelcol_exporter_enqueue_failed_log_records_total"}},
-		{"otlphttp/langfuse", []string{"otelcol_exporter_send_failed_spans_total", "otelcol_exporter_enqueue_failed_spans_total"}},
+		{"otlp/tempo", []string{"otelcol_exporter_send_failed_spans_total"}},
+		{"otlphttp/loki", []string{"otelcol_exporter_send_failed_log_records_total"}},
+		{"otlphttp/langfuse", []string{"otelcol_exporter_send_failed_spans_total"}},
+	}
+	for _, requirement := range requirements {
+		assertTargetHasComponentMetrics(t, panel, requirement.component, requirement.fragments)
+	}
+}
+
+func assertComponentScopedEnqueueQueries(t *testing.T, panel map[string]any) {
+	t.Helper()
+	// 入队失败按信号类型映射：tempo/langfuse 是 spans，loki 是 log records
+	// （与 T120 失败域目录的组件事实一致）。
+	requirements := []struct {
+		component string
+		fragments []string
+	}{
+		{"otlp/tempo", []string{"otelcol_exporter_enqueue_failed_spans_total"}},
+		{"otlphttp/loki", []string{"otelcol_exporter_enqueue_failed_log_records_total"}},
+		{"otlphttp/langfuse", []string{"otelcol_exporter_enqueue_failed_spans_total"}},
 	}
 	for _, requirement := range requirements {
 		assertTargetHasComponentMetrics(t, panel, requirement.component, requirement.fragments)
@@ -277,6 +326,15 @@ func assertComponentScopedQueueQueries(t *testing.T, panel map[string]any) {
 	t.Helper()
 	for _, component := range []string{"otlp/tempo", "otlphttp/loki", "otlphttp/langfuse"} {
 		assertTargetHasComponentMetrics(t, panel, component, []string{"otelcol_exporter_queue_size", "otelcol_exporter_queue_capacity"})
+	}
+}
+
+// assertComponentScopedQueueAgeQueries 只要求真实存在的 queue_size 信号：
+// 年龄是派生事实（5m 平均深度），capacity 不属于该面板的语义。
+func assertComponentScopedQueueAgeQueries(t *testing.T, panel map[string]any) {
+	t.Helper()
+	for _, component := range []string{"otlp/tempo", "otlphttp/loki", "otlphttp/langfuse"} {
+		assertTargetHasComponentMetrics(t, panel, component, []string{"otelcol_exporter_queue_size"})
 	}
 }
 

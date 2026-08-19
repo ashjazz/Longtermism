@@ -9,7 +9,7 @@
       "title": "HTTP Request Rate",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "sum by (http_route, http_request_method) (rate(longtermism_http_server_request_count[5m]))" }],
+      "targets": [{ "refId": "A", "expr": "sum by (http_route, http_request_method) (rate(longtermism_http_server_request_count_total[5m]))" }],
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 }
     },
     {
@@ -17,7 +17,7 @@
       "title": "HTTP Error Rate",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [{ "refId": "A", "expr": "sum(rate(longtermism_http_server_request_count{http_response_status_class=\"5xx\"}[5m])) / clamp_min(sum(rate(longtermism_http_server_request_count[5m])), 1)" }],
+      "targets": [{ "refId": "A", "expr": "sum(rate(longtermism_http_server_request_count_total{http_response_status_class=\"5xx\"}[5m])) / clamp_min(sum(rate(longtermism_http_server_request_count_total[5m])), 1)" }],
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 }
     },
     {
@@ -31,18 +31,33 @@
     {
       "id": 4,
       "title": "Collector Export Failures",
+      "description": "Push-plane failures: exporter send attempts failed per component. Pull (scrape) and Grafana query failures live in their own panels; enqueue failures are queue/storage ingress facts and live in the Enqueue Failures panel.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "refId": "A", "expr": "otelcol_exporter_send_failed_spans_total{exporter=~\"otlp/tempo\"} + otelcol_exporter_enqueue_failed_spans_total{exporter=~\"otlp/tempo\"}" },
-        { "refId": "B", "expr": "otelcol_exporter_send_failed_log_records_total{exporter=~\"otlphttp/loki\"} + otelcol_exporter_enqueue_failed_log_records_total{exporter=~\"otlphttp/loki\"}" },
-        { "refId": "C", "expr": "otelcol_exporter_send_failed_spans_total{exporter=~\"otlphttp/langfuse\"} + otelcol_exporter_enqueue_failed_spans_total{exporter=~\"otlphttp/langfuse\"}" }
+        { "refId": "A", "expr": "otelcol_exporter_send_failed_spans_total{exporter=~\"otlp/tempo\"}" },
+        { "refId": "B", "expr": "otelcol_exporter_send_failed_log_records_total{exporter=~\"otlphttp/loki\"}" },
+        { "refId": "C", "expr": "otelcol_exporter_send_failed_spans_total{exporter=~\"otlphttp/langfuse\"}" }
       ],
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
     },
     {
+      "id": 13,
+      "title": "Collector Enqueue Failures",
+      "description": "Queue ingress failures: the queue reached capacity or the persistent storage could not accept data (disk full or I/O error). Distinct from exporter send failures.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "otelcol_exporter_enqueue_failed_spans_total{exporter=~\"otlp/tempo\"}" },
+        { "refId": "B", "expr": "otelcol_exporter_enqueue_failed_log_records_total{exporter=~\"otlphttp/loki\"}" },
+        { "refId": "C", "expr": "otelcol_exporter_enqueue_failed_spans_total{exporter=~\"otlphttp/langfuse\"}" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    },
+    {
       "id": 5,
       "title": "Collector Queue Backlog",
+      "description": "Queue capacity utilization per exporter; >80 percent is the saturation alert threshold.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
@@ -50,7 +65,29 @@
         { "refId": "B", "expr": "otelcol_exporter_queue_size{exporter=~\"otlphttp/loki\"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~\"otlphttp/loki\"}, 1)" },
         { "refId": "C", "expr": "otelcol_exporter_queue_size{exporter=~\"otlphttp/langfuse\"} / clamp_min(otelcol_exporter_queue_capacity{exporter=~\"otlphttp/langfuse\"}, 1)" }
       ],
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+    },
+    {
+      "id": 14,
+      "title": "Collector Queue Age",
+      "description": "Sustained backlog proxy: five-minute average queue depth per exporter. This Collector version exposes no native queue-age metric, so age is derived from real queue_size samples.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "avg_over_time(otelcol_exporter_queue_size{exporter=~\"otlp/tempo\"}[5m])" },
+        { "refId": "B", "expr": "avg_over_time(otelcol_exporter_queue_size{exporter=~\"otlphttp/loki\"}[5m])" },
+        { "refId": "C", "expr": "avg_over_time(otelcol_exporter_queue_size{exporter=~\"otlphttp/langfuse\"}[5m])" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+    },
+    {
+      "id": 15,
+      "title": "Prometheus Scrape Health",
+      "description": "Pull-plane health: target up state. Scrape failures are pull facts and must never be read as exporter push failures.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "up" }],
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 24 }
     },
     {
       "id": 6,
@@ -58,7 +95,7 @@
       "type": "logs",
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [{ "refId": "A", "expr": "{service_name=\"longtermism\"} | trace_id != \"\" | line_format \"{{.trace_id}}\"" }],
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 }
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 30 }
     },
     {
       "id": 7,
@@ -121,7 +158,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "refId": "A", "expr": "sum by (backend, status) (rate(longtermism_score_projection_total[5m]))", "legendFormat": "{{backend}} · {{status}}" }],
       "fieldConfig": { "defaults": { "unit": "ops", "min": 0 }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 43 }
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 }
     },
     {
       "id": 12,
@@ -131,7 +168,17 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [{ "refId": "A", "expr": "max by (backend) (longtermism_score_worker_queue)", "legendFormat": "{{backend}}" }],
       "fieldConfig": { "defaults": { "unit": "short", "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }] } }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 43 }
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 }
+    },
+    {
+      "id": 16,
+      "title": "Score Worker Delivery Failures",
+      "description": "Score worker terminal failure states (failed_permanent, failed_shutdown_timeout, dropped_queue_full) per backend. These are score-worker telemetry facts, not exporter or scrape failures.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (backend, status) (rate(longtermism_score_projection_total{status=~\"failed_.*|dropped_.*\"}[5m]))", "legendFormat": "{{backend}} · {{status}}" }],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 48 }
     }
   ]
 }
