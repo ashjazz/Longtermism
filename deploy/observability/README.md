@@ -8,36 +8,45 @@ Grafana profile 的 Compose、Collector、datasource、dashboard 与 alert provi
 
 ## Profile 边界与实施顺序
 
-| Profile | 基础设施平面 | AI 平面 | 状态与边界 |
-| --- | --- | --- | --- |
-| Grafana 主线 | OTel Collector + Prometheus + Loki + Tempo + Grafana | Langfuse trace/score | **优先实现**。先完成 Grafana 主线的正常投递、查询、隐私和恢复证据，才可声明首个真实后端闭环。 |
-| SigNoz 备选 | OTel Collector + SigNoz | Langfuse trace/score | **后置实施**。仅替换基础设施 logs/metrics/traces 后端；不得改变应用 OTLP 出口、AI marker、HTTP 契约或 SmokeReport schema。仅在 Grafana 主线 US1-US3 验收后开始。 |
+| Profile    | 基础设施平面                                               | AI 平面                | 状态与边界                                                                                                                     |
+| ---------- | ---------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Grafana 主线 | OTel Collector + Prometheus + Loki + Tempo + Grafana | Langfuse trace/score | **优先实现**。先完成 Grafana 主线的正常投递、查询、隐私和恢复证据，才可声明首个真实后端闭环。                                                                     |
+| SigNoz 备选  | OTel Collector + SigNoz                              | Langfuse trace/score | **后置实施**。仅替换基础设施 logs/metrics/traces 后端；不得改变应用 OTLP 出口、AI marker、HTTP 契约或 SmokeReport schema。仅在 Grafana 主线 US1-US3 验收后开始。 |
 
 Langfuse 始终是 AI 语义平面：它接收带 AI marker 的 trace 投影，并承载独立的 score 投影；它不替代 Prometheus、Loki、Tempo 或 SigNoz 的基础设施职责。纯基础设施请求不得进入 Langfuse。
 
 ## 资产索引
 
-| 路径 | 责任 | 当前状态 | 对应任务 |
-| --- | --- | --- | --- |
-| `versions.env` | 唯一可读镜像 tag 矩阵 | 已实现；未有 E2E digest | T003 |
-| `compose.langfuse.yaml` | Langfuse 自托管与首次 cold bootstrap | 已实现；含 Langfuse、ClickHouse、Redis、Postgres 与仅内部可见的 MinIO，不解析 Collector project key | T066A |
-| `compose.grafana.yaml` | Grafana 主线的 Collector/三信号/Grafana profile | 已实现；与 Langfuse Compose 组合后构成 warm-start 主线 | T056、T066A |
-| `.env.local.example` | 无凭据本地运行配置模板 | 已实现；复制出的 `.env.local` 被忽略 | T066A |
-| `collector/collector-grafana.yaml` | Grafana 主线 Collector ingress/fan-out | 已实现 | T054 |
-| `grafana/` | datasource、dashboard、alert provisioning | 已实现 | T059-T062 |
-| `compose.signoz.yaml` | SigNoz 备选 Compose profile | 计划契约，尚未创建 | T141 |
-| `collector/collector-signoz.yaml` | SigNoz 三信号与 Langfuse AI fan-out | 计划契约，尚未创建 | T142 |
-| `signoz/dashboard.json` | SigNoz 专用运营面板 | 计划契约，尚未创建 | T145 |
+| 路径                                 | 责任                                        | 当前状态                                                                             | 对应任务       |
+| ---------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------- | ---------- |
+| `versions.env`                     | 唯一可读镜像 tag 矩阵                             | 已实现；未有 E2E digest                                                                | T003       |
+| `compose.langfuse.yaml`            | Langfuse 自托管与首次 cold bootstrap            | 已实现；含 Langfuse、ClickHouse、Redis、Postgres 与仅内部可见的 MinIO，不解析 Collector project key | T066A      |
+| `compose.grafana.yaml`             | Grafana 主线的 Collector/三信号/Grafana profile | 已实现；与 Langfuse Compose 组合后构成 warm-start 主线                                       | T056、T066A |
+| `.env.local.example`               | 无凭据本地运行配置模板                               | 已实现；复制出的 `.env.local` 被忽略                                                        | T066A      |
+| `collector/collector-grafana.yaml` | Grafana 主线 Collector ingress/fan-out      | 已实现                                                                              | T054       |
+| `grafana/`                         | datasource、dashboard、alert provisioning   | 已实现                                                                              | T059-T062  |
+| `compose.signoz.yaml`              | SigNoz 备选 Compose profile                 | 计划契约，尚未创建                                                                        | T141       |
+| `collector/collector-signoz.yaml`  | SigNoz 三信号与 Langfuse AI fan-out           | 计划契约，尚未创建                                                                        | T142       |
+| `signoz/dashboard.json`            | SigNoz 专用运营面板                             | 计划契约，尚未创建                                                                        | T145       |
 
 ## 命令状态
 
-| 命令 | 状态 | 说明 |
-| --- | --- | --- |
-| `bash hack/observability/config_check_test.sh` | 当前可用 | 无 Docker、无真实凭据的静态 checker 契约测试。 |
-| `bash hack/observability/config_check.sh` | 当前可用 | 检查已存在的 profile 资产；在 Compose/Collector 尚未创建时会以缺失资产失败。 |
-| `make obs-config-check` | **计划契约（T009）** | 将静态 checker 接入 Make；当前不可调用。 |
-| `make obs-grafana-e2e` | 已实现（显式 opt-in） | 启动 Grafana profile、打印健康状态并执行查询式 infra smoke；失败仍关闭当前 profile，报告目录不删除。 |
-| `make obs-signoz-e2e` | **计划契约（T148）** | 仅在 Grafana 主线验收后提供；当前不可调用。 |
+| 命令                                             | 状态                            | 说明                                                                                               |
+| ---------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `bash hack/observability/config_check_test.sh` | 当前可用                          | 无 Docker、无真实凭据的静态 checker 契约测试。                                                                  |
+| `bash hack/observability/config_check.sh`      | 当前可用                          | 检查已存在的 profile 资产；在 Compose/Collector 尚未创建时会以缺失资产失败。                                             |
+| `make obs-config-check`                        | **计划契约（T009）**                | 将静态 checker 接入 Make；当前不可调用。                                                                      |
+| `make obs-grafana-e2e`                         | 已实现（显式 opt-in）                | 启动 Grafana profile、执行 infra → chat → score → privacy 四个查询式 smoke 聚合门禁；任一失败仍关闭当前 profile，报告目录不删除。 |
+| `make obs-chat-smoke`                          | 已实现（显式 opt-in）                | 受保护 live chat smoke：只查询已运行服务，要求 `--live` 与全部 T181 引用。                                            |
+| `make obs-langfuse-score-smoke`                | 已实现（显式 opt-in）                | 验证上一次真实 chat run 的异步 score 投影（本地 evidence 先于平台结果）。                                               |
+| `make obs-privacy-platform-smoke`              | 已实现（显式 opt-in）                | 八 surface 隐私组合 smoke；synthetic canary 未脱敏命中必须为 0。                                                |
+| `make obs-direct-langfuse-smoke`               | 已实现（诊断）                       | 只诊断 Langfuse ingestion 可达与凭据可用；不产生报告，**不属于** `obs-grafana-e2e` 通过依据。                             |
+| `make obs-exporter-failure-smoke`              | 已实现（显式 opt-in，能力收敛中）          | 单出口故障注入（tempo 目标）；CLI 默认 composition 当前 fail-fast（能力哨兵），命令与预检已装配。                                |
+| `make obs-persistent-queue-smoke`              | 已实现（显式 opt-in，能力收敛中）          | 跨 Collector 重启的持久队列恢复；同样受 CLI 能力哨兵约束。                                                            |
+| `make obs-score-worker-failure-smoke`          | 已实现（显式 opt-in，能力收敛中）          | score worker 故障（langfuse-api case）；同样受 CLI 能力哨兵约束。                                               |
+| `make obs-resilience-e2e`                      | 已实现（显式 opt-in）                | 启动 profile 后由 CLI 串行编排 7 个子场景；trap 先 unpause 再 down，中断后 paused services 必被恢复。                    |
+| `make obs-reset`                               | 已实现（破坏性，`CONFIRM_RESET=1` 门控） | label-scoped 重置：只删当前 project 的 observability 卷与 `run-*` 残留，绝不 prune，不触碰应用数据。                     |
+| `make obs-signoz-e2e`                          | **计划契约（T148）**                | 仅在 Grafana 主线验收后提供；当前不可调用。                                                                       |
 
 所有真实 profile 必须使用显式环境变量、secret file 或密钥管理器注入凭据。禁止把密钥、token、完整 OTLP header 或生产 endpoint 写入本目录的可提交文件；本地 override 采用已忽略的 `*.local.yaml` 或 `.env.local`。
 
@@ -65,7 +74,6 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
    Grafana 管理员信息或 Collector OTLP 变量。
 
    本地 Compose 网络中请使用服务 DNS，而不是容器名称或宿主机端口。例如：
-
    ```dotenv
    LANGFUSE_DATABASE_URL=postgresql://langfuse:<LANGFUSE_POSTGRES_PASSWORD>@langfuse-db:5432/langfuse
    LANGFUSE_DIRECT_URL=postgresql://langfuse:<LANGFUSE_POSTGRES_PASSWORD>@langfuse-db:5432/langfuse
@@ -76,7 +84,6 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
    LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse
    LANGFUSE_MINIO_ROOT_USER=langfuse
    ```
-
    `LANGFUSE_CLICKHOUSE_PASSWORD`、`LANGFUSE_CLICKHOUSE_ADMIN_PASSWORD`、`LANGFUSE_MINIO_ROOT_USER`、`LANGFUSE_MINIO_ROOT_PASSWORD` 与
    `LANGFUSE_MINIO_SECRET_ACCESS_KEY` 都是你本地生成的强随机值；其中 ClickHouse 密码必须用
    `openssl rand -hex 32` 分别生成（64 位小写十六进制），其余值也应独立生成并长期保存。
@@ -97,12 +104,10 @@ cp deploy/observability/.env.local.example deploy/observability/.env.local
    `LANGFUSE_ENCRYPTION_KEY` 必须用 `openssl rand -hex 32` 生成一次并长期保留；它同时注入
    Langfuse web 与 worker，用于解密既有数据中的加密字段，不能在已有数据卷上随意更换。
    Headless project key 必须保留 Langfuse 识别的前缀，可分别生成：
-
    ```bash
    printf 'lf_pk_%s\n' "$(openssl rand -hex 24)"
    printf 'lf_sk_%s\n' "$(openssl rand -hex 24)"
    ```
-
    将结果只写入被忽略的 `.env.local`，不要复制到命令历史、日志或本模板。
 2. 执行 `make obs-langfuse-bootstrap-up`。它只启动 Langfuse web/worker 与它们依赖的
    Postgres、ClickHouse、Redis、MinIO 及一次性建桶任务，并等待可验证的健康检查完成。
@@ -133,6 +138,14 @@ profile；不要通过 `down -v` 或重新 bootstrap 来轮换 key。
 如果首次初始化尚未进入 warm-start，可以用 `make obs-langfuse-bootstrap-down` 停止 bootstrap
 服务；完整 Grafana profile 已在运行时请只使用 `make obs-grafana-down`，避免留下仍依赖
 Langfuse 的 Collector/基础设施容器。
+
+> 注意：compose 插值把 `LANGFUSE_INIT_*` 与 `LANGFUSE_EE_LICENSE_KEY` 声明为必填，因此
+> 任何 profile 命令（含 `down`/`ps`）都要求这些变量存在。它们只在空库时被 headless init
+> 幂等消费；warm start 只需非空占位值。推荐把这些变量持久化在被忽略的
+> `deploy/observability/.env.local`（compose 已通过 `--env-file` 加载），避免每个新
+> shell 重新 export；`LANGFUSE_INIT_PROJECT_PUBLIC_KEY`/`_SECRET_KEY` 应与项目实际
+> key 一致（可从 `LANGFUSE_OTLP_AUTHORIZATION` 的 base64(pk:sk) 反推），保证万一
+> volume 重建后 bootstrap 能还原出与 Collector 一致的凭据。
 
 ### 非首次启动：常规 warm start
 
@@ -165,32 +178,29 @@ fail-fast，避免用空 header 启动一个看似健康、实际丢失 AI 平�
 先完成下列顺序，再执行它：
 
 1. 依照上面的冷启动或 warm-start 路径完成 `make obs-grafana-up`（首次创建 key 后也必须
-   执行这一步）。该 target 会先创建被忽略的
-   `resource/log/observability`，将目录设为当前用户主组可读，并将同一 GID 传给非 root
-   Collector；Collector 仅以只读 bind mount 读取该 JSONL 目录。Collector 自己的持久队列由
-   profile 的 one-shot initializer 初始化，应用必须由执行此命令的
-   同一普通用户启动；不要用 `sudo` 启动应用，也不要将该目录替换为符号链接。
+   执行这一步）。应用完成日志经 OTLP 直接进入 Collector → Loki native OTLP，本地 smoke
+   **不再依赖**宿主机 JSONL 文件、filelog 采集、bind mount 或文件 GID 共享；Collector
+   自己的持久队列仍由 profile 的 one-shot initializer 初始化，应用必须由执行此命令的
+   同一普通用户启动，不要用 `sudo`。
 2. 复制 `manifest/config/config.grafana-smoke.example.yaml` 为已忽略的
    `config.grafana-smoke.local.yaml`。这是**独立配置文件**，不会与 `config.yaml` 或
    `config.local.yaml` 自动合并；它会将应用绑定为 `127.0.0.1:8000`，改为 `collector` mode、
-   指向 `127.0.0.1:4317`，并显式启用 trace、metrics、项目内 JSONL 日志目录和 smoke 路由。
-   不要在共享网络上以全网卡监听的方式启用该无认证探测路由。
+   指向 `127.0.0.1:4317`，显式启用 trace、metrics、OTLP 日志与 smoke 路由，并通过
+   `observability.smoke.ai_plane.authorization_env` 引用 marker-count AI-negative 端点的
+   只读 credential。不要在共享网络上以全网卡监听的方式启用该无认证探测路由。
 
-   如果你此前已创建过该 `.local.yaml`，请合并示例新增的
-   `observability.logs.path: resource/log/observability`，或重新复制示例后再恢复自己的非敏感设置；
-   否则旧文件仍会沿用容器专用的 `/var/log/longtermism` 默认路径。
+   如果你此前已创建过该 `.local.yaml`，请合并示例新增的 `logs_transport: otlp`、
+   `local_jsonl_enabled: false` 与 `ai_plane.authorization_env` 设置，或重新复制示例后再
+   恢复自己的非敏感设置；旧文件中的 `observability.logs.path` JSONL 前置已废弃。
 3. 在另一个终端以显式配置启动应用：
-
    ```bash
    GF_GCFG_FILE=manifest/config/config.grafana-smoke.local.yaml go run .
    ```
-
    若应用不在默认的 `http://127.0.0.1:8000`，额外设置 `LONGTERMISM_SMOKE_APP_BASE_URL`，
    并仍将该应用入口限制在 loopback。GoFrame 同样支持等价的
    `go run . --gf.gcfg.file=manifest/config/config.grafana-smoke.local.yaml` 形式。
 4. 仅在本地 shell、secret 文件或密钥管理器中设置下列查询引用；不要把 credential 值写入
    可提交的 YAML、Makefile 或文档：
-
    ```bash
    export LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL=http://127.0.0.1:9090
    export LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL=http://127.0.0.1:3100
@@ -201,11 +211,14 @@ fail-fast，避免用空 header 启动一个看似健康、实际丢失 AI 平�
    export LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL='<local read-only credential>'
    make obs-infra-smoke
    ```
-
    Prometheus、Loki、Tempo 和 Langfuse 地址是 Grafana profile 发布到 loopback 的本地查询
-   入口；AI-plane 地址是第 3 步启动的应用入口。credential 的格式由对应的 query client
-   契约决定。Make target 会先检查全部七项必填引用，缺失时只打印变量名和本文档位置，绝不
-   打印值。
+   入口；AI-plane 地址是第 3 步启动的应用入口。`LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL`
+   同时是应用侧 `marker-count` 端点的只读 credential（示例通过
+   `observability.smoke.ai_plane.authorization_env` 引用同一个环境变量），因此应用启动
+   前必须先 export 它；缺失时 marker-count 端口保持关闭。credential 的格式由对应的 query
+   client 契约决定：Langfuse 查询 credential 是 `base64(<public key>:<secret key>)`
+   （顺序不能颠倒），与 OTLP header 的 base64 部分一致。Make target 会先检查全部七项
+   必填引用，缺失时只打印变量名和本文档位置，绝不打印值。
 
 `make obs-grafana-e2e` 会代为执行第 1 步，并在结束时关闭当前 Compose profile；它仍假定
 第 2、3、4 步已经完成。它打印 `ps` 仅用于诊断，唯一的通过结论来自 `obs-infra-smoke` 写出的
