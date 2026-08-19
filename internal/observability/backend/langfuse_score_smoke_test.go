@@ -276,3 +276,51 @@ func scoreResultsForT179(target smoke.ScoreSmokeProjectionTarget, count int) str
 	encoded, _ := json.Marshal(map[string]any{"data": data, "meta": map[string]any{"cursor": nil}})
 	return string(encoded)
 }
+
+// T130d：ScoreCountByID 是 score worker 故障场景的幂等断言事实源——统计
+// 平台上该投影 ID 的 score 数量。只读封闭查询：精确 id 过滤 + 受限窗口 +
+// 有界 limit；畸形文档拒绝。
+func TestLangfuseScoreSmokeBackendScoreCountByIDQueriesExactIdentity(t *testing.T) {
+	target := scoreSmokeTargetForT179()
+	store := &t179ScoreLookup{records: []localeval.ScoreProjectionSnapshot{scoreSnapshotForT179(target, langfuse.ScoreProjectionStatusSent, 2)}}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		query := request.URL.Query()
+		if query.Get("id") != target.ProjectionID || query.Get("fields") != "subject" || query.Get("limit") != "8" ||
+			query.Get("fromTimestamp") != target.StartedAt.Format(time.RFC3339Nano) || query.Get("toTimestamp") != target.Deadline.Format(time.RFC3339Nano) {
+			t.Fatalf("query=%v, want exact id/window and bounded fields", query)
+		}
+		_, _ = writer.Write([]byte(`{"data":[{"id":"` + target.ProjectionID + `"},{"id":"` + target.ProjectionID + `"}],"meta":{"limit":8,"cursor":null}}`))
+	}))
+	defer server.Close()
+
+	backend, err := NewLangfuseScoreSmokeBackend(LangfuseScoreSmokeBackendConfig{BaseURL: server.URL, Credential: "cHVibGljOnJlYWQtc2VjcmV0", Timeout: time.Second, ProjectionStore: store})
+	if err != nil {
+		t.Fatalf("constructor error = %v", err)
+	}
+	count, err := backend.ScoreCountByID(context.Background(), target.ProjectionID, target.StartedAt, target.Deadline, 8)
+	if err != nil || count != 2 {
+		t.Fatalf("ScoreCountByID() = (%d, %v), want 2（重复投递必须可计数）", count, err)
+	}
+	if _, err := backend.ScoreCountByID(context.Background(), "", target.StartedAt, target.Deadline, 8); err == nil {
+		t.Fatal("empty projection id must fail closed")
+	}
+	if _, err := backend.ScoreCountByID(context.Background(), target.ProjectionID, target.Deadline, target.StartedAt, 8); err == nil {
+		t.Fatal("reversed window must fail closed")
+	}
+}
+
+func TestLangfuseScoreSmokeBackendScoreCountByIDRejectsMalformedDocument(t *testing.T) {
+	target := scoreSmokeTargetForT179()
+	store := &t179ScoreLookup{records: []localeval.ScoreProjectionSnapshot{scoreSnapshotForT179(target, langfuse.ScoreProjectionStatusSent, 1)}}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"data":[`))
+	}))
+	defer server.Close()
+	backend, err := NewLangfuseScoreSmokeBackend(LangfuseScoreSmokeBackendConfig{BaseURL: server.URL, Credential: "cHVibGljOnJlYWQtc2VjcmV0", Timeout: time.Second, ProjectionStore: store})
+	if err != nil {
+		t.Fatalf("constructor error = %v", err)
+	}
+	if _, err := backend.ScoreCountByID(context.Background(), target.ProjectionID, target.StartedAt, target.Deadline, 8); err == nil {
+		t.Fatal("malformed document must be rejected, never counted as zero")
+	}
+}

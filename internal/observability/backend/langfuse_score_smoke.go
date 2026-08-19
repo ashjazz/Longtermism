@@ -45,6 +45,24 @@ func NewLangfuseScoreSmokeBackend(config LangfuseScoreSmokeBackendConfig) (*Lang
 	return &LangfuseScoreSmokeBackend{query: query, store: config.ProjectionStore}, nil
 }
 
+// privacyScoresDocument 为 Langfuse score privacy surface 执行封闭的 scores v3 查询并返回
+// 原始有界平台文档。fields 锁定仓库版本的 details,subject 组：缺少 details 会让 comment/metadata
+// 这类唯一可携带原文的字段缺席，扫描就失去意义；由 adapter 对原始文档做全量扫描。
+func (backend *LangfuseScoreSmokeBackend) privacyScoresDocument(ctx context.Context, projectionID, traceID, observationID string, startedAt, deadline time.Time, limit int) ([]byte, error) {
+	if backend == nil || backend.query == nil || ctx == nil || ctx.Err() != nil {
+		return nil, newBackendQueryError("langfuse_score", "invalid_query")
+	}
+	return backend.query.get(ctx, url.Values{
+		"id":            {projectionID},
+		"traceId":       {traceID},
+		"observationId": {observationID},
+		"fields":        {"details,subject"},
+		"limit":         {strconv.Itoa(limit)},
+		"fromTimestamp": {startedAt.UTC().Format(time.RFC3339Nano)},
+		"toTimestamp":   {deadline.UTC().Format(time.RFC3339Nano)},
+	})
+}
+
 func (backend *LangfuseScoreSmokeBackend) IsConfigured(ctx context.Context) bool {
 	return backend != nil && backend.query != nil && backend.store != nil && ctx != nil && ctx.Err() == nil
 }
@@ -78,6 +96,37 @@ func (backend *LangfuseScoreSmokeBackend) ProjectionStates(ctx context.Context, 
 		return nil, err
 	}
 	return decodeLangfuseScoreObservation(body, target, snapshot)
+}
+
+// ScoreCountByID 统计平台上该投影 ID 对应的 score 数量（幂等断言的事实源：
+// at-least-once 重试允许多次请求，但稳定投影 ID 最终必须只更新同一 score）。
+// 只读封闭查询：按 id 精确过滤、受限时间窗、有界 limit，不取回任何原文。
+func (backend *LangfuseScoreSmokeBackend) ScoreCountByID(ctx context.Context, projectionID string, startedAt, deadline time.Time, limit int) (int, error) {
+	if backend == nil || backend.query == nil || ctx == nil || ctx.Err() != nil ||
+		projectionID == "" || limit <= 0 || startedAt.IsZero() || deadline.Before(startedAt) {
+		return 0, newBackendQueryError("langfuse_score", "invalid_query")
+	}
+	body, err := backend.query.get(ctx, url.Values{
+		"id":            {projectionID},
+		"fields":        {"subject"},
+		"limit":         {strconv.Itoa(limit)},
+		"fromTimestamp": {startedAt.UTC().Format(time.RFC3339Nano)},
+		"toTimestamp":   {deadline.UTC().Format(time.RFC3339Nano)},
+	})
+	if err != nil {
+		return 0, err
+	}
+	return decodeLangfuseScoreCount(body)
+}
+
+func decodeLangfuseScoreCount(body []byte) (int, error) {
+	var document struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		return 0, newBackendQueryError("langfuse_score", "malformed_response")
+	}
+	return len(document.Data), nil
 }
 
 func validScoreSmokeProjectionTarget(target smoke.ScoreSmokeProjectionTarget) bool {

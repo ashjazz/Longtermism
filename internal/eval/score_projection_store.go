@@ -176,6 +176,37 @@ func (store *ScoreProjectionStore) FindByRunID(ctx context.Context, runID string
 	return result, err
 }
 
+// FindByProjectionID 按稳定投影 ID 查找最新快照。投影 ID 是 evidence 身份
+// 派生的稳定幂等键（同一 ID 只对应一条活跃记录；终态记录被 compact 后可能
+// 不存在）。T130d 的 score worker 故障场景用它把运行期生成的投影身份
+//（chat trigger 创建）解析为本地状态事实。
+func (store *ScoreProjectionStore) FindByProjectionID(ctx context.Context, projectionID string) (ScoreProjectionSnapshot, bool, error) {
+	if store == nil || strings.TrimSpace(projectionID) == "" {
+		return ScoreProjectionSnapshot{}, false, nil
+	}
+	var match ScoreProjectionSnapshot
+	var found bool
+	err := store.withLock(ctx, unix.LOCK_SH, func() error {
+		state, err := store.readState()
+		if err != nil {
+			return err
+		}
+		for _, record := range state.Records {
+			if record.ProjectionID != projectionID {
+				continue
+			}
+			candidate := snapshotFromRecord(record)
+			// 同一投影 ID 理论上只有一条记录；若历史数据出现多条，取
+			// ObservedAt 最新的一条，绝不聚合或猜测状态。
+			if !found || candidate.ObservedAt.After(match.ObservedAt) {
+				match, found = candidate, true
+			}
+		}
+		return nil
+	})
+	return match, found, err
+}
+
 func (store *ScoreProjectionStore) LoadPending(ctx context.Context) ([]StoredScoreProjection, error) {
 	var result []StoredScoreProjection
 	err := store.withLock(ctx, unix.LOCK_SH, func() error {

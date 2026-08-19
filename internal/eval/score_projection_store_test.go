@@ -252,3 +252,38 @@ func assertT179SnapshotMatches(t *testing.T, snapshot ScoreProjectionSnapshot, r
 		}
 	}
 }
+
+// T130d：FindByProjectionID 是 score worker 故障场景的身份解析通道——把
+// 运行期（chat trigger）生成的投影身份解析为本地状态事实。覆盖：命中返回
+// 最新快照、未命中零值 false、空 ID 零副作用。
+func TestScoreProjectionStoreFindByProjectionIDResolvesLatestSnapshot(t *testing.T) {
+	path := t.TempDir() + "/score-projections.json"
+	runID := "score-run-t130d"
+	projection := newT179Projection(t)
+	store, err := OpenScoreProjectionStore(ScoreProjectionStoreConfig{Path: path})
+	if err != nil {
+		t.Fatalf("OpenScoreProjectionStore() error = %v", err)
+	}
+	defer store.Close()
+	if err := store.SaveInitial(context.Background(), runID, projection, 2); err != nil {
+		t.Fatalf("SaveInitial() error = %v", err)
+	}
+	sending := transitionT179(t, projection, langfuse.ScoreProjectionStatusSending)
+	if err := store.Update(context.Background(), runID, sending); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	snapshot, found, err := store.FindByProjectionID(context.Background(), projection.ProjectionID)
+	if err != nil || !found {
+		t.Fatalf("FindByProjectionID() = (%#v, %v, %v), want found", snapshot, found, err)
+	}
+	if snapshot.ProjectionID != projection.ProjectionID || snapshot.Status != langfuse.ScoreProjectionStatusSending || snapshot.RunID != runID {
+		t.Fatalf("snapshot = %#v, want the newest sending state under %q", snapshot, runID)
+	}
+	if _, found, err := store.FindByProjectionID(context.Background(), "unknown-projection-t130d"); err != nil || found {
+		t.Fatalf("unknown lookup = (%v, %v), want not found without error", found, err)
+	}
+	if _, found, err := store.FindByProjectionID(context.Background(), ""); err != nil || found {
+		t.Fatalf("empty lookup = (%v, %v), want fail-closed not found", found, err)
+	}
+}
