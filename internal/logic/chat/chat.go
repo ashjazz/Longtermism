@@ -136,6 +136,7 @@ type ChatUsecaseDependencies struct {
 	Telemetry               ChatTelemetry
 	Diagnostics             ChatTelemetryDiagnostics
 	RunManifestWriter       ChatRunManifestWriter
+	AIPlaneFacts            AIPlaneFactRecorder
 	Now                     func() time.Time
 }
 
@@ -161,6 +162,7 @@ type ChatUsecase struct {
 	telemetry               ChatTelemetry
 	diagnostics             ChatTelemetryDiagnostics
 	runManifestWriter       ChatRunManifestWriter
+	aiPlaneFacts            AIPlaneFactRecorder
 	now                     func() time.Time
 }
 
@@ -212,6 +214,7 @@ func NewChatUsecase(dependencies ChatUsecaseDependencies) *ChatUsecase {
 		telemetry:               dependencies.Telemetry,
 		diagnostics:             dependencies.Diagnostics,
 		runManifestWriter:       dependencies.RunManifestWriter,
+		aiPlaneFacts:            dependencies.AIPlaneFacts,
 		now:                     now,
 	}
 }
@@ -240,6 +243,7 @@ func (usecase *ChatUsecase) Execute(ctx context.Context, command ChatCommand) (C
 
 	executionContext, executionIdentity, endExecution, hasTrustedExecution := usecase.startChatBoundary(identityContext, identity)
 	result.Identity = executionIdentity
+	usecase.recordAIPlaneFact(command.SmokeRunID, hasTrustedExecution)
 	executionOutcome := appobs.ChatAIExecutionOutcome{
 		Outcome:       chatFailedOutcome,
 		FailureStatus: obs.FailureUpstream,
@@ -277,8 +281,17 @@ func (usecase *ChatUsecase) Execute(ctx context.Context, command ChatCommand) (C
 	return result, nil
 }
 
-func (usecase *ChatUsecase) executeProvider(
-	ctx context.Context,
+// recordAIPlaneFact 只在 AI 桥接 span 真实创建后登记一次 AI 平面发射事实，供 infra
+// smoke 的 AI-negative marker-count 查询读取。登记是旁路：未注入 recorder、无 marker
+// 或桥接失败时静默跳过，绝不改写业务结果。
+func (usecase *ChatUsecase) recordAIPlaneFact(marker string, hasTrustedExecution bool) {
+	if usecase == nil || usecase.aiPlaneFacts == nil || marker == "" || !hasTrustedExecution {
+		return
+	}
+	usecase.aiPlaneFacts.RecordAIPlaneFact(marker, usecase.now())
+}
+
+func (usecase *ChatUsecase) executeProvider(ctx context.Context,
 	identity obs.CorrelationIdentity,
 	command ChatCommand,
 	hasTrustedExecution bool,
@@ -608,7 +621,7 @@ func (usecase *ChatUsecase) recordSideEffectFailure(component string) {
 	}
 	usecase.diagnostics.TryRecordTelemetryFailure(ChatTelemetryFailure{
 		Component:  component,
-		ErrorClass: chatSideEffectFailureClass,
+		ErrorClass: string(ClassifyChatObservabilityFailure(component)),
 	})
 }
 
@@ -668,7 +681,7 @@ func (usecase *ChatUsecase) recordTelemetry(trace obs.Trace) {
 	if err := usecase.telemetry.TryRecord(trace); err != nil && usecase.diagnostics != nil {
 		usecase.diagnostics.TryRecordTelemetryFailure(ChatTelemetryFailure{
 			Component:  chatTelemetryComponent,
-			ErrorClass: chatTelemetryFailureClass,
+			ErrorClass: string(ClassifyChatObservabilityFailure(chatTelemetryComponent)),
 		})
 	}
 }
@@ -697,19 +710,91 @@ func failureTrace(identity obs.CorrelationIdentity, requestedModel string, times
 	return obs.NewFailureTrace(identity.AITraceID, chatFeature, timestamp, failureStatus, baseOptions...)
 }
 
-func classifyProviderFailure(err error) (obs.FailureStatus, error) {
+// ChatFailureClass 是模型业务失败的稳定错误类（T116 契约）。controller
+// 依据 sentinel 错误链投影 HTTP 状态，而类名本身是日志/指标聚合的稳定维度：
+// 同一类故障不会因为 provider 或 adapter 的表达差异被写成多个维度。
+type ChatFailureClass string
+
+const (
+	ChatFailureClassNone                ChatFailureClass = "none"
+	ChatFailureClassRateLimited         ChatFailureClass = "rate_limited"
+	ChatFailureClassUpstreamUnavailable ChatFailureClass = "upstream_unavailable"
+	ChatFailureClassUpstreamTimeout     ChatFailureClass = "upstream_timeout"
+	ChatFailureClassCallerCanceled      ChatFailureClass = "caller_canceled"
+	ChatFailureClassInvalidResponse     ChatFailureClass = "invalid_response"
+	ChatFailureClassProviderFailure     ChatFailureClass = "provider_failure"
+)
+
+// ChatObservabilityFailureClass 是观测旁路失败的稳定错误类。与
+// ChatFailureClass 严格不相交：观测故障（telemetry/score/exporter 投递）
+// 只记录诊断事实，绝不进入业务错误链（FR-007 双向隔离）。
+type ChatObservabilityFailureClass string
+
+const (
+	ChatObservabilityClassTelemetryExport ChatObservabilityFailureClass = "telemetry_export_failed"
+	ChatObservabilityClassSideEffect      ChatObservabilityFailureClass = "side_effect_failed"
+)
+
+// ClassifyChatModelFailure 把 provider 失败映射为稳定业务错误类 + 低敏
+// sentinel 错误链。原始外部错误绝不透传（可能携带响应正文或凭据），
+// sentinel 链保持 controller 现有 errors.Is 语义：
+//
+//	429      -> rate_limited         (llm.ErrRateLimit + llm.ErrUpstream)
+//	5xx      -> upstream_unavailable (llm.ErrUpstream)
+//	timeout  -> upstream_timeout     (llm.ErrUpstream + context.DeadlineExceeded)
+//	canceled -> caller_canceled      (context.Canceled，不是上游故障)
+//	其它     -> provider_failure     (ErrChatProviderFailure)
+//
+// nil error 是 none，不产生任何错误链。
+func ClassifyChatModelFailure(err error) (ChatFailureClass, error) {
+	if err == nil {
+		return ChatFailureClassNone, nil
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return obs.FailureTimeout, errors.Join(llm.ErrUpstream, context.DeadlineExceeded)
+		return ChatFailureClassUpstreamTimeout, errors.Join(llm.ErrUpstream, context.DeadlineExceeded)
 	case errors.Is(err, context.Canceled):
-		return obs.FailureCallerError, context.Canceled
+		return ChatFailureClassCallerCanceled, context.Canceled
 	case errors.Is(err, llm.ErrRateLimit):
-		return obs.FailureRateLimit, errors.Join(llm.ErrUpstream, llm.ErrRateLimit)
+		return ChatFailureClassRateLimited, errors.Join(llm.ErrUpstream, llm.ErrRateLimit)
 	case errors.Is(err, llm.ErrUpstream):
-		return obs.FailureUpstream, llm.ErrUpstream
+		return ChatFailureClassUpstreamUnavailable, llm.ErrUpstream
+	case errors.Is(err, ErrChatInvalidResponse):
+		return ChatFailureClassInvalidResponse, ErrChatInvalidResponse
 	default:
-		return obs.FailureUpstream, ErrChatProviderFailure
+		return ChatFailureClassProviderFailure, ErrChatProviderFailure
 	}
+}
+
+// ClassifyChatObservabilityFailure 把观测旁路失败的组件归类为稳定观测错误类。
+// generation 遥测入队失败是投递类错误，其余旁路（score projection、evaluator、
+// evidence store、bridge、manifest、exporter）是副作用类错误；未知组件安全
+// 落到 side_effect_failed。返回的类绝不与 ChatFailureClass 重叠——观测故障
+// 不可能被投影为模型业务失败（禁止 exporter failure 返回为 5xx）。
+func ClassifyChatObservabilityFailure(component string) ChatObservabilityFailureClass {
+	if component == chatTelemetryComponent {
+		return ChatObservabilityClassTelemetryExport
+	}
+	return ChatObservabilityClassSideEffect
+}
+
+// classifyProviderFailure 保留 Execute 内部所需的 obs.FailureStatus 投影，
+// 但分类事实委托给 ClassifyChatModelFailure：业务错误类与观测错误类共用
+// 同一份分类逻辑，避免两个词表漂移。
+func classifyProviderFailure(err error) (obs.FailureStatus, error) {
+	class, safeErr := ClassifyChatModelFailure(err)
+	var failureStatus obs.FailureStatus
+	switch class {
+	case ChatFailureClassRateLimited:
+		failureStatus = obs.FailureRateLimit
+	case ChatFailureClassUpstreamTimeout:
+		failureStatus = obs.FailureTimeout
+	case ChatFailureClassCallerCanceled:
+		failureStatus = obs.FailureCallerError
+	default:
+		failureStatus = obs.FailureUpstream
+	}
+	return failureStatus, safeErr
 }
 
 func (usecase *ChatUsecase) canonicalizeProviderResponse(response *llm.ChatResponse) (string, bool) {
