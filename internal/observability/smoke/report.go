@@ -32,18 +32,22 @@ var (
 	allowedCleanupStatuses             = stringSet("not_required", "completed", "failed")
 	allowedTemporaryCredentialStatuses = stringSet("not_created", "revoked", "deleted", "failed")
 	allowedTemporaryDataStatuses       = stringSet("not_created", "deleted", "failed")
-	allowedErrorClasses                = stringSet("authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "identity_mismatch", "invalid_query", "malformed_response", "marker_missing", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing")
+	allowedErrorClasses                = stringSet("authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "identity_mismatch", "invalid_query", "malformed_response", "marker_missing", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing", "alert_not_resolved", "invalid_configuration", "retention_violation")
 	allowedVersionKeys                 = stringSet("api", "collector", "grafana", "langfuse", "loki", "prometheus", "schema", "signoz", "smoke_runner", "tempo")
-	allowedResidualResources           = stringSet("run-directory", "temporary-debug-data", "temporary-queue-data")
+	allowedResidualResources           = stringSet("run-directory", "temporary-debug-data", "temporary-queue-data", "paused-service", "unwritable-storage", "langfuse-api-unavailable", "score-worker-queue-full", "alert-condition-active")
 	allowedEvidenceKeysByBackend       = map[string]map[string]struct{}{
-		"api":            stringSet("cleanup_attempted", "marker_seen", "response_status"),
-		"collector":      stringSet("exporter_failed", "exporter_sent", "marker_received", "queue_depth"),
-		"tempo":          stringSet("matched_spans"),
-		"loki":           stringSet("matched_logs"),
-		"prometheus":     stringSet("metric_delta", "target_up"),
-		"grafana":        stringSet("datasource_healthy", "query_succeeded"),
-		"langfuse_trace": stringSet("matched_traces"),
-		"langfuse_score": stringSet("matched_scores"),
+		"api": stringSet("cleanup_attempted", "marker_seen", "response_status", "retention_days"),
+		"collector": stringSet("exporter_failed", "exporter_sent", "marker_received", "queue_depth",
+			"tempo_sent_delta", "tempo_failed_delta", "tempo_enqueue_delta", "tempo_queue_delta",
+			"loki_sent_delta", "loki_failed_delta", "loki_enqueue_delta", "loki_queue_delta",
+			"langfuse_sent_delta", "langfuse_failed_delta", "langfuse_enqueue_delta", "langfuse_queue_delta",
+			"duplicate_delivered", "enqueue_failed_delta", "dropped_delta", "storage_writable", "shutdown_timed_out"),
+		"tempo":          stringSet("matched_spans", "retention_days", "raw_payload_found"),
+		"loki":           stringSet("matched_logs", "retention_days", "raw_payload_found"),
+		"prometheus":     stringSet("metric_delta", "target_up", "retention_days", "raw_payload_found"),
+		"grafana":        stringSet("datasource_healthy", "query_succeeded", "alerts_firing", "alerts_resolved"),
+		"langfuse_trace": stringSet("matched_traces", "retention_days", "raw_payload_found"),
+		"langfuse_score": stringSet("matched_scores", "score_attempts", "dropped_projections", "local_evidence_intact", "shutdown_timed_out"),
 		"signoz":         stringSet("matched_logs", "matched_spans"),
 		"privacy":        stringSet("forbidden_marker_hits"),
 	}
@@ -66,6 +70,9 @@ type SmokeReportInput struct {
 	Versions   map[string]string
 	Checks     []BackendCheckInput
 	Cleanup    SmokeCleanupInput
+	// PrivacyEvidence is mandatory for the privacy scenario and forbidden elsewhere: the
+	// eight ordered surface proofs cannot be impersonated by a generic check.
+	PrivacyEvidence []PrivacySmokeReportEvidenceInput
 }
 
 type BackendCheckInput struct {
@@ -84,6 +91,34 @@ type SmokeCleanupInput struct {
 	TemporaryData        string
 }
 
+// PrivacySmokeReportEvidenceInput is the closed per-surface proof projected into the privacy
+// report. Counts and the collector bindings are the only allowed facts; artifact refs, raw
+// payloads and credentials have no field here so generic serialization cannot leak them.
+type PrivacySmokeReportEvidenceInput struct {
+	Surface                PrivacySmokeSurface
+	EvidenceMethod         string
+	Status                 string
+	ScannerPolicyVersion   string
+	Counts                 map[string]int
+	CollectorProofVerified bool
+}
+
+// privacySmokeReportEvidence is the wire shape validated by the version-controlled schema.
+// Bindings are only emitted for collector_queue: additionalProperties=false forbids them
+// elsewhere, and the schema pins them to const true for that surface.
+type privacySmokeReportEvidence struct {
+	Surface                      string         `json:"surface"`
+	EvidenceMethod               string         `json:"evidence_method"`
+	Attempted                    bool           `json:"attempted"`
+	Status                       string         `json:"status"`
+	ScannerPolicyVersion         string         `json:"scanner_policy_version"`
+	Counts                       map[string]int `json:"counts"`
+	RuntimeConfigDigestVerified  bool           `json:"runtime_config_digest_verified,omitempty"`
+	PrequeueArtifactHashVerified bool           `json:"prequeue_artifact_hash_verified,omitempty"`
+	ComponentIdentityVerified    bool           `json:"component_identity_verified,omitempty"`
+	ExportAdmissionCorrelated    bool           `json:"export_admission_correlated,omitempty"`
+}
+
 // SmokeReport is immutable after construction. The unexported state prevents callers from
 // mutating a completed report between validation and persistence; accessors return copies.
 type SmokeReport struct {
@@ -99,6 +134,8 @@ type SmokeReport struct {
 	versions   map[string]string
 	checks     []BackendCheck
 	cleanup    SmokeCleanup
+	// privacyEvidence is the ordered eight-surface proof set for the privacy scenario.
+	privacyEvidence []privacySmokeReportEvidence
 }
 
 type BackendCheck struct {
@@ -118,19 +155,20 @@ type SmokeCleanup struct {
 }
 
 type smokeReportJSON struct {
-	SchemaVersion string            `json:"schema_version"`
-	RunID         string            `json:"run_id"`
-	Marker        string            `json:"marker"`
-	Profile       string            `json:"profile"`
-	Scenario      string            `json:"scenario"`
-	RequestID     string            `json:"request_id,omitempty"`
-	AITraceID     string            `json:"ai_trace_id,omitempty"`
-	StartedAt     string            `json:"started_at"`
-	FinishedAt    string            `json:"finished_at"`
-	Status        string            `json:"status"`
-	Versions      map[string]string `json:"versions,omitempty"`
-	Checks        []BackendCheck    `json:"checks"`
-	Cleanup       SmokeCleanup      `json:"cleanup"`
+	SchemaVersion   string                       `json:"schema_version"`
+	RunID           string                       `json:"run_id"`
+	Marker          string                       `json:"marker"`
+	Profile         string                       `json:"profile"`
+	Scenario        string                       `json:"scenario"`
+	RequestID       string                       `json:"request_id,omitempty"`
+	AITraceID       string                       `json:"ai_trace_id,omitempty"`
+	StartedAt       string                       `json:"started_at"`
+	FinishedAt      string                       `json:"finished_at"`
+	Status          string                       `json:"status"`
+	Versions        map[string]string            `json:"versions,omitempty"`
+	Checks          []BackendCheck               `json:"checks"`
+	Cleanup         SmokeCleanup                 `json:"cleanup"`
+	PrivacyEvidence []privacySmokeReportEvidence `json:"privacy_evidence,omitempty"`
 }
 
 func BuildSmokeReport(input SmokeReportInput) (*SmokeReport, error) {
@@ -141,36 +179,38 @@ func BuildSmokeReport(input SmokeReportInput) (*SmokeReport, error) {
 	checks := cloneChecks(input.Checks)
 	cleanup := cloneCleanup(input.Cleanup)
 	return &SmokeReport{
-		runID:      input.RunID,
-		marker:     input.Marker,
-		profile:    input.Profile,
-		scenario:   input.Scenario,
-		requestID:  input.RequestID,
-		aiTraceID:  input.AITraceID,
-		startedAt:  input.StartedAt.UTC(),
-		finishedAt: input.FinishedAt.UTC(),
-		status:     aggregateSmokeStatus(checks, cleanup),
-		versions:   cloneVersions(input.Versions),
-		checks:     checks,
-		cleanup:    cleanup,
+		runID:           input.RunID,
+		marker:          input.Marker,
+		profile:         input.Profile,
+		scenario:        input.Scenario,
+		requestID:       input.RequestID,
+		aiTraceID:       input.AITraceID,
+		startedAt:       input.StartedAt.UTC(),
+		finishedAt:      input.FinishedAt.UTC(),
+		status:          aggregateSmokeStatus(checks, cleanup, clonePrivacySmokeEvidence(input.PrivacyEvidence)),
+		versions:        cloneVersions(input.Versions),
+		checks:          checks,
+		cleanup:         cleanup,
+		privacyEvidence: clonePrivacySmokeEvidence(input.PrivacyEvidence),
 	}, nil
 }
 
 func (r SmokeReport) MarshalJSON() ([]byte, error) {
 	return json.Marshal(smokeReportJSON{
-		SchemaVersion: smokeReportSchemaVersion,
-		RunID:         r.runID,
-		Marker:        r.marker,
-		Profile:       r.profile,
-		Scenario:      r.scenario,
-		RequestID:     r.requestID,
-		AITraceID:     r.aiTraceID,
-		StartedAt:     r.startedAt.Format(time.RFC3339Nano),
-		FinishedAt:    r.finishedAt.Format(time.RFC3339Nano),
-		Status:        r.status,
-		Versions:      r.Versions(),
-		Checks:        r.Checks(),
-		Cleanup:       r.Cleanup(),
+		SchemaVersion:   smokeReportSchemaVersion,
+		RunID:           r.runID,
+		Marker:          r.marker,
+		Profile:         r.profile,
+		Scenario:        r.scenario,
+		RequestID:       r.requestID,
+		AITraceID:       r.aiTraceID,
+		StartedAt:       r.startedAt.Format(time.RFC3339Nano),
+		FinishedAt:      r.finishedAt.Format(time.RFC3339Nano),
+		Status:          r.status,
+		Versions:        r.Versions(),
+		Checks:          r.Checks(),
+		Cleanup:         r.Cleanup(),
+		PrivacyEvidence: clonePrivacySmokeWireEvidence(r.privacyEvidence),
 	})
 }
 
@@ -179,6 +219,15 @@ func (r SmokeReport) Checks() []BackendCheck { return cloneSafeChecks(r.checks) 
 // Status returns the already-validated aggregate outcome without exposing the report's internal
 // representation. Command composition roots need this one low-sensitivity fact for exit codes.
 func (r SmokeReport) Status() string { return r.status }
+
+// Scenario returns the sealed scenario identity without exposing mutable state. The smoke CLI
+// composition root uses it to name persisted artifacts; it never derives facts from the caller.
+func (r SmokeReport) Scenario() string { return r.scenario }
+
+// Marker returns the sealed runner-owned marker identity. Composition roots use it to enforce
+// marker uniqueness when aggregating several scenario reports; it must never be treated as a
+// caller-supplied input.
+func (r SmokeReport) Marker() string { return r.marker }
 
 func (r SmokeReport) Cleanup() SmokeCleanup { return cloneSafeCleanup(r.cleanup) }
 
@@ -208,7 +257,69 @@ func validateSmokeReportInput(input SmokeReportInput) error {
 			return err
 		}
 	}
+	if err := validatePrivacySmokeEvidence(input.Scenario, input.PrivacyEvidence); err != nil {
+		return err
+	}
 	return validateCleanup(input.Cleanup)
+}
+
+// validatePrivacySmokeEvidence enforces the closed eight-surface proof set for the privacy
+// scenario: fixed order, fixed evidence method per surface, scanner policy 1, five non-negative
+// category counts and the four verified collector bindings. Non-privacy reports must not carry
+// a proof set, otherwise the schema's conditional requirement would reject the document.
+func validatePrivacySmokeEvidence(scenario string, evidence []PrivacySmokeReportEvidenceInput) error {
+	if scenario != "privacy" {
+		if len(evidence) != 0 {
+			return errSensitiveSmokeReportData
+		}
+		return nil
+	}
+	if len(evidence) != len(privacyCompositionSchemaOrder) {
+		return errInvalidSmokeReport
+	}
+	for index, surface := range privacyCompositionSchemaOrder {
+		item := evidence[index]
+		if item.Surface != surface || item.EvidenceMethod != privacyCompositionMethod(surface) ||
+			item.ScannerPolicyVersion != "1" || item.Status != "passed" && item.Status != "failed" ||
+			!validPrivacyCompositionCounts(item.Counts) {
+			return errInvalidSmokeReport
+		}
+		if surface == PrivacySmokeSurfaceCollectorQueue && !item.CollectorProofVerified {
+			return errInvalidSmokeReport
+		}
+	}
+	return nil
+}
+
+func clonePrivacySmokeEvidence(input []PrivacySmokeReportEvidenceInput) []privacySmokeReportEvidence {
+	if input == nil {
+		return nil
+	}
+	evidence := make([]privacySmokeReportEvidence, len(input))
+	for index, item := range input {
+		itemWire := privacySmokeReportEvidence{
+			Surface: string(item.Surface), EvidenceMethod: item.EvidenceMethod, Attempted: true,
+			Status: item.Status, ScannerPolicyVersion: item.ScannerPolicyVersion, Counts: clonePrivacyCounts(item.Counts),
+		}
+		if item.Surface == PrivacySmokeSurfaceCollectorQueue && item.CollectorProofVerified {
+			itemWire.RuntimeConfigDigestVerified, itemWire.PrequeueArtifactHashVerified = true, true
+			itemWire.ComponentIdentityVerified, itemWire.ExportAdmissionCorrelated = true, true
+		}
+		evidence[index] = itemWire
+	}
+	return evidence
+}
+
+func clonePrivacySmokeWireEvidence(input []privacySmokeReportEvidence) []privacySmokeReportEvidence {
+	if input == nil {
+		return nil
+	}
+	evidence := make([]privacySmokeReportEvidence, len(input))
+	for index, item := range input {
+		item.Counts = clonePrivacyCounts(item.Counts)
+		evidence[index] = item
+	}
+	return evidence
 }
 
 func validateVersions(versions map[string]string) error {
@@ -284,7 +395,7 @@ func isOpaqueSmokeIdentity(value string) bool {
 	return len(value) >= minimumSmokeIdentitySize && len(value) <= maximumSmokeIdentitySize
 }
 
-func aggregateSmokeStatus(checks []BackendCheck, cleanup SmokeCleanup) string {
+func aggregateSmokeStatus(checks []BackendCheck, cleanup SmokeCleanup, privacyEvidence []privacySmokeReportEvidence) string {
 	if cleanup.Status == "failed" {
 		return "failed"
 	}
@@ -296,6 +407,12 @@ func aggregateSmokeStatus(checks []BackendCheck, cleanup SmokeCleanup) string {
 		if check.Status != "skipped" {
 			allSkipped = false
 		}
+	}
+	for _, item := range privacyEvidence {
+		if item.Status == "failed" {
+			return "failed"
+		}
+		allSkipped = false
 	}
 	if allSkipped {
 		return "skipped"
