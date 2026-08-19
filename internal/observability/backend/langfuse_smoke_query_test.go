@@ -21,7 +21,7 @@ func TestLangfuseSmokeQueryBindsTheExactMarker(t *testing.T) {
 	startedAt := time.Now().UTC().Add(-10 * time.Second)
 	target := smoke.PollMarkerTarget{Marker: "infra-t065b-marker", StartedAt: startedAt, Deadline: startedAt.Add(time.Minute)}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/api/public/v2/observations" {
+		if request.Method != http.MethodGet || request.URL.Path != "/api/public/observations" {
 			t.Errorf("request = %s %s, want GET Langfuse observations v2", request.Method, request.URL.Path)
 		}
 		if got := request.Header.Get("Authorization"); got != "Basic cHVibGljOnNlY3JldA==" {
@@ -170,7 +170,8 @@ func TestNegativeSmokeQueryRejectsUnsafeTargetsBeforeNetwork(t *testing.T) {
 	}{
 		{name: "short marker", target: smoke.PollMarkerTarget{Marker: "short", StartedAt: now, Deadline: now.Add(time.Minute)}},
 		{name: "reversed window", target: smoke.PollMarkerTarget{Marker: "infra-t065b-marker", StartedAt: now, Deadline: now.Add(-time.Second)}},
-		{name: "oversized window", target: smoke.PollMarkerTarget{Marker: "infra-t065b-marker", StartedAt: now, Deadline: now.Add(61 * time.Second)}},
+		// 上限为 150s（覆盖 persistent-queue 的 120s drain 窗口）；超出仍拒绝。
+		{name: "oversized window", target: smoke.PollMarkerTarget{Marker: "infra-t065b-marker", StartedAt: now, Deadline: now.Add(151 * time.Second)}},
 	}
 	for _, port := range []string{"langfuse", "ai-plane"} {
 		for _, tt := range tests {
@@ -219,7 +220,7 @@ func assertNegativeSmokeQueryRequest(t *testing.T, port string, request *http.Re
 	query := request.URL.Query()
 	switch port {
 	case "langfuse":
-		if request.URL.Path != "/api/public/v2/observations" {
+		if request.URL.Path != "/api/public/observations" {
 			t.Errorf("Langfuse path = %q", request.URL.Path)
 		}
 		assertLangfuseSmokeFilter(t, query.Get("filter"), target)

@@ -9,6 +9,12 @@ import (
 
 // The Prometheus exporter follows the Prometheus counter convention and appends `_total` to the
 // OTel counter name. Query the exported contract, not the pre-export OTel instrument name.
+//
+// increase() 的外推在两类真实场景下会误报 0——应用重启后新序列首个样本不足
+// 两个样本点（外推为 0），以及序列断裂（标签变化导致 stale marker 后 increase
+// 跨断裂窗口计算为 0）。重启只可能发生在两次 smoke 之间（smoke 运行期应用
+// 不重启），因此 baseline 取到新进程的即时值、after 取到本次请求后的即时值，
+// 差值语义准确且不依赖 scrape 采样相位。
 const infraHTTPCountQuery = `sum(longtermism_http_server_request_count_total{http_route="/api/v1/observability/infra-smoke",http_request_method="GET",http_response_status_class="2xx"})`
 
 var defaultInfraHTTPCountSelector = SmokeHTTPCountSelector{

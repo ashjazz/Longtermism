@@ -35,7 +35,8 @@ func TestGrafanaInfrastructureSmokeBackendDelegatesBoundedEvidence(t *testing.T)
 			if query.Get("start") != target.StartedAt.UTC().Format(time.RFC3339Nano) || query.Get("end") != target.Deadline.UTC().Format(time.RFC3339Nano) {
 				t.Errorf("Loki window = start:%q end:%q, want target window", query.Get("start"), query.Get("end"))
 			}
-			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"values":[["%d","http request completed",{"smoke_run_id":"%s"}]]}]}}`, startedAt.UnixNano(), target.Marker)
+			// 真实 Loki 3.7.2 形状：marker 在 stream labels，values 为两元素 [ts, line]。
+			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"stream":{"smoke_run_id":"%s"},"values":[["%d","http request completed"]]}]}}`, target.Marker, startedAt.UnixNano())
 		case "/api/v1/query":
 			prometheusCalls++
 			assertInfraHTTPCountQuery(t, query.Get("query"))
@@ -194,9 +195,13 @@ func (f fakeNegativeMarkerCounter) Query(context.Context, smoke.PollMarkerTarget
 
 func assertInfraHTTPCountQuery(t *testing.T, query string) {
 	t.Helper()
-	for _, required := range []string{"longtermism_http_server_request_count_total", `http_route="/api/v1/observability/infra-smoke"`, `http_request_method="GET"`, `http_response_status_class="2xx"`} {
+	// 即时值查询：runner 自己做 baseline→after 差值比较。increase() 的窗口外推
+	// 依赖 scrape 采样相位——应用重启后的新序列只有单个样本点时外推为 0，
+	// 序列断裂（stale marker）时跨窗口计算也会误报 0。即时值不受相位影响；
+	// 重启只发生在两次 smoke 之间，baseline 取到的就是新进程的即时基线。
+	for _, required := range []string{"sum(longtermism_http_server_request_count_total", `http_route="/api/v1/observability/infra-smoke"`, `http_request_method="GET"`, `http_response_status_class="2xx"`} {
 		if !strings.Contains(query, required) {
-			t.Errorf("Prometheus query = %q, want low-cardinality selector %q", query, required)
+			t.Errorf("Prometheus query = %q, want instant low-cardinality selector %q", query, required)
 		}
 	}
 	for _, forbidden := range []string{"request_id", "trace_id", "smoke_run_id", "marker"} {

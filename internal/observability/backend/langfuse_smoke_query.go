@@ -37,7 +37,10 @@ type LangfuseSmokeQueryClient struct{ query *negativeSmokeQueryClient }
 type AIPlaneSmokeQueryClient struct{ query *negativeSmokeQueryClient }
 
 func NewLangfuseSmokeQueryClient(config LangfuseSmokeQueryConfig) (*LangfuseSmokeQueryClient, error) {
-	query, err := newNegativeSmokeQueryClient("langfuse", "/api/public/v2/observations", config.BaseURL, config.Credential, config.Timeout, config.ResolveHost)
+	// 锁定版本 3.185.0 的真实 API：/api/public/v2/observations 需要 Langfuse v4 write
+	// mode（实测 404），v3 服务的是 /api/public/observations，且接受相同的
+	// stringObject/datetime filter 形状。以真实后端响应为准，不发明路径。
+	query, err := newNegativeSmokeQueryClient("langfuse", "/api/public/observations", config.BaseURL, config.Credential, config.Timeout, config.ResolveHost)
 	if err != nil {
 		return nil, err
 	}

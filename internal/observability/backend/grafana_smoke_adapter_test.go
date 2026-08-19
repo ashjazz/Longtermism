@@ -38,9 +38,10 @@ func TestGrafanaSmokeEvidenceAdapterQueriesCurrentMarkers(t *testing.T) {
 			if query.Get("query") != wantQuery {
 				t.Errorf("Loki marker query = %q, want canonical OTLP structured-metadata query %q", query.Get("query"), wantQuery)
 			}
-			// OTLP keeps the stable completion message in the log body and correlation fields in
-			// structured metadata. Loki may return that metadata as the third values element.
-			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"stream":{"service_name":"longtermism"},"values":[["%d","http request completed",{"smoke_run_id":"%s"}],["%d","http request completed",{"smoke_run_id":"%s"}]]}]}}`, startedAt.UnixNano(), target.Marker, deadline.UnixNano(), target.Marker)
+			// 真实 Loki 3.7.2 形状：OTLP attributes 以 structured metadata 进入 stream
+			// label map，values 是两元素 [ts, line]。fixture 固定真实形状，防止 decoder
+			// 依赖平台不存在的三元素 metadata。
+			_, _ = fmt.Fprintf(writer, `{"status":"success","data":{"resultType":"streams","result":[{"stream":{"service_name":"longtermism","smoke_run_id":"%s"},"values":[["%d","http request completed"],["%d","http request completed"]]}]}}`, target.Marker, startedAt.UnixNano(), deadline.UnixNano())
 		default:
 			t.Errorf("path = %q, want Tempo or Loki query", request.URL.Path)
 		}
@@ -79,7 +80,9 @@ func TestGrafanaSmokeEvidenceAdapterRejectsUnsafeOrUnboundedTargets(t *testing.T
 		target smoke.PollMarkerTarget
 	}{
 		{name: "sensitive marker", target: smoke.PollMarkerTarget{Marker: "secret-marker", StartedAt: now, Deadline: now.Add(time.Minute)}},
-		{name: "window longer than one minute", target: smoke.PollMarkerTarget{Marker: "infra-t064c-marker", StartedAt: now, Deadline: now.Add(2 * time.Minute)}},
+		// 上限是 150s（覆盖 persistent-queue 的 120s drain 窗口 + 轮询余量）；
+		// 超过该上限的窗口仍按无界扫描拒绝。
+		{name: "window longer than the 150s cap", target: smoke.PollMarkerTarget{Marker: "infra-t064c-marker", StartedAt: now, Deadline: now.Add(4 * time.Minute)}},
 		{name: "future window", target: smoke.PollMarkerTarget{Marker: "infra-t064c-marker", StartedAt: now.Add(2 * time.Minute), Deadline: now.Add(3 * time.Minute)}},
 	}
 	for _, tt := range tests {
@@ -184,6 +187,18 @@ func TestDecodePrometheusHTTPCountAcceptsSingleAggregatedSample(t *testing.T) {
 	}
 }
 
+// 空成功向量是 counter 基线：trigger 前没有任何已记录请求。全新应用的首次 smoke
+// 必须先把它解码为 0 基线，再靠 trigger 后真实出现的 series 取得正向 delta；
+// 畸形文档（非 success/非 vector/坏样本）仍严格拒绝。
+func TestDecodePrometheusHTTPCountTreatsEmptyVectorAsZeroBaseline(t *testing.T) {
+	adapter := NewGrafanaSmokeEvidenceAdapter(nil)
+	selector := SmokeHTTPCountSelector{Route: "/api/v1/observability/infra-smoke", Method: "GET", StatusClass: "2xx"}
+	evidence, err := adapter.DecodePrometheusHTTPCount(backendQueryResultForTest(`{"status":"success","data":{"resultType":"vector","result":[]}}`), selector)
+	if err != nil || evidence.Count != 0 {
+		t.Fatalf("DecodePrometheusHTTPCount() = (%#v, %v), want zero counter baseline for an empty vector", evidence, err)
+	}
+}
+
 func TestGrafanaSmokeEvidenceAdapterRejectsMalformedMarkerDocuments(t *testing.T) {
 	target := smoke.PollMarkerTarget{Marker: "infra-t064c-marker", StartedAt: time.Now().UTC(), Deadline: time.Now().UTC().Add(time.Minute)}
 	tests := []struct {
@@ -193,9 +208,10 @@ func TestGrafanaSmokeEvidenceAdapterRejectsMalformedMarkerDocuments(t *testing.T
 	}{
 		{name: "Tempo missing traces", decode: decodeTempoMarkerObservations, result: backendQueryResultForTest(`{}`)},
 		{name: "Tempo null traces", decode: decodeTempoMarkerObservations, result: backendQueryResultForTest(`{"traces":null}`)},
-		{name: "Loki non-string line", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["1784541600000000000",1]]}]}}`)},
-		{name: "Loki missing structured marker", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["1784541600000000000","http request completed",{}]]}]}}`)},
-		{name: "Loki foreign structured marker", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"values":[["1784541600000000000","http request completed",{"smoke_run_id":"infra-t172-foreign"}]]}]}}`)},
+		{name: "Loki non-string line", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"stream":{"smoke_run_id":"infra-t064c-marker"},"values":[["1784541600000000000",1]]}]}}`)},
+		{name: "Loki missing structured marker", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"stream":{"service_name":"longtermism"},"values":[["1784541600000000000","http request completed"]]}]}}`)},
+		{name: "Loki foreign structured marker", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"stream":{"smoke_run_id":"infra-t172-foreign"},"values":[["1784541600000000000","http request completed"]]}]}}`)},
+		{name: "Loki label and entry markers contradict", decode: decodeLokiMarkerObservations, result: backendQueryResultForTest(`{"status":"success","data":{"resultType":"streams","result":[{"stream":{"smoke_run_id":"infra-t172-foreign"},"values":[["1784541600000000000","http request completed",{"smoke_run_id":"infra-t064c-marker"}]]}]}}`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -19,7 +19,10 @@ var (
 	safeSmokeMarkerPattern            = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$`)
 )
 
-const maximumSmokeQueryWindow = time.Minute
+// 单次 marker 查询窗口的上限。基础 smoke 场景（infra/chat/score）的 deadline
+// 是 60s；persistent-queue 的 drain 窗口是 120s（smoke.PersistentQueueDrainWindow）。
+// 上限取两者的最大值并留少量轮询余量，保持"拒绝大范围扫描"的原始边界意图。
+const maximumSmokeQueryWindow = 150 * time.Second
 const maximumSmokeMarkerObservations = 100
 
 // GrafanaSmokeEvidenceAdapter is the only boundary allowed to decode T063 query documents for
@@ -89,6 +92,12 @@ func (a *GrafanaSmokeEvidenceAdapter) DecodePrometheusHTTPCount(result BackendQu
 	var response prometheusVectorResponse
 	if err := result.Decode(&response); err != nil || response.Status != "success" || response.Data.ResultType != "vector" {
 		return SmokeCountEvidence{}, errMalformedSmokeEvidence
+	}
+	// 空成功向量是 counter 基线语义：该固定聚合 selector 没有任何匹配 series，等价于
+	// “0 次已记录请求”。它是全新应用首个 smoke 的合法基线（trigger 前没有历史流量），
+	// 与畸形文档严格区分；check 仍必须取得真实正向 delta 才通过。
+	if len(response.Data.Result) == 0 {
+		return SmokeCountEvidence{Count: 0}, nil
 	}
 	// infraHTTPCountQuery deliberately uses sum(...) after selecting the fixed route/method/status
 	// series. Prometheus therefore returns exactly one aggregate sample with an empty label map;
@@ -182,6 +191,10 @@ type lokiRangeResponse struct {
 	Data   struct {
 		ResultType string `json:"resultType"`
 		Result     []struct {
+			// Loki 3.x 的 query_range 把 native OTLP 的 log attributes 以 structured
+			// metadata 形式放进 stream label map；旧契约假设的逐条三元素 metadata
+			// 在真实 3.7.2 响应中不存在，labels 才是 marker 的权威来源。
+			Stream map[string]string   `json:"stream"`
 			Values [][]json.RawMessage `json:"values"`
 		} `json:"result"`
 	} `json:"data"`
@@ -200,7 +213,9 @@ func decodeLokiMarkerObservations(result BackendQueryResult, target smoke.PollMa
 			if entryCount > maximumSmokeMarkerObservations {
 				return nil, errMalformedSmokeEvidence
 			}
-			if len(entry) != 3 {
+			// 真实 Loki 3.7.2 形状是两元素 [ts, line]，marker 从 stream labels 核对；
+			// 三元素 [ts, line, metadata] 作为兼容路径保留，但 marker 必须同样精确。
+			if len(entry) != 2 && len(entry) != 3 {
 				return nil, errMalformedSmokeEvidence
 			}
 			var timestamp string
@@ -214,10 +229,22 @@ func decodeLokiMarkerObservations(result BackendQueryResult, target smoke.PollMa
 				return nil, errMalformedSmokeEvidence
 			}
 			_ = line
-			// Loki 的 native OTLP endpoint 将 log attributes 保存在 structured metadata。
-			// 必须从后端响应再次核对 marker；不能只凭查询参数就用 target 回填正证据。
-			var metadata map[string]string
-			if err := json.Unmarshal(entry[2], &metadata); err != nil || len(metadata) == 0 || metadata["smoke_run_id"] != target.Marker {
+			// marker 必须从后端响应再次核对：两元素形状看 stream labels，三元素形状
+			// 看条目 metadata；两者都不能靠查询参数自报，labels 与 metadata 互相矛盾
+			// 也按畸形文档拒绝。
+			labelMarker := stream.Stream["smoke_run_id"]
+			if labelMarker != "" && labelMarker != target.Marker {
+				return nil, errMalformedSmokeEvidence
+			}
+			markerMatches := labelMarker == target.Marker
+			if len(entry) == 3 {
+				var metadata map[string]string
+				if err := json.Unmarshal(entry[2], &metadata); err != nil || metadata["smoke_run_id"] != target.Marker {
+					return nil, errMalformedSmokeEvidence
+				}
+				markerMatches = true
+			}
+			if !markerMatches {
 				return nil, errMalformedSmokeEvidence
 			}
 			observedAt, err := parseUnixNanoseconds(timestamp)
@@ -313,8 +340,11 @@ func isSafeSmokeQueryTarget(target smoke.PollMarkerTarget) bool {
 			return false
 		}
 	}
+	// 墙钟边界只防"查未来"与"查远古"两件事；不得拒绝本次 run 自己的窗口：
+	// deadline-bounded runner 合法地允许查询发生在窗口尾部（此时 StartedAt
+	// 距 now 恰好 ≈ 窗口长度），窗口本身已在上方按长度上限校验过。
 	now := time.Now()
-	return !target.StartedAt.Before(now.Add(-maximumSmokeQueryWindow)) && !target.Deadline.After(now.Add(maximumSmokeQueryWindow))
+	return !target.Deadline.After(now.Add(maximumSmokeQueryWindow)) && !target.Deadline.Before(now.Add(-2*maximumSmokeQueryWindow))
 }
 
 func isReportErrorClass(class string) bool {
