@@ -10,6 +10,12 @@ const (
 	aiPlaneMarkerKey   = "longtermism.observability.plane"
 	aiPlaneMarkerValue = "ai"
 	aiTraceIDKey       = "longtermism.ai.trace_id"
+	// aiDesignatedKey 与 Collector tail_sampling 的 designated-ai 保留策略
+	// 对齐：策略要求 AI span 同时携带 plane=ai 与 designated=true 才免于
+	// 概率采样。AI 角色的 span 本身就是受保护证据，缺少该标记会让真实
+	// AI 流量在窗口尾部被 not_sampled 丢弃（collector-grafana.yaml）。
+	aiDesignatedKey  = "longtermism.ai.designated"
+	aiDesignatedFlag = "true"
 )
 
 // SpanRoutingRole 是调用方显式声明的 span 路由职责。
@@ -123,8 +129,9 @@ func MapSpanRoutingAttributes(input SpanRoutingInput) (map[string]string, error)
 		return nil, fmt.Errorf("AI span routing requires a safe feature")
 	}
 
-	attributes := make(map[string]string, 4)
+	attributes := make(map[string]string, 5)
 	putStringAttribute(attributes, aiPlaneMarkerKey, aiPlaneMarkerValue)
+	putStringAttribute(attributes, aiDesignatedKey, aiDesignatedFlag)
 	putStringAttribute(attributes, aiTraceIDKey, input.Identity.AITraceID)
 	putStringAttribute(attributes, "ai.feature", input.Feature)
 	putStringAttribute(attributes, "request.id", input.Identity.RequestID)

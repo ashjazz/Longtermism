@@ -335,16 +335,10 @@ func openPrivateEvidenceFileAt(directory *os.File, name string, flags int) (*os.
 	if directory == nil || name == "" || name != filepath.Base(name) {
 		return nil, errors.New("evidence file name is invalid")
 	}
+	openFlags := flags | unix.O_CLOEXEC | unix.O_NOFOLLOW | unix.O_NONBLOCK
 	// O_NONBLOCK prevents a replaced FIFO/device from hanging before fstat can reject it.
 	// It has no effect on regular-file reads and writes.
-	descriptor, err := retryUnixInt(func() (int, error) {
-		return unix.Openat(
-			int(directory.Fd()),
-			name,
-			flags|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK,
-			0o600,
-		)
-	})
+	descriptor, err := openPrivateEvidenceFileWithCreateRetry(directory.Fd(), name, openFlags, flags)
 	if err != nil {
 		return nil, err
 	}
@@ -647,6 +641,29 @@ func retryUnixInt(operation func() (int, error)) (int, error) {
 		value, err := operation()
 		if !errors.Is(err, unix.EINTR) {
 			return value, err
+		}
+	}
+}
+
+// openPrivateEvidenceFileWithCreateRetry 打开（并按需创建）目录内私有文件。
+// macOS/APFS 竞态：两个进程并发 openat(O_CREAT) 同一路径时，败者的 lookup
+// 可能撞上目录项尚未可见的窗口并返回 ENOENT（本地 APFS 上稳定可复现，
+// 约 1/4000 并发轮）。这是文件系统瞬时状态而非事实缺失：仅当调用方显式
+// 要求创建（O_CREAT 置位）时对该错误做有界重试；普通打开的 ENOENT 是
+// 真实事实，立即返回，绝不把缺失掩盖成等待。
+func openPrivateEvidenceFileWithCreateRetry(directoryFD uintptr, name string, openFlags, requestedFlags int) (int, error) {
+	const createRetryMax = 64
+	for attempt := 0; ; attempt++ {
+		descriptor, err := retryUnixInt(func() (int, error) {
+			return unix.Openat(int(directoryFD), name, openFlags, 0o600)
+		})
+		if err == nil || !errors.Is(err, unix.ENOENT) || requestedFlags&unix.O_CREAT == 0 || attempt >= createRetryMax {
+			return descriptor, err
+		}
+		// 立即重试通常已足够（openat 自身耗时覆盖目录项可见窗口）；
+		// 少量逐步退避防止病态调度下空转。
+		for spin := 0; spin < attempt*attempt; spin++ {
+			time.Sleep(time.Microsecond)
 		}
 	}
 }

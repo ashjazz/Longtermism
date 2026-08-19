@@ -180,9 +180,15 @@ func TestProviderWrapperStreamTerminalLifecycleCancelsAndSanitizes(t *testing.T)
 		if err != nil {
 			t.Fatalf("ChatStream() error=%v", err)
 		}
-		chunk := <-chunks
-		if chunk.Err == nil || strings.Contains(chunk.Err.Error(), secret) || !errors.Is(chunk.Err, llm.ErrUpstream) {
-			t.Fatalf("terminal error=%v, want sanitized upstream classification", chunk.Err)
+		// 首块（partial）跨过 wrapper 边界后 started 才触发；terminal 错误块
+		// 是消费者读到的第二个 chunk，必须保留上游分类且不泄露 provider 原文。
+		partial := <-chunks
+		if partial.DeltaContent != "partial" || partial.Err != nil {
+			t.Fatalf("first chunk=%#v, want the forwarded partial content", partial)
+		}
+		terminal := <-chunks
+		if terminal.Err == nil || strings.Contains(terminal.Err.Error(), secret) || !errors.Is(terminal.Err, llm.ErrUpstream) {
+			t.Fatalf("terminal error=%v, want sanitized upstream classification", terminal.Err)
 		}
 	})
 
@@ -209,7 +215,11 @@ func TestProviderWrapperStreamTerminalLifecycleCancelsAndSanitizes(t *testing.T)
 	})
 
 	t.Run("caller cancellation releases the request budget even when consumer stops reading", func(t *testing.T) {
-		stream := make(chan llm.ChatChunk)
+		// started 信号在首个 chunk 跨越 wrapper 边界后才发送（replay-safe 重试
+		// 窗口的语义）；因此本用例必须预置一个首块让 ChatStream 能返回，随后
+		// 调用方在不再读取流的情况下取消——预算释放必须不依赖消费者读取。
+		stream := make(chan llm.ChatChunk, 1)
+		stream <- llm.ChatChunk{DeltaContent: "first"}
 		provider := &retryScriptedProvider{stream: stream}
 		budgetReleased := make(chan struct{})
 		var releaseOnce sync.Once
