@@ -1,223 +1,364 @@
 # Runtime Configuration Contract
 
-## 1. Ownership
+This contract records the final checked-in runtime boundary for feature 003. It distinguishes
+application configuration, deployment/profile configuration, and smoke-only query inputs. A value
+described as a declaration is not evidence that a backend enforces it at runtime.
 
-| Configuration owner | May contain | Must not contain |
+## 1. Configuration ownership
+
+| Owner | May contain | Must not contain |
 | --- | --- | --- |
-| Application | Collector endpoint/protocol, resource, signal flags, payload policy, smoke flag, LLM provider config names | Tempo/Loki/Prometheus/Grafana/SigNoz endpoints; Langfuse OTLP endpoint |
-| Collector | backend endpoints, exporter headers from env/secret, pipelines, queues, sampling | application API key values in checked-in config |
-| Backend profile | service images, ports, volumes, retention, health checks | application business config |
-| Grafana provisioning | datasource internal URLs, dashboards, alerts | telemetry exporter credentials |
-| Langfuse score adapter | base URL and public/secret key references | prompt/query/output raw values in failure logs |
-| Smoke runner | local query base-URL and credential environment-variable references | committed secrets, credential values, default paid-service endpoints, or business payload |
+| Application | resource identity, signal switches, payload policy, smoke admission references, and the single App -> Collector endpoint | Tempo, Loki, Prometheus, Grafana, SigNoz, or Langfuse observability-backend endpoints |
+| Collector profile | backend endpoints, exporter headers resolved from env, pipelines, sampling, queues, and queue storage | application LLM keys or checked-in credential values |
+| Backend Compose profile | pinned image references, loopback publications, internal ports, volumes, declared limits, health strategy, and retention settings/declarations | application business configuration |
+| Grafana provisioning | Compose-internal datasource URLs, dashboards, and alerts | exporter or query credentials |
+| Langfuse score adapter | base-URL/key env names and presence state | raw prompt/query/output or credential values in logs and failures |
+| Smoke runner | scenario-scoped endpoint, credential, manifest, and artifact env references | committed credential values, normal application backend dependencies, or unbounded backend queries |
 
-## 2. Application shape
+The ownership direction is guarded by
+`internal/cmd/observability_bootstrap_test.go — TestBuildObservabilityBootstrapNormalizesRuntimeOwnership`,
+`TestNormalizeObservabilityBootstrapInputValidatesSharedOTLPLogsLifecycle`, and
+`TestBuildObservabilityBootstrapRejectsCollectorModeWithoutCollectorConfig`.
+
+## 2. Effective application configuration
+
+### 2.1 Checked-in safe defaults
 
 ```yaml
-app:
-  environment: local
-  is_debug: true
-
 observability:
-  enabled: true
-  mode: collector
+  enabled: false
+  mode: noop
+  environment: local # composition-root default; omitted in the checked-in file
   resource:
     service_name: longtermism
     service_version: dev
   collector:
     protocol: grpc
-    endpoint: otel-collector:4317
-    insecure: true
+    endpoint: ""
+    timeout: 10s # composition-root default; omitted in the checked-in file
+    insecure: false
     headers_env: OTEL_EXPORTER_OTLP_HEADERS
   signals:
-    traces_enabled: true
-    metrics_enabled: true
+    traces_enabled: false
+    metrics_enabled: false
     logs_transport: otlp
     local_jsonl_enabled: false
   tracing:
     sampling_ratio: 1.0
   payload:
-    mode: content_redacted
+    mode: metadata_only
     raw_content_enabled: false
-  sensitive_data:
-    on_match: redact
   smoke:
     enabled: false
+    chat:
+      enabled: false
+      authorization_env: LONGTERMISM_CHAT_SMOKE_AUTHORIZATION
+      replay_capacity: 64
+      replay_ttl: 2m
+      manifest_path: build/observability/smoke-manifests
+```
 
+This is a key-and-default contract, not an active Collector example or secret file. Collector mode
+requires deliberate `enabled=true`, `mode=collector`, endpoint, and signal settings. That endpoint
+remains the only application-owned observability-backend address. The protocol selects a gRPC
+authority or OTLP/HTTP protobuf URL; timeout must be positive and no more than 60 seconds.
+
+The composition root reads `observability.environment` with a `local` fallback. The checked-in
+`app.environment` key does not drive observability runtime identity.
+`observability.sensitive_data.on_match` is present in the manifest but is not consumed by the
+current composition root, so it is not an effective runtime switch in this contract. The resource
+model supports an optional instance ID, but the production composition does not expose a manifest
+key for it.
+
+`enabled` and `mode` cannot have two interpretations: disabled plus omitted/`noop` normalizes
+to `noop`; disabled plus a network mode fails. `signals` controls provider assembly, while
+`smoke.enabled` controls diagnostic route admission.
+
+Evidence:
+
+- `internal/cmd/observability_runtime_config_test.go — TestResolveObservabilityRuntimeConfig`
+- `internal/cmd/observability_exporter_test.go — TestObservabilityOTLPExporterConfigurationOwnsOnlyCollectorEndpoint`
+- `internal/cmd/observability_exporter_test.go — TestBuildObservabilityOTLPExporterConfig`
+- `internal/cmd/observability_resource_test.go — TestBuildObservabilityResource`
+- `hack/observability/config_check_test.sh` rejects application-owned backend endpoints.
+
+### 2.2 Provider and score references
+
+```yaml
 ai:
+  chat:
+    enabled: false
   llm:
     default_provider: openai
     providers:
       openai:
         base_url_env: OPENAI_BASE_URL
         api_key_env: OPENAI_API_KEY
-        default_model: gpt-5.5
+        default_model: ""
+    timeout: 60s
+    retry:
+      max: 2
+      backoffMs: 1000
 ```
 
-This is a shape contract, not a ready-to-use secret file. Checked-in defaults keep `observability.enabled=false`, `smoke.enabled=false`, and all secret values empty.
+Version-controlled configuration records env names, not values. The LLM safe snapshot contains the
+API-key env name plus `CredentialPresent` and `BaseURLPresent`; it never contains the resolved
+URL or key. Chat remains disabled until URL, model, and key requirements are complete.
 
-`enabled` 与 `mode` 不得形成两套可解释路径：当 `enabled=false` 且 mode 省略或为 `noop` 时，配置加载层规范化为 `mode=noop`；若使用者同时给出 `enabled=false` 与非 `noop` mode，则启动失败。`signals` 只决定 trace/metric provider 是否装配，`smoke.enabled` 只决定 infra-smoke 路由是否注册。
+Score projection reads `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and
+`LANGFUSE_SECRET_KEY` directly at composition. All absent means `not_configured`; a partial set
+fails with a sanitized error; only a complete set constructs the client.
 
-### Protected live chat smoke admission
+Evidence: `internal/cmd/llm_provider_test.go —
+TestBuildLLMProviderEnabledFailsFastForMissingConfiguration`,
+`TestBuildLLMProviderUsesInjectedFakeWithoutExternalCallsOrSecretLeakage`,
+`internal/cmd/chat_runtime_test.go —
+TestBuildDefaultChatProjectionQueueDoesNoFilesystemWorkWhenLangfuseIsUnconfigured`, and
+`internal/cmd/langfuse_score_lifecycle_test.go —
+TestBuildLangfuseScoreLifecycleRejectsPartialOrFailedConfigurationWithoutSecrets`.
 
-`observability.smoke.enabled` 是 infra 与 live-chat smoke 的共同总开关；关闭时携带任一
-chat smoke header 的请求必须在 handler/provider 前统一拒绝，普通 chat 行为不变。开启
-live-chat smoke 还必须配置独立的短期 credential 引用（例如
-`observability.smoke.chat.authorization_env`），运行时安全快照只保存引用名与
-`credential_present`，绝不保存 credential 值。
+### 2.3 Protected live-chat smoke admission
 
-- 仅接受 loopback peer；代理头不能把远端请求伪装成本机请求。
-- `X-Observability-Smoke-Run-ID` 与 `X-Observability-Smoke-Authorization` 必须同时出现；
-  任一出现即进入受保护 admission，不能降级为普通 chat。
-- 短期共享 credential 使用恒时比较但不由单次请求消费；经鉴权的 marker 才被原子地
-  一次性消费。相同 secret 可服务多个不同 run，而同一 marker 的并发或串行 replay
-  最多一个请求进入 handler。registry 必须有明确 TTL/容量，不能成为无界身份存储。
-- disabled、remote、缺字段、非法 marker、错误 credential 与 replay 使用同一低敏拒绝
-  语义，避免暴露开关或 credential oracle；错误、日志与配置快照不得包含输入值。
-- admission 成功后立即删除 authorization header，只把已验证 marker 放入本地 context；
-  auth secret 不进入 DTO、command、baggage、span、log、metric、manifest 或 report。
+`observability.smoke.enabled` is the common infra/live-chat smoke switch. Live chat also requires
+`observability.smoke.chat.enabled`, a non-empty authorization env reference and value, and a
+bounded replay registry.
+
+- Only loopback peers are accepted; proxy headers cannot make a remote peer local.
+- `X-Observability-Smoke-Run-ID` and `X-Observability-Smoke-Authorization` are indivisible.
+- Credentials use constant-time comparison. A credential can authorize multiple runs, but an
+  authenticated marker is atomically one-shot and the registry has explicit TTL/capacity bounds.
+- Disabled, remote, incomplete, malformed, unauthenticated, and replayed requests share one stable,
+  low-sensitive rejection before handler/provider work.
+- On success the authorization header is removed. Only the trusted marker enters local context;
+  the credential never enters a DTO, command, baggage, span, log, metric, manifest, or report.
+
+Evidence: `internal/cmd/observability_runtime_config_test.go —
+TestResolveChatSmokeRuntimeConfigRequiresCompleteProtectedAdmission`.
 
 ## 3. Fail-fast matrix
 
 | Condition | Required behavior |
 | --- | --- |
-| mode is `noop` | no exporter, server may start |
-| mode is `local` | only local/test sinks, no network |
-| `enabled=false` with a non-`noop` mode | startup error; configuration must not silently choose one |
-| mode is `collector` without endpoint | startup error |
-| unsupported protocol | startup error |
-| chat enabled without model base URL/key/model | startup error |
-| `content_raw` outside `local`/`test`, without `raw_content_enabled=true`, or `raw_content_enabled=true` for another mode | startup error |
-| another unknown payload mode | startup error |
-| smoke disabled | infra-smoke route absent or returns 404 |
-| a chat request carries smoke headers while smoke is disabled, remote, incomplete, invalid, unauthenticated or replayed | reject before handler/provider with one stable low-sensitive response |
-| live chat smoke enabled without its credential reference/value or bounded replay registry | startup error; do not register a partially protected admission path |
-| Langfuse score not configured | evidence persists; projection status `not_configured` |
-| backend profile missing credentials | affected real smoke fails before sending |
-| Collector pipeline references an unknown component or has an invalid graph | `obs-config-check` fails before Compose starts, with file path and stable `invalid_collector_pipeline` category |
-| Collector persistent-storage path is absent, not a directory, or not writable by the Collector runtime user | `obs-config-check` fails before Compose starts with `storage_path_unavailable`; a Level 3 injection must also prove runtime storage errors are observable and recovered safely |
+| mode `noop` | no exporter; server may start |
+| mode `local` | only local/test sinks; no observability network client |
+| `enabled=false` with non-`noop` mode | startup error |
+| mode `collector` without valid endpoint, protocol, or timeout | startup error |
+| production plus insecure Collector transport | startup error in the current composition |
+| chat enabled without provider URL/key/model | startup error |
+| `content_raw` outside local/test, without explicit opt-in, or inconsistent with opt-in | startup error |
+| unknown payload mode | startup error |
+| smoke disabled | infra-smoke route absent/404; chat smoke headers are rejected before provider work |
+| live-chat smoke incomplete, remote, invalid, unauthenticated, or replayed | one low-sensitive rejection before handler/provider |
+| Langfuse score projection not configured | evidence persists; projection status `not_configured` |
+| required Compose env reference missing | `${VAR:?}` expansion fails before container creation |
+| backend pipeline/component graph invalid | `obs-config-check` fails with stable configuration category |
+| Collector storage absent, wrong type, or unwritable | preflight fails; runtime injection must expose the storage failure |
+| fixed loopback port occupied | Docker Compose fails while binding the port; no host-port occupancy preflight is implemented and ports are not silently remapped |
 
-## 4. Environment/secret contract
+## 4. Environment and secret contract
 
-- Secret-bearing keys are injected by environment, Docker secret, secret file or external manager.
-- Config snapshots and error messages expose only the environment variable name and `credential_present` boolean.
-- Local override files use an ignored naming convention such as `*.local.yaml`/`.env.local`.
-- No command prints the value of `OPENAI_API_KEY`, Langfuse secret/public key pair, OTLP Authorization header or SigNoz ingestion key.
-- A smoke command may create a short-lived credential only when it owns that credential lifecycle. It must revoke it at the issuing service when revocation is supported, delete all local secret files and run-scoped temporary data before writing its final report, and record cleanup status. Caller-supplied long-lived credentials are never deleted or revoked by smoke.
+### 4.1 Safe runtime snapshots
 
-## 5. Infra smoke negative-query ports
+| Boundary | Version-controlled reference | Permitted snapshot fields | Prohibited fields |
+| --- | --- | --- | --- |
+| App -> Collector auth | `OTEL_EXPORTER_OTLP_HEADERS` | `HeaderEnvName`, `CredentialPresent` | header/credential value |
+| App live-chat smoke | `LONGTERMISM_CHAT_SMOKE_AUTHORIZATION` | `AuthorizationEnvName`, `CredentialPresent`, readiness/replay bounds | authorization value or marker |
+| LLM provider | `OPENAI_API_KEY`, `OPENAI_BASE_URL` | `APIKeyEnvName`, `CredentialPresent`, `BaseURLPresent` | key or resolved base URL |
+| Score projection | `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | env names and presence booleans only | URL/key values and credential-bearing errors |
+| Smoke query adapters | `LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL`, `LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL`, `LONGTERMISM_SMOKE_SIGNOZ_INGESTION_KEY` | env names and presence booleans only | credential, Authorization header, response body |
+| Live smoke chat client | `LONGTERMISM_SMOKE_CHAT_AUTHORIZATION` | env name and presence boolean only | credential or request header |
 
-`infra` smoke is a diagnostic client rather than an application dependency. Only its command
-composition root may resolve the following environment-variable references; `pkg/ai`, HTTP
-controllers, usecases, reports and normal application configuration must not hold their values.
+Endpoint envs such as `LONGTERMISM_SMOKE_*_QUERY_BASE_URL` are non-secret references, but their
+resolved values still cannot enter a safe snapshot, report, stable error, or log. Snapshot behavior
+is guarded by `TestResolveObservabilityRuntimeConfig`,
+`TestResolveChatSmokeRuntimeConfigRequiresCompleteProtectedAdmission`, and
+`internal/cmd/observability_exporter_test.go —
+TestNewObservabilityOTLPExporterRejectsUnsafeHeaderWithoutEcho`.
 
-```yaml
-observability:
-  smoke:
-    infra_negative_query:
-      langfuse:
-        base_url_env: LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL
-        credential_env: LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL
-      ai_plane:
-        base_url_env: LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL
-        credential_env: LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL
-```
+### 4.2 Compose injection boundary
 
-This is a reference-only shape: checked-in files contain neither a URL nor a credential. A
-configuration snapshot or diagnostic may expose an environment-variable name and
-`credential_present` only. It must never expose an endpoint value, Authorization header, query,
-marker, response body or platform error text.
+Checked-in Compose files contain `${VAR:?}` references, never credential literals.
+Secret-bearing references cover the Grafana admin password, Langfuse OTLP authorization, database
+URLs/passwords, Langfuse salt/encryption/auth/license/init credentials, Redis connection string,
+ClickHouse admin passwords, and MinIO access credentials. Values exist only at the operator/container
+injection boundary. Local values belong in ignored `.env.local` or an external secret manager.
 
-The two ports have separate lifecycle and least-privilege requirements:
+No command may print a resolved secret. A smoke command may revoke/delete only a short-lived
+credential whose lifecycle it created; caller-owned credentials are never deleted. Cleanup status,
+not secret content, is written to the final report.
 
-| Port | Required capability | Prohibited capability |
-| --- | --- | --- |
-| `langfuse` | Read/count the current project's trace or observation evidence for one exact smoke marker | ingest/write, score write, token/project/user administration, export or unbounded trace reads |
-| `ai_plane` | Read/count low-sensitive Collector or AI-plane routing evidence for one exact smoke marker | pipeline mutation, exporter mutation, queue deletion, credential management or arbitrary metric/query execution |
+## 5. Smoke-only query boundary
 
-The concrete Langfuse and AI-plane protocol is intentionally owned by the backend adapter and
-will be fixed by T065B's contract tests. The command cannot infer it from an OTLP ingest URL,
-Grafana URL, `ai_trace_id`, project identifier or a caller-provided flag.
+The smoke command—not the application—resolves:
 
-Both ports follow these non-negotiable bounds:
+| Adapter | Endpoint reference | Credential reference | Bound |
+| --- | --- | --- | --- |
+| Langfuse | `LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL` | `LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL` | exact marker/window; read/count only |
+| AI plane | `LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL` | `LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL` | exact marker; no pipeline/queue mutation |
+| SigNoz | `LONGTERMISM_SMOKE_SIGNOZ_QUERY_BASE_URL` | `LONGTERMISM_SMOKE_SIGNOZ_INGESTION_KEY` | selected profile; no credential/query echo |
+| Prometheus | `LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL` | none | compiled query only |
+| Loki | `LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL` | none | compiled query only |
+| Tempo | `LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL` | none | compiled query only |
 
-- Query only the runner-generated exact marker and the current `[started_at, deadline]` window;
-  the full smoke window is at most 60 seconds. No CLI flag may provide a marker, query, project,
-  pagination, time range or output path.
-- Each request is read-only, uses the caller deadline plus a maximum 30-second sub-timeout,
-  forbids redirects, and accepts at most 1 MiB of response data. Raw documents are discarded
-  before crossing the backend adapter boundary.
-- The adapter returns only a non-negative count or a stable error class. A zero count is evidence
-  only after a successful bounded query; missing configuration, a missing credential, or a query
-  failure must never be converted to zero, `skipped`, or `passed`.
-- T065B's first `grafana` profile is host-local only: the base URL host must be `127.0.0.1`, or
-  `localhost` after resolution confirms that every address is loopback. Its port may use the
-  explicit local override from the profile-and-port contract. Any other hostname, IP literal,
-  container DNS name, private-network address or remote address is rejected. A Compose-network or
-  remote profile requires a later ADR plus an explicit compiled hostname/port allowlist; it may
-  not be introduced through an environment value.
-- Query URL validation rejects userinfo, query strings, fragments and arbitrary path overrides;
-  it forbids redirects before network I/O. The adapter must re-check a `localhost` resolution at
-  connection time so DNS rebinding cannot move the request outside the loopback-only boundary.
+These adapters are implemented, not future placeholders. Langfuse uses bounded
+`GET /api/public/observations`; the AI plane uses bounded
+`GET /api/v1/observability/smoke/marker-count`. Both use a Basic credential at the client boundary,
+forbid redirects, revalidate loopback resolution, cap a response at 1 MiB, and use at most a
+30-second request sub-timeout. The reusable query adapter permits a window up to 150 seconds so the
+120-second persistent-queue drain scenario is representable; ordinary infra/live-chat command
+windows remain capped at 60 seconds. Missing credentials/query failures never become a zero count
+or pass, and reports never carry endpoints, headers, raw responses, platform IDs, or payloads.
 
-| Condition | Required class / behavior |
-| --- | --- |
-| missing base-URL or credential reference, or credential not resolved | preflight failure before client construction; `authentication_failed` when represented in a report |
-| 401 or 403 | `authentication_failed` |
-| invalid marker/window or prohibited query construction | `invalid_query` |
-| caller or sub-query deadline | `backend_timeout` |
-| 429, 5xx, connection failure or unsupported protocol | `backend_unavailable` |
-| oversized, non-JSON or count-unreadable response | `malformed_response` |
-| other adapter failure | `query_failed` |
-| successful count greater than zero | `unexpected_evidence` |
+Evidence: `internal/observability/backend/langfuse_smoke_query_test.go` contract tests and
+`cmd/obs-smoke/main_test.go` scenario-reference tests.
 
-`langfuse_trace` reports only `matched_traces`; `collector` reports only `marker_received`.
-Neither evidence DTO, error, report, log nor CLI output may carry platform IDs, endpoint values,
-credentials, headers, raw response data or non-marker payload.
+## 6. Stable Collector component matrix
 
-## 6. Collector component IDs
+Component IDs are telemetry, dashboard, alert, queue, and smoke selectors.
 
-Stable component IDs are part of the dashboard/alert/smoke contract:
+| Kind | Shared | Grafana + Langfuse | SigNoz + Langfuse |
+| --- | --- | --- | --- |
+| Receiver | `otlp` | shared | shared |
+| Infra/AI connectors | `forward/infra`, `forward/ai` | shared | shared |
+| Queue storage | — | `file_storage/tempo`, `file_storage/loki`, `file_storage/langfuse` | `file_storage/signoz`, `file_storage/langfuse` |
+| Infra exporters | — | `otlp/tempo`, `otlphttp/loki`, `prometheus/app` | `otlp/signoz` |
+| AI exporter | — | `otlphttp/langfuse` | `otlphttp/langfuse` |
+| Health extension | `health_check` | shared | shared |
 
-```text
-otlp/tempo
-otlphttp/loki
-otlphttp/langfuse
-prometheus/app
-file_storage/tempo
-file_storage/loki
-file_storage/langfuse
-```
+Grafana infra signals route to Tempo/Loki/Prometheus; SigNoz infra signals route through
+`otlp/signoz`. Only explicit AI markers route to Langfuse. Exact IDs and graphs are guarded by
+`hack/observability/collector_grafana_config_test.sh` and
+`hack/observability/collector_signoz_config_test.sh`.
 
-The final config may use one `file_storage` extension with separate queue namespaces if supported by the pinned Collector; evidence must still distinguish all three exporters.
+## 7. Profile and port matrix
 
-## 7. Profile and port contract
+All published development ports bind `127.0.0.1`. Profiles share Collector and Langfuse ports and
+cannot run concurrently under the checked-in mappings.
 
-Only loopback-facing development ports are published. Internal OTLP/database ports remain on the Compose network unless required by a diagnostic command.
+| Surface | Grafana + Langfuse host -> container | SigNoz + Langfuse host -> container | Scope |
+| --- | --- | --- | --- |
+| Collector OTLP gRPC | `127.0.0.1:4317 -> 4317` | `127.0.0.1:4317 -> 4317` | published loopback |
+| Collector OTLP HTTP | `127.0.0.1:4318 -> 4318` | `127.0.0.1:4318 -> 4318` | published loopback |
+| Collector health | `127.0.0.1:13133 -> 13133` | `127.0.0.1:13133 -> 13133` | published loopback |
+| Collector self metrics | `127.0.0.1:8888 -> 8888` | `127.0.0.1:8888 -> 8888` | published loopback |
+| Grafana | `127.0.0.1:3000 -> 3000` | — | published loopback |
+| Prometheus | `127.0.0.1:9090 -> 9090` | — | published loopback |
+| Loki query | `127.0.0.1:3100 -> 3100` | — | published loopback |
+| Tempo query | `127.0.0.1:3200 -> 3200` | — | published loopback |
+| SigNoz UI/query declaration | — | `127.0.0.1:3301 -> 3301` | checked-in publication only; live query viability is not proven |
+| Langfuse UI/query | `127.0.0.1:3001 -> 3000` | `127.0.0.1:3001 -> 3000` | published loopback |
+| `prometheus/app` | `collector:8889` | — | **Compose-internal only**, never host-published |
+| Application | default `:8000`; Grafana smoke example uses `127.0.0.1:8000` | started separately | application config, not Compose |
 
-| Surface | Default host port |
-| --- | --- |
-| Application | 8000 |
-| Grafana | 3000 |
-| Langfuse UI | 3001 |
-| Prometheus | 9090 |
-| Loki query | 3100 |
-| Tempo query | 3200 |
-| Collector health | 13133 |
-| Collector self metrics | 8888 |
-| Application metrics scrape | 8889 |
-| SigNoz UI | 3301 |
+Checked-in Compose uses fixed ports and has no environment-based override. Conflicts fail fast. A
+different mapping requires an explicit local Compose overlay and matching test changes.
 
-Port overrides must be supported through local environment values. Config validation reports conflicts before E2E.
+The SigNoz service healthcheck currently targets container port `8080`, while Compose publishes
+container port `3301`. No checked-in setting explains that difference and no real E2E evidence proves
+`3301` is a usable UI/query listener. Therefore the row records the current declaration, not an
+operational endpoint guarantee; this inconsistency must be resolved in a deployment task before a
+SigNoz live smoke may claim readiness.
 
-## 8. Version contract
+Evidence: `hack/observability/compose_grafana_test.sh`,
+`hack/observability/compose_signoz_test.sh`, `hack/observability/config_check_test.sh`, and
+`internal/cmd/grafana_smoke_config_example_test.go —
+TestGrafanaSmokeConfigExampleIsStandaloneAndLoopbackBound`.
 
-- `deploy/observability/versions.env` is the single readable tag matrix.
-- Compose resolves immutable digests in release/CI evidence.
-- `latest` is rejected by `obs-config-check`.
-- Every service has a health check and declared CPU/memory limit.
-- Full local profile target budget: at most 8 vCPU, 12 GiB RAM and 20 GiB observability volumes.
+## 8. Resource and version matrices
 
-## 9. Retention contract
+### 8.1 Declared service limits
 
-Defaults use the retention baseline in the decision workbench and are mirrored in `data-model.md`: Prometheus metrics 15 days; Loki and Tempo 7 days; Langfuse metadata/redacted traces 14 days; low-sensitive eval evidence/report 90 days; persistent queue only while backlogged. `content_raw` is a local/test-only, non-serializable debug artifact rather than an observability payload, so no backend raw-content retention unit is permitted.
+| Grafana overlay | CPU | Memory |
+| --- | ---: | ---: |
+| collector-storage-init | 0.10 | 64 MiB |
+| collector | 0.50 | 512 MiB |
+| collector-health-probe | 0.10 | 64 MiB |
+| loki-health-probe | 0.10 | 64 MiB |
+| tempo-health-probe | 0.10 | 64 MiB |
+| prometheus | 0.50 | 1 GiB |
+| loki | 0.75 | 1 GiB |
+| tempo | 0.75 | 1 GiB |
+| grafana | 0.50 | 512 MiB |
+
+| Shared Langfuse | CPU | Memory |
+| --- | ---: | ---: |
+| langfuse-db | 0.75 | 1 GiB |
+| langfuse-clickhouse | 1.25 | 2 GiB |
+| langfuse-clickhouse-init | 0.10 | 128 MiB |
+| langfuse-redis | 0.25 | 512 MiB |
+| langfuse-minio | 0.25 | 512 MiB |
+| langfuse-minio-init | 0.10 | 128 MiB |
+| langfuse-web | 1.00 | 2 GiB |
+| langfuse-worker | 0.75 | 1 GiB |
+
+| SigNoz overlay | CPU | Memory |
+| --- | ---: | ---: |
+| collector | 0.50 | 512 MiB |
+| collector-health-probe | 0.10 | 128 MiB |
+| collector-storage-init | 0.10 | 128 MiB |
+| signoz | 0.75 | 1536 MiB |
+| signoz-otel-collector | 0.50 | 512 MiB |
+| clickhouse (SigNoz override) | 1.50 | 2 GiB |
+
+| Full profile | Services | CPU-limit sum | Memory-limit sum | Declared operator budget |
+| --- | ---: | ---: | ---: | --- |
+| Grafana + Langfuse | 17 | **7.85 vCPU** | **11776 MiB / 11.5 GiB** | 8 vCPU / 12 GiB RAM / 20 GiB volumes |
+| SigNoz + Langfuse | 14 | **7.90 vCPU** | **12288 MiB / 12 GiB** | 8 vCPU / 12 GiB RAM / 20 GiB volumes |
+
+The 20 GiB volume figure is an operator budget declaration, not a Docker named-volume quota. Health
+readiness is service-specific: distroless services may use sidecars, initializers are one-shot, and
+workers without a health endpoint use dependency/E2E evidence. Not every container has an inline
+Docker healthcheck.
+
+### 8.2 Version source
+
+`deploy/observability/versions.env` is the single readable image-tag matrix. It pins Collector
+Contrib 0.153.0, Grafana 13.1.0, Prometheus 3.11.0, Loki 3.7.2, Tempo 2.10.5, Langfuse web/worker
+3.185.0, SigNoz/its Collector v0.126.0, and pinned storage/helper images. `latest` is rejected.
+The checked-in matrix contains tags, not immutable digests; digest resolution remains a release/CI
+gate rather than an already checked-in fact. The two `compose_*_test.sh` scripts guard version,
+resource, port, volume, and health-strategy invariants.
+
+## 9. Retention and enforcement matrix
+
+| Unit | Baseline | Current enforcement/evidence | Contract strength |
+| --- | --- | --- | --- |
+| Prometheus metrics | 15 days | Compose command sets `--storage.tsdb.retention.time=15d`; static profile test | configured |
+| Loki logs | 168h / 7 days | `loki.yaml` enables compactor retention and sets `168h`; config/profile checks | configured |
+| Tempo traces | 168h / 7 days | `tempo.yaml` sets block retention `168h`; static profile test | configured |
+| Langfuse metadata/redacted traces | 14 days | headless init sets 14 days for a new project; requires EE; existing projects are not backfilled | conditional initialization; requires live verification |
+| SigNoz metrics/logs/traces | 15d / 7d / 7d | `compose.signoz.yaml` has `x-observability-retention` metadata only | **profile declaration only; not runtime-enforced** |
+| Low-sensitive local eval evidence | at most 2160h / 90 days | open/config boundary rejects a larger retention | bounded configuration; no automatic compaction |
+| Persistent Collector queue | while backlogged | records must drain after delivery; no age TTL or native queue-age metric | lifecycle invariant, not time retention |
+| `content_raw` | none | local/test-only, non-serializable debug artifact; cleanup required | never a backend retention unit |
+
+SigNoz storage TTL and real-profile retention require live backend query evidence before being
+described as enforced. Static metadata is insufficient. Runner tests with fake backends prove
+report/cleanup/failure semantics, not real-backend retention.
+
+Evidence:
+
+- `internal/eval/evidence_store_test.go — TestOpenLocalEvidenceStoreEnforcesNinetyDayRetentionBoundary`
+- `internal/observability/smoke/retention_runner_test.go — TestRunRetentionSmokeVerifiesAllUnitsAndCleansRawArtifacts`
+- `internal/observability/smoke/retention_runner_test.go — TestRunRetentionSmokeFailsOnRetentionWindowMismatch`
+- `internal/observability/smoke/retention_runner_test.go — TestRunRetentionSmokeFailsWhenRawPayloadRetained`
+- `internal/observability/smoke/retention_runner_test.go — TestRunRetentionSmokeFailsWhenQueueRetainsDeliveredRecords`
+- `hack/observability/langfuse_compose_test.sh`
+
+## 10. Static quality gates
+
+Before a profile starts:
+
+1. `make obs-config-check` (which runs `hack/observability/config_check.sh`) validates the current
+   repository's single application Collector endpoint, pinned image references, loopback ports,
+   graphs, and storage constraints. `hack/observability/config_check_test.sh` separately tests the
+   checker's failure categories with fixtures.
+2. `hack/observability/collector_grafana_config_test.sh` or
+   `collector_signoz_config_test.sh` validates stable components and signal routing.
+3. `hack/observability/compose_grafana_test.sh` or `compose_signoz_test.sh` validates the final
+   service/resource/port/volume/health-strategy matrix.
+4. `hack/observability/langfuse_compose_test.sh` validates shared Langfuse injection and
+   initialization constraints without accepting literal credentials.
+
+These gates protect configuration truth; they do not replace live E2E evidence for backend
+readiness, delivery, query behavior, or retention.
