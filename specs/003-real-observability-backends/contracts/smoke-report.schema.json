@@ -109,7 +109,7 @@
       "properties": {
         "backend": {
           "type": "string",
-          "enum": ["api", "collector", "tempo", "loki", "prometheus", "grafana", "langfuse_trace", "langfuse_score", "signoz", "privacy"]
+          "enum": ["api", "collector", "tempo", "loki", "prometheus", "grafana", "langfuse_trace", "langfuse_score", "signoz", "signoz_traces", "signoz_logs", "signoz_metrics", "privacy"]
         },
         "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
         "duration_ms": { "type": "integer", "minimum": 0 },

@@ -10,6 +10,12 @@ import (
 
 var errInfrastructureSmokeFailed = errors.New("infrastructure smoke verification failed")
 
+// httpRequestCounter is the narrow capability waitForHTTPRequestIncrease actually needs;
+// the alternate SigNoz runner reuses the helper without implementing Grafana-only queries.
+type httpRequestCounter interface {
+	HTTPRequestCount(context.Context) (int64, error)
+}
+
 type InfrastructureSmokeBackend interface {
 	QueryTempo(context.Context, PollMarkerTarget) ([]MarkerObservation, error)
 	QueryLoki(context.Context, PollMarkerTarget) ([]MarkerObservation, error)
@@ -141,7 +147,7 @@ func RunInfrastructureSmoke(ctx context.Context, request InfrastructureSmokeRequ
 	return buildInfrastructureSmokeReport(identity, request, startedAt, deps.Clock.Now().UTC(), checks)
 }
 
-func waitForHTTPRequestIncrease(ctx context.Context, backend InfrastructureSmokeBackend, baseline int64, deadline time.Time, clock PollerClock, interval time.Duration) (int64, error) {
+func waitForHTTPRequestIncrease(ctx context.Context, backend httpRequestCounter, baseline int64, deadline time.Time, clock PollerClock, interval time.Duration) (int64, error) {
 	for {
 		if !clock.Now().Before(deadline) {
 			return baseline, nil

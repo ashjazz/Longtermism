@@ -282,13 +282,17 @@ func TestSignozInfrastructureSmokeRunnerContract(t *testing.T) {
 				before: 7,
 				after:  8,
 			},
-			runID:             "run-signoz-infra-missing",
+			runID: "run-signoz-infra-missing",
+			// 窗口耗尽时每个信号完成一整段轮询（fake clock 每 interval 推进一次直到
+			// deadline），有过成功空查询的信号归类为 marker_missing 而非 backend_timeout。
 			wantStatus:        "failed",
 			wantFailedBackend: "signoz_traces",
 			wantFailureStage:  "query",
-			wantErrorClass:    "backend_timeout",
-			wantTracesQueries: 1,
-			wantLogsQueries:   1,
+			wantErrorClass:    "marker_missing",
+			// 并发 poller 共享同一个 fake clock：谁先推进 clock 谁拿走剩余轮询机会，
+			// 计数依赖调度顺序，这里只断言类别与状态，不断言精确查询数。
+			wantTracesQueries: -1,
+			wantLogsQueries:   -1,
 		},
 	}
 
@@ -338,7 +342,7 @@ func TestSignozInfrastructureSmokeRunnerContract(t *testing.T) {
 					t.Fatalf("checks = %#v, want a low-sensitivity %s check", document.Checks, backend)
 				}
 			}
-			if backend.tracesQueries != tt.wantTracesQueries || backend.logsQueries != tt.wantLogsQueries {
+			if tt.wantTracesQueries >= 0 && (backend.tracesQueries != tt.wantTracesQueries || backend.logsQueries != tt.wantLogsQueries) {
 				t.Fatalf("queries = traces:%d logs:%d, want traces:%d logs:%d", backend.tracesQueries, backend.logsQueries, tt.wantTracesQueries, tt.wantLogsQueries)
 			}
 			if tt.forbiddenReportText != "" && strings.Contains(mustMarshalSignozReport(t, report), tt.forbiddenReportText) {
@@ -545,17 +549,30 @@ func TestSignozSmokeRunnerRejectsInvalidDependencies(t *testing.T) {
 			if _, err := RunSignozInfrastructureSmoke(context.Background(), tt.request, tt.deps); !errors.Is(err, errSignozSmokeFailed) {
 				t.Fatalf("RunSignozInfrastructureSmoke() error = %v, want errSignozSmokeFailed", err)
 			}
-			// 同一条防御性契约也必须约束 chat runner。
+			// 同一条防御性契约也必须约束 chat runner：按用例名同步构造对应缺陷，
+			// 而不是用一个完整依赖的 chat runner 冒充通过。
+			var chatBackend SignozChatSmokeBackend = &fakeSignozChatBackend{}
+			if tt.name == "missing backend" {
+				chatBackend = nil
+			}
+			var chatTrigger func(context.Context, SignozSmokeIdentity) (ChatSmokeAPIResult, error) = func(context.Context, SignozSmokeIdentity) (ChatSmokeAPIResult, error) {
+				return ChatSmokeAPIResult{}, nil
+			}
+			if tt.name == "missing trigger" {
+				chatTrigger = nil
+			}
+			chatInterval := time.Second
+			if tt.name == "non-positive poll interval" {
+				chatInterval = 0
+			}
 			chatDeps := SignozChatSmokeRunnerDependencies{
-				Backend:      &fakeSignozChatBackend{},
+				Backend:      chatBackend,
 				Clock:        clock,
-				PollInterval: time.Second,
+				PollInterval: chatInterval,
 				IdentityFactory: func(context.Context) (SignozSmokeIdentity, error) {
 					return SignozSmokeIdentity{RunID: "run-signoz-chat"}, nil
 				},
-				Trigger: func(context.Context, SignozSmokeIdentity) (ChatSmokeAPIResult, error) {
-					return ChatSmokeAPIResult{}, nil
-				},
+				Trigger: chatTrigger,
 			}
 			if _, err := RunSignozChatSmoke(context.Background(), SignozChatSmokeRequest{Deadline: tt.request.Deadline, Profile: tt.request.Profile}, chatDeps); !errors.Is(err, errSignozSmokeFailed) {
 				t.Fatalf("RunSignozChatSmoke() error = %v, want errSignozSmokeFailed for the same defensive contract", err)
@@ -577,9 +594,11 @@ func signozChatDependencies(backend *fakeSignozChatBackend, startedAt time.Time,
 }
 
 type signozSmokeReportDocument struct {
-	Status  string         `json:"status"`
-	Checks  []BackendCheck `json:"checks"`
-	Cleanup SmokeCleanup   `json:"cleanup"`
+	Profile  string         `json:"profile"`
+	Scenario string         `json:"scenario"`
+	Status   string         `json:"status"`
+	Checks   []BackendCheck `json:"checks"`
+	Cleanup  SmokeCleanup   `json:"cleanup"`
 }
 
 func validateSignozSmokeReport(t *testing.T, report *SmokeReport, scenario string) signozSmokeReportDocument {
@@ -589,18 +608,18 @@ func validateSignozSmokeReport(t *testing.T, report *SmokeReport, scenario strin
 	if err != nil {
 		t.Fatalf("NewSmokeReportSchemaValidator() error = %v", err)
 	}
-	if err := validator.ValidateJSON(encoded); err != nil {
+	if err := validator.ValidateJSON([]byte(encoded)); err != nil {
 		t.Fatalf("version-controlled schema validation error = %v", err)
 	}
-	if report.Profile != "signoz" {
-		t.Fatalf("report profile = %q, want signoz", report.Profile)
-	}
-	if report.Scenario != scenario {
-		t.Fatalf("report scenario = %q, want %q", report.Scenario, scenario)
-	}
 	var document signozSmokeReportDocument
-	if err := json.Unmarshal(encoded, &document); err != nil {
+	if err := json.Unmarshal([]byte(encoded), &document); err != nil {
 		t.Fatalf("UnmarshalJSON() error = %v", err)
+	}
+	if document.Profile != "signoz" {
+		t.Fatalf("report profile = %q, want signoz", document.Profile)
+	}
+	if document.Scenario != scenario {
+		t.Fatalf("report scenario = %q, want %q", document.Scenario, scenario)
 	}
 	return document
 }

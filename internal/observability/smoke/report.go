@@ -26,13 +26,13 @@ var (
 		"infra", "chat", "score", "privacy", "exporter_failure", "persistent_queue",
 		"storage_failure", "score_worker_failure", "alert", "retention", "platform_contract", "full",
 	)
-	allowedBackends                    = stringSet("api", "collector", "tempo", "loki", "prometheus", "grafana", "langfuse_trace", "langfuse_score", "signoz", "privacy")
+	allowedBackends                    = stringSet("api", "collector", "tempo", "loki", "prometheus", "grafana", "langfuse_trace", "langfuse_score", "signoz", "signoz_traces", "signoz_logs", "signoz_metrics", "privacy")
 	allowedStatuses                    = stringSet("passed", "failed", "skipped")
 	allowedFailureStages               = stringSet("none", "preflight", "api", "export", "query", "cleanup")
 	allowedCleanupStatuses             = stringSet("not_required", "completed", "failed")
 	allowedTemporaryCredentialStatuses = stringSet("not_created", "revoked", "deleted", "failed")
 	allowedTemporaryDataStatuses       = stringSet("not_created", "deleted", "failed")
-	allowedErrorClasses                = stringSet("authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "identity_mismatch", "invalid_query", "malformed_response", "marker_missing", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing", "alert_not_resolved", "invalid_configuration", "retention_violation")
+	allowedErrorClasses                = stringSet("authentication_failed", "backend_timeout", "temporary_credential_revoke_failed", "backend_unavailable", "export_failed", "identity_mismatch", "invalid_query", "malformed_response", "marker_missing", "query_failed", "metric_delta_missing", "unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing", "alert_not_resolved", "invalid_configuration", "retention_violation", "score_projection_missing")
 	allowedVersionKeys                 = stringSet("api", "collector", "grafana", "langfuse", "loki", "prometheus", "schema", "signoz", "smoke_runner", "tempo")
 	allowedResidualResources           = stringSet("run-directory", "temporary-debug-data", "temporary-queue-data", "paused-service", "unwritable-storage", "langfuse-api-unavailable", "score-worker-queue-full", "alert-condition-active")
 	allowedEvidenceKeysByBackend       = map[string]map[string]struct{}{
@@ -49,6 +49,11 @@ var (
 		"langfuse_trace": stringSet("matched_traces", "retention_days", "raw_payload_found"),
 		"langfuse_score": stringSet("matched_scores", "score_attempts", "dropped_projections", "local_evidence_intact", "shutdown_timed_out"),
 		"signoz":         stringSet("matched_logs", "matched_spans"),
+		// 备选 profile 的三信号是三个独立证据面：分信号 backend 让 per-signal
+		// 失败归因与 dashboard/检查单对齐（T139/T140 契约），而不是混成一个 signoz。
+		"signoz_traces":  stringSet("matched_spans"),
+		"signoz_logs":    stringSet("matched_logs"),
+		"signoz_metrics": stringSet("metric_delta"),
 		"privacy":        stringSet("forbidden_marker_hits"),
 	}
 	smokeVersionPattern = regexp.MustCompile(`^[0-9][0-9A-Za-z.+-]{0,63}$`)
