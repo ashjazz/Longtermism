@@ -3,8 +3,12 @@ info:
   title: Longtermism Real Observability Slice API
   version: 0.1.0
   description: Minimal non-streaming chat and infrastructure-only smoke contracts for spec 003.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
 servers:
   - url: http://127.0.0.1:8000
+security: []
 paths:
   /api/v1/chat:
     post:
@@ -58,6 +62,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
         '502':
           $ref: '#/components/responses/UpstreamFailure'
         '504':
@@ -97,7 +103,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                $ref: '#/components/schemas/InfraSmokeErrorEnvelope'
 components:
   responses:
     BadRequest:
@@ -122,6 +128,18 @@ components:
             oneOf:
               - $ref: '#/components/schemas/ChatPreAIErrorEnvelope'
               - $ref: '#/components/schemas/ChatPostAIErrorEnvelope'
+    InternalServerError:
+      description: >-
+        Controller or composition failure before or after AI identity creation. The envelope
+        preserves only identities that already exist and never invents one.
+      headers:
+        X-Request-ID:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ChatInternalErrorEnvelope'
     UpstreamFailure:
       description: Configured model service failed
       headers:
@@ -154,6 +172,13 @@ components:
           maxLength: 32768
           x-longtermism-max-utf8-bytes: 32768
           description: One UTF-8 user message. It must be non-blank after trimming and at most 32768 UTF-8 encoded bytes. Provider, model, base URL and credentials are server-controlled.
+          example: Reply with one short sentence.
+      description: >-
+        The transport decodes strictly: the body must be one valid UTF-8 JSON object with
+        exactly the message field (no unknown fields, no case-insensitive aliases, no
+        duplicate keys, no trailing data). The transport limit is 202752 bytes to bound
+        JSON escaping of an otherwise valid 32 KiB message; Content-Type must be
+        application/json. The transport limit is 197632 bytes.
     UsageSummary:
       type: object
       additionalProperties: false
@@ -190,16 +215,28 @@ components:
         reason_class: { type: string }
       x-longtermism-max-serialized-bytes: 1024
       description: Debug-only, low-sensitive and serialized to no more than 1024 UTF-8 bytes.
-    ResponseMeta:
+    ChatInternalErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [code, message, data, meta]
+      properties:
+        code: { type: integer, const: 500 }
+        message: { type: string }
+        data: { type: 'null' }
+        meta:
+          $ref: '#/components/schemas/ChatInternalErrorMeta'
+      description: >-
+        Composition failures can occur before or after AI identity creation. The envelope
+        preserves only identities that already exist and never invents one; data is always
+        null and the message is a stable low-sensitive classification.
+    ChatInternalErrorMeta:
       type: object
       additionalProperties: false
       required: [request_id]
       properties:
         request_id: { type: string }
         ai_trace_id: { type: string }
-        smoke_run_id: { type: string }
-        eval_summary:
-          $ref: '#/components/schemas/EvalSummary'
+      description: ai_trace_id is present only when the AI usecase had already created it.
     ChatSuccessEnvelope:
       type: object
       additionalProperties: false
@@ -265,6 +302,16 @@ components:
       required: [status]
       properties:
         status: { type: string, const: ok }
+    InfraSmokeMeta:
+      type: object
+      additionalProperties: false
+      required: [request_id]
+      properties:
+        request_id: { type: string }
+        smoke_run_id: { type: string }
+      description: >-
+        Structurally free of AI and eval fields: an infra-only smoke must never manufacture
+        AI facts. The optional smoke_run_id echoes the accepted run marker only.
     InfraSmokeSuccessEnvelope:
       type: object
       additionalProperties: false
@@ -275,9 +322,8 @@ components:
         data:
           $ref: '#/components/schemas/InfraSmokeData'
         meta:
-          $ref: '#/components/schemas/ResponseMeta'
-      description: meta.ai_trace_id and meta.eval_summary must be absent.
-    ErrorEnvelope:
+          $ref: '#/components/schemas/InfraSmokeMeta'
+    InfraSmokeErrorEnvelope:
       type: object
       additionalProperties: false
       required: [code, message, data, meta]
@@ -286,5 +332,5 @@ components:
         message: { type: string }
         data: { type: 'null' }
         meta:
-          $ref: '#/components/schemas/ResponseMeta'
-      description: Chat errors retain ai_trace_id once the AI usecase has started.
+          $ref: '#/components/schemas/InfraSmokeMeta'
+      description: Smoke endpoint disabled; the envelope never carries AI or eval facts.

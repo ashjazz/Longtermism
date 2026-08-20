@@ -284,7 +284,7 @@
 
 **独立验收**：Level 0 全离线门禁通过；显式配置环境后 Grafana Level 1-3 全部通过；SigNoz Level 4 独立通过；checklist、quickstart、ADR/journal 与机器报告互相可追溯且无敏感泄漏。
 
-- [ ] T160 [P] 在 `specs/003-real-observability-backends/contracts/http-api.yaml` 根据最终 Go contract 做 OpenAPI 回归校准；质量门控：使用 OpenAPI parser 校验，所有示例无 secret/raw payload，禁止为迁就实现删除已决策的错误/identity/debug 约束。
+- [X] T160 [P] 在 `specs/003-real-observability-backends/contracts/http-api.yaml` 根据最终 Go contract 做 OpenAPI 回归校准；质量门控：使用 OpenAPI parser 校验，所有示例无 secret/raw payload，禁止为迁就实现删除已决策的错误/identity/debug 约束。
 - [ ] T161 [P] 在 `specs/003-real-observability-backends/contracts/telemetry-contract.md` 根据最终 instruments/component IDs 更新遥测契约；质量门控：逐项引用实现测试，保留高基数禁区、AI marker 边界和真实失败证据源。
 - [ ] T162 [P] 在 `specs/003-real-observability-backends/contracts/runtime-configuration.md` 更新最终配置/端口/资源/retention 矩阵；质量门控：应用配置仍只包含 Collector endpoint，所有 secret 只记录 env 名与 present 状态。
 - [ ] T163 [P] 在 `specs/003-real-observability-backends/contracts/smoke-report.schema.json` 校准最终 scenario/backend/error fields；质量门控：运行正反 fixture 校验，保持 schema version 兼容或显式升级，不允许任意嵌套 payload 泄漏。
