@@ -89,6 +89,12 @@ func (a *GrafanaSmokeEvidenceAdapter) QueryLokiMarker(ctx context.Context, targe
 }
 
 func (a *GrafanaSmokeEvidenceAdapter) DecodePrometheusHTTPCount(result BackendQueryResult, selector SmokeHTTPCountSelector) (SmokeCountEvidence, error) {
+	return decodePrometheusHTTPCount(result, selector)
+}
+
+// decodePrometheusHTTPCount 是纯解码逻辑：Grafana 与 SigNoz profile 的 instant query
+// 都返回 Prometheus vector 格式，两条主线共享同一份计数语义。
+func decodePrometheusHTTPCount(result BackendQueryResult, selector SmokeHTTPCountSelector) (SmokeCountEvidence, error) {
 	var response prometheusVectorResponse
 	if err := result.Decode(&response); err != nil || response.Status != "success" || response.Data.ResultType != "vector" {
 		return SmokeCountEvidence{}, errMalformedSmokeEvidence

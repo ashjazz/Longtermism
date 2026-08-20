@@ -963,8 +963,8 @@ func TestRunLiveScenarioCommandContract(t *testing.T) {
 			runnerResult: passedChat, wantExitCode: 2,
 		},
 		{
-			name:     "non grafana profile is a usage failure",
-			scenario: "chat", args: []string{"--live", "-profile", "signoz"},
+			name:     "signoz profile outside the chat scenario is a usage failure",
+			scenario: "score", args: []string{"--live", "-profile", "signoz"},
 			runnerResult: passedChat, wantExitCode: 2,
 		},
 		{
@@ -2451,12 +2451,12 @@ func TestDefaultResilienceScenarioDependenciesPersistContainedReports(t *testing
 }
 
 // T130 能力收敛后的默认装配契约：
-// - exporter-failure（3 目标）与 persistent-queue 已具备真实 live composition；
-// - score-worker-failure 的 langfuse-api case 已收敛（pause/unpause langfuse-web +
-//   本地 store 状态 + Langfuse 平台 score 计数 + warm-up 动态身份解析）；queue-full
-//   与 shutdown case 仍以稳定能力哨兵 fail-fast（进程内通道无受控实现），禁止伪造证据；
-// - full aggregate 的默认子工厂按固定序列构造：5 个真实子场景 + 2 个
-//   preflight 失败行。单测不得执行聚合或单场景 Run（会触发真实 docker/网络副作用）。
+//   - exporter-failure（3 目标）与 persistent-queue 已具备真实 live composition；
+//   - score-worker-failure 的 langfuse-api case 已收敛（pause/unpause langfuse-web +
+//     本地 store 状态 + Langfuse 平台 score 计数 + warm-up 动态身份解析）；queue-full
+//     与 shutdown case 仍以稳定能力哨兵 fail-fast（进程内通道无受控实现），禁止伪造证据；
+//   - full aggregate 的默认子工厂按固定序列构造：5 个真实子场景 + 2 个
+//     preflight 失败行。单测不得执行聚合或单场景 Run（会触发真实 docker/网络副作用）。
 func TestDefaultResilienceScenarioRunnerConvergence(t *testing.T) {
 	for key, value := range map[string]string{
 		"LONGTERMISM_SMOKE_RESILIENCE_COMPOSE_PROJECT": "ashjazz-observability",
@@ -2528,4 +2528,84 @@ func TestDefaultResilienceScenarioRunnerConvergence(t *testing.T) {
 			t.Fatalf("composition = %d real / %d gated, want 5/2（queue-full 与 shutdown 仍受限）", real, gated)
 		}
 	})
+}
+
+// TestInfraCommandSignozProfileDispatch 固定备选 profile 的调度边界（T147）：
+// --profile=signoz 只有在与环境声明的部署 profile 一致时才进入 runner 构造；
+// runner 收到的仍是同构的 InfrastructureSmokeRequest（应用 endpoint 与 payload
+// 契约不因 profile 改变），report schema 由共享 runner 保证。
+func TestInfraCommandSignozProfileDispatch(t *testing.T) {
+	report := newInfrastructureCommandReport(t, "passed")
+	tests := []struct {
+		name         string
+		args         []string
+		configured   infraCommandConfig
+		wantExitCode int
+		wantNewCalls int
+	}{
+		{
+			name:         "signoz flag dispatches when the deployment profile matches",
+			args:         []string{"--profile", "signoz"},
+			configured:   validInfrastructureCommandConfigWithProfile("signoz"),
+			wantExitCode: 0,
+			wantNewCalls: 1,
+		},
+		{
+			name:         "signoz flag is rejected when the deployment profile stays grafana",
+			args:         []string{"--profile", "signoz"},
+			configured:   validInfrastructureCommandConfig2(),
+			wantExitCode: 2,
+			wantNewCalls: 0,
+		},
+		{
+			name:         "grafana flag is rejected when the deployment profile switched to signoz",
+			args:         []string{"--profile", "grafana"},
+			configured:   validInfrastructureCommandConfigWithProfile("signoz"),
+			wantExitCode: 2,
+			wantNewCalls: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			newCalls := 0
+			dependencies := infraCommandDependencies{
+				ResolveConfig: func(context.Context) (infraCommandConfig, error) { return tt.configured, nil },
+				NewRunner: func(config infraCommandConfig) (infraCommandRunner, error) {
+					newCalls++
+					if config.Profile != tt.configured.Profile {
+						t.Fatalf("runner profile = %q, want %q", config.Profile, tt.configured.Profile)
+					}
+					return &stubInfraCommandRunner{report: report}, nil
+				},
+				WriteReport: func(string, *smoke.SmokeReport) (string, error) {
+					return "build/observability/smoke-reports/infra.json", nil
+				},
+			}
+			var stdout strings.Builder
+			exitCode := runInfra(context.Background(), tt.args, &stdout, io.Discard, dependencies)
+			if exitCode != tt.wantExitCode || newCalls != tt.wantNewCalls {
+				t.Fatalf("exit = %d newRunnerCalls = %d, want %d/%d", exitCode, newCalls, tt.wantExitCode, tt.wantNewCalls)
+			}
+		})
+	}
+}
+
+func validInfrastructureCommandConfigWithProfile(profile string) infraCommandConfig {
+	config := validInfrastructureCommandConfig2()
+	config.Profile = profile
+	return config
+}
+
+func validInfrastructureCommandConfig2() infraCommandConfig {
+	config, err := validInfrastructureCommandConfig(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	return config
+}
+
+type stubInfraCommandRunner struct{ report *smoke.SmokeReport }
+
+func (r *stubInfraCommandRunner) Run(context.Context, smoke.InfrastructureSmokeRequest) (*smoke.SmokeReport, error) {
+	return r.report, nil
 }

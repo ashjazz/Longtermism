@@ -54,6 +54,11 @@ type infraCommandConfig struct {
 	LangfuseAuth   string
 	AIPlaneURL     string
 	AIPlaneAuth    string
+
+	// signoz 备选 profile 的查询面：三信号共用一个端点，ingestion key 仅用于
+	// 查询认证头，绝不进入报告或错误文本（T138 契约）。
+	SignozURL          string
+	SignozIngestionKey string
 }
 
 type infraCommandRunner interface {
@@ -115,7 +120,7 @@ func runInfra(ctx context.Context, args []string, stdout, stderr io.Writer, depe
 	flags := flag.NewFlagSet("infra", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	profile := flags.String("profile", "grafana", "infra smoke profile")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *profile != "grafana" {
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || (*profile != "grafana" && *profile != "signoz") {
 		return 2
 	}
 	config, err := dependencies.ResolveConfig(ctx)
@@ -185,19 +190,41 @@ func defaultInfraCommandDependencies() infraCommandDependencies {
 
 func resolveDefaultInfrastructureCommandConfig(context.Context) (infraCommandConfig, error) {
 	lookup := os.Getenv
+	// profile 由环境决定并必须与 --profile 一致（runInfra 已校验）：备选 profile 是
+	// 部署选择，不是单次运行的随意切换。
+	profile := envOrDefault(lookup, "LONGTERMISM_SMOKE_PROFILE", "grafana")
 	config := infraCommandConfig{
-		Profile:         "grafana",
+		Profile:         profile,
 		Deadline:        time.Now().UTC().Add(infrastructureSmokeTimeout),
 		ReportDirectory: infrastructureSmokeReportDirectory,
 		ApplicationURL:  envOrDefault(lookup, "LONGTERMISM_SMOKE_APP_BASE_URL", "http://127.0.0.1:8000"),
-		PrometheusURL:   lookup("LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL"),
-		LokiURL:         lookup("LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL"),
-		TempoURL:        lookup("LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL"),
 		LangfuseURL:     lookup("LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL"),
 		LangfuseAuth:    lookup("LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL"),
 		AIPlaneURL:      lookup("LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL"),
 		AIPlaneAuth:     lookup("LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL"),
 	}
+	if profile == "signoz" {
+		// 备选 profile：三信号共用一个 SigNoz 查询端点；Prometheus/Loki/Tempo 的
+		// 引用不属于该部署，缺失是正确状态而不是配置错误。
+		config.SignozURL = lookup("LONGTERMISM_SMOKE_SIGNOZ_QUERY_BASE_URL")
+		config.SignozIngestionKey = lookup("LONGTERMISM_SMOKE_SIGNOZ_INGESTION_KEY")
+		if config.SignozURL == "" || config.LangfuseURL == "" || config.LangfuseAuth == "" || config.AIPlaneURL == "" || config.AIPlaneAuth == "" {
+			return infraCommandConfig{}, errMissingInfrastructureCommandConfig
+		}
+		if err := validateLocalSmokeBaseURL(config.ApplicationURL); err != nil {
+			return infraCommandConfig{}, errMissingInfrastructureCommandConfig
+		}
+		if err := validateLocalSmokeBaseURL(config.SignozURL); err != nil {
+			return infraCommandConfig{}, errMissingInfrastructureCommandConfig
+		}
+		return config, nil
+	}
+	if profile != "grafana" {
+		return infraCommandConfig{}, errMissingInfrastructureCommandConfig
+	}
+	config.PrometheusURL = lookup("LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL")
+	config.LokiURL = lookup("LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL")
+	config.TempoURL = lookup("LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL")
 	if config.PrometheusURL == "" || config.LokiURL == "" || config.TempoURL == "" || config.LangfuseURL == "" || config.LangfuseAuth == "" || config.AIPlaneURL == "" || config.AIPlaneAuth == "" {
 		return infraCommandConfig{}, errMissingInfrastructureCommandConfig
 	}
@@ -217,14 +244,51 @@ func envOrDefault(lookup func(string) string, key, fallback string) string {
 }
 
 type defaultInfrastructureCommandRunner struct {
-	backend smoke.InfrastructureSmokeBackend
-	trigger smoke.InfrastructureSmokeTrigger
+	run func(context.Context, smoke.InfrastructureSmokeRequest) (*smoke.SmokeReport, error)
+	// backend 只暴露装配诊断所需的负向查询面：主线与备选 profile 的 smoke backend
+	// 都实现它，命令层不感知具体平台类型。
+	backend infrastructureAIPlaneProbe
+}
+
+type infrastructureAIPlaneProbe interface {
+	QueryAIPlane(context.Context, smoke.PollMarkerTarget) (int, error)
 }
 
 func newDefaultInfrastructureCommandRunner(config infraCommandConfig) (infraCommandRunner, error) {
+	// 应用入口与 trigger 与 profile 无关：备选 profile 只替换后端查询 adapter，
+	// 请求 payload、应用 endpoint、marker 语义保持不变（T147 门控）。
 	trigger, err := newProtectedInfrastructureSmokeTrigger(config.ApplicationURL, http.DefaultClient)
 	if err != nil {
 		return nil, err
+	}
+	langfuse, err := backend.NewLangfuseSmokeQueryClient(backend.LangfuseSmokeQueryConfig{BaseURL: config.LangfuseURL, Credential: config.LangfuseAuth})
+	if err != nil {
+		return nil, err
+	}
+	aiPlane, err := backend.NewAIPlaneSmokeQueryClient(backend.AIPlaneSmokeQueryConfig{BaseURL: config.AIPlaneURL, Credential: config.AIPlaneAuth})
+	if err != nil {
+		return nil, err
+	}
+	if config.Profile == "signoz" {
+		signoz, err := backend.NewSignozSmokeQueryClient(backend.SignozQueryConfig{
+			SignozURL:    config.SignozURL,
+			IngestionKey: config.SignozIngestionKey,
+			HTTPClient:   &http.Client{Transport: newLocalSmokeTransport()},
+		})
+		if err != nil {
+			return nil, err
+		}
+		smokeBackend, err := backend.NewSignozInfrastructureSmokeBackend(backend.SignozInfrastructureSmokeBackendConfig{Signoz: signoz, Langfuse: langfuse, AIPlane: aiPlane})
+		if err != nil {
+			return nil, err
+		}
+		return &defaultInfrastructureCommandRunner{backend: smokeBackend, run: func(ctx context.Context, request smoke.InfrastructureSmokeRequest) (*smoke.SmokeReport, error) {
+			return smoke.RunSignozInfrastructureSmoke(ctx, smoke.SignozInfrastructureSmokeRequest{Deadline: request.Deadline, Profile: config.Profile}, smoke.SignozInfrastructureSmokeRunnerDependencies{Backend: smokeBackend, Clock: systemPollerClock{}, PollInterval: time.Second, Trigger: func(ctx context.Context, identity smoke.SignozSmokeIdentity) error {
+				// trigger 契约与 profile 无关：同一受保护应用入口，identity 只是
+				// 两个 runner 之间的同构值对象。
+				return trigger(ctx, smoke.InfrastructureSmokeIdentity{RunID: identity.RunID, Marker: identity.Marker})
+			}})
+		}}, nil
 	}
 	grafana := backend.NewGrafanaQueryClient(backend.GrafanaQueryConfig{
 		PrometheusURL: config.PrometheusURL,
@@ -235,23 +299,20 @@ func newDefaultInfrastructureCommandRunner(config infraCommandConfig) (infraComm
 		// no-proxy, re-resolving transport used by the protected trigger.
 		HTTPClient: &http.Client{Transport: newLocalSmokeTransport()},
 	})
-	langfuse, err := backend.NewLangfuseSmokeQueryClient(backend.LangfuseSmokeQueryConfig{BaseURL: config.LangfuseURL, Credential: config.LangfuseAuth})
-	if err != nil {
-		return nil, err
-	}
-	aiPlane, err := backend.NewAIPlaneSmokeQueryClient(backend.AIPlaneSmokeQueryConfig{BaseURL: config.AIPlaneURL, Credential: config.AIPlaneAuth})
-	if err != nil {
-		return nil, err
-	}
 	smokeBackend, err := backend.NewGrafanaInfrastructureSmokeBackend(backend.GrafanaInfrastructureSmokeBackendConfig{Grafana: grafana, Langfuse: langfuse, AIPlane: aiPlane})
 	if err != nil {
 		return nil, err
 	}
-	return &defaultInfrastructureCommandRunner{backend: smokeBackend, trigger: trigger}, nil
+	return &defaultInfrastructureCommandRunner{backend: smokeBackend, run: func(ctx context.Context, request smoke.InfrastructureSmokeRequest) (*smoke.SmokeReport, error) {
+		return smoke.RunInfrastructureSmoke(ctx, request, smoke.InfrastructureSmokeRunnerDependencies{Backend: smokeBackend, Trigger: trigger, Clock: systemPollerClock{}, PollInterval: time.Second})
+	}}, nil
 }
 
 func (r *defaultInfrastructureCommandRunner) Run(ctx context.Context, request smoke.InfrastructureSmokeRequest) (*smoke.SmokeReport, error) {
-	return smoke.RunInfrastructureSmoke(ctx, request, smoke.InfrastructureSmokeRunnerDependencies{Backend: r.backend, Trigger: r.trigger, Clock: systemPollerClock{}, PollInterval: time.Second})
+	if r == nil || r.run == nil {
+		return nil, errMissingInfrastructureCommandConfig
+	}
+	return r.run(ctx, request)
 }
 
 type systemPollerClock struct{}
@@ -743,7 +804,13 @@ func runLiveScenario(ctx context.Context, scenario string, args []string, stdout
 	flags.SetOutput(io.Discard)
 	live := flags.Bool("live", false, "explicit live smoke opt-in")
 	profile := flags.String("profile", "grafana", "smoke profile")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !*live || *profile != "grafana" {
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || !*live {
+		return 2
+	}
+	// signoz 备选 profile 只开放 chat live 场景：score/privacy 的证据面（Langfuse
+	// score 投影状态、Tempo/Loki 平台文档扫描）绑定主线后端，profile 不能伪装支持。
+	profileAllowed := *profile == "grafana" || (scenario == liveChatScenario && *profile == "signoz")
+	if !profileAllowed {
 		return 2
 	}
 	config, err := dependencies.ResolveConfig(ctx, scenario)
@@ -816,15 +883,20 @@ func resolveDefaultLiveScenarioConfig(_ context.Context, scenario string) (liveS
 	switch scenario {
 	case liveChatScenario:
 		endpoints["LONGTERMISM_SMOKE_APP_BASE_URL"] = lookup("LONGTERMISM_SMOKE_APP_BASE_URL")
-		endpoints["LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL")
-		endpoints["LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL")
-		endpoints["LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL")
-		// chat smoke 的 metric_delta 证据来自 LLM 请求计数器：缺 Prometheus 引用时
-		// 该 check 必然失败，必须在预检阶段拒绝，而不是让每次 live 运行都白跑 60 秒。
-		endpoints["LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL")
 		secrets["LONGTERMISM_SMOKE_CHAT_AUTHORIZATION"] = lookup("LONGTERMISM_SMOKE_CHAT_AUTHORIZATION")
 		secrets["LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL"] = lookup("LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL")
 		paths["LONGTERMISM_SMOKE_CHAT_MANIFEST_ROOT"] = lookup("LONGTERMISM_SMOKE_CHAT_MANIFEST_ROOT")
+		if envOrDefault(lookup, "LONGTERMISM_SMOKE_PROFILE", "grafana") == "signoz" {
+			// 备选 profile：三信号与 LLM 计数共用 SigNoz 查询端点。
+			endpoints["LONGTERMISM_SMOKE_SIGNOZ_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_SIGNOZ_QUERY_BASE_URL")
+		} else {
+			endpoints["LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL")
+			endpoints["LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL")
+			// chat smoke 的 metric_delta 证据来自 LLM 请求计数器：缺 Prometheus 引用时
+			// 该 check 必然失败，必须在预检阶段拒绝，而不是让每次 live 运行都白跑 60 秒。
+			endpoints["LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL")
+		}
+		endpoints["LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL")
 	case liveScoreScenario:
 		endpoints["LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL"] = lookup("LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL")
 		secrets["LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL"] = lookup("LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL")
@@ -865,7 +937,11 @@ func resolveDefaultLiveScenarioConfig(_ context.Context, scenario string) (liveS
 			return liveScenarioConfig{}, errLiveScenarioConfiguration
 		}
 	}
-	return liveScenarioConfig{Scenario: scenario, Profile: "grafana", Deadline: time.Now().UTC().Add(liveSmokeTimeout)}, nil
+	profile := "grafana"
+	if scenario == liveChatScenario {
+		profile = envOrDefault(lookup, "LONGTERMISM_SMOKE_PROFILE", "grafana")
+	}
+	return liveScenarioConfig{Scenario: scenario, Profile: profile, Deadline: time.Now().UTC().Add(liveSmokeTimeout)}, nil
 }
 
 // newDefaultLiveScenarioRunner 为每个 scenario 构造 concrete runner：只读取经过
@@ -933,15 +1009,48 @@ func newLiveChatCommandRunner(config liveScenarioConfig) (liveScenarioCommandRun
 		_ = manifests.Close()
 		return nil, errLiveScenarioConfiguration
 	}
-	grafana := backend.NewGrafanaQueryClient(backend.GrafanaQueryConfig{
-		TempoURL: tempoURL, LokiURL: lokiURL, PrometheusURL: prometheusURL,
-		HTTPClient: &http.Client{Transport: newLocalSmokeTransport()},
-	})
 	langfuse, err := backend.NewLangfuseChatSmokeQueryClient(backend.LangfuseChatSmokeQueryConfig{BaseURL: langfuseURL, Credential: langfuseCredential})
 	if err != nil {
 		_ = manifests.Close()
 		return nil, errLiveScenarioConfiguration
 	}
+	if config.Profile == "signoz" {
+		// 备选 profile：三信号/LLM 计数经 SigNoz，AI trace 沿用主线 Langfuse 客户端，
+		// score 投影经受保护的 scores 计数查询——trigger 与 payload 不变（T147 门控）。
+		signozURL := os.Getenv("LONGTERMISM_SMOKE_SIGNOZ_QUERY_BASE_URL")
+		signoz, err := backend.NewSignozSmokeQueryClient(backend.SignozQueryConfig{
+			SignozURL: signozURL, HTTPClient: &http.Client{Transport: newLocalSmokeTransport()},
+		})
+		if err != nil {
+			_ = manifests.Close()
+			return nil, errLiveScenarioConfiguration
+		}
+		scoreCounter, err := backend.NewLangfuseScoreCountQueryClient(backend.LangfuseScoreCountConfig{BaseURL: langfuseURL, Credential: langfuseCredential})
+		if err != nil {
+			_ = manifests.Close()
+			return nil, errLiveScenarioConfiguration
+		}
+		chatBackend, err := backend.NewSignozChatSmokeBackend(backend.SignozChatSmokeBackendConfig{Signoz: signoz, Langfuse: langfuse, Score: scoreCounter})
+		if err != nil {
+			_ = manifests.Close()
+			return nil, errLiveScenarioConfiguration
+		}
+		return &liveChatCommandRunner{
+			close: manifests.Close,
+			run: func(ctx context.Context) (*smoke.SmokeReport, error) {
+				return smoke.RunSignozChatSmoke(ctx, smoke.SignozChatSmokeRequest{Profile: config.Profile, Deadline: config.Deadline}, smoke.SignozChatSmokeRunnerDependencies{
+					Backend: chatBackend, Clock: systemPollerClock{}, PollInterval: time.Second,
+					Trigger: func(ctx context.Context, identity smoke.SignozSmokeIdentity) (smoke.ChatSmokeAPIResult, error) {
+						return trigger(ctx, smoke.ChatSmokeIdentity{RunID: identity.RunID, Marker: identity.Marker})
+					},
+				})
+			},
+		}, nil
+	}
+	grafana := backend.NewGrafanaQueryClient(backend.GrafanaQueryConfig{
+		TempoURL: tempoURL, LokiURL: lokiURL, PrometheusURL: prometheusURL,
+		HTTPClient: &http.Client{Transport: newLocalSmokeTransport()},
+	})
 	chatBackend := backend.NewGrafanaChatSmokeBackend(backend.GrafanaChatSmokeBackendConfig{Grafana: grafana, Langfuse: langfuse})
 	return &liveChatCommandRunner{
 		close: manifests.Close,
