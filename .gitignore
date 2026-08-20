@@ -35,6 +35,8 @@ Thumbs.db
 /build/observability/smoke-manifests/
 /build/observability/queue/
 /build/observability/volume-metadata/
+# 运行目录下的任何相对路径变体（如 smoke CLI 以 CWD 相对路径写出的报告）
+cmd/obs-smoke/build/
 
 # 测试覆盖率
 /build/coverage/

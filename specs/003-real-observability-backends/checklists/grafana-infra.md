@@ -19,31 +19,33 @@
 
 | 字段 | 本次证据 |
 | --- | --- |
-| 执行日期/操作者 | 待填写 |
+| 执行日期/操作者 | 2026-08-14 / ashjazz（本机真实 Grafana+Langfuse profile） |
 | 命令 | `make obs-infra-smoke` |
-| 报告相对路径 | 待填写：`build/observability/smoke-reports/<run>.json` |
-| run_id / marker | 待填写（只写报告中已有的低敏身份） |
-| schema 版本 | 待填写（当前契约为 `2`） |
-| 总体状态 | 待填写；只有 `passed` 可关闭 SC-001 |
+| 报告相对路径 | `build/observability/smoke-reports/infra-1786684631434977000.json` |
+| run_id / marker | `run-53dfb782` / `run-53dfb7824bb1aeab263560857306327b` |
+| schema 版本 | `2` |
+| 总体状态 | **passed**（26.3s ≤ 60s） |
 
 ## SC-001：基础设施三信号与 AI 负向路由
 
 **成功标准**：健康的主线环境中，纯基础设施验证请求的服务链路、结构化日志和聚合指标能在
 60 秒内按本次身份定位，且 AI 平面无对应记录。
 
-- [ ] 报告为 `profile=grafana`、`scenario=infra`、`status=passed`，且 `finished_at - started_at <= 60s`。
-- [ ] `api` check 为 `passed`，证明受保护 infra 请求被实际触发；不以容器 health 替代。
-- [ ] `tempo` check 为 `passed`，证据仅含 `matched_spans`，证明本次 marker 的服务链路可查。
-- [ ] `loki` check 为 `passed`，证据仅含 `matched_logs`，证明本次 marker 的结构化 JSON 日志可查。
-- [ ] `prometheus` check 为 `passed`，`metric_delta > 0`，证明 route/status 聚合指标相对基线增长；
+- [x] 报告为 `profile=grafana`、`scenario=infra`、`status=passed`，且 `finished_at - started_at <= 60s`。
+- [x] `api` check 为 `passed`，证明受保护 infra 请求被实际触发；不以容器 health 替代。
+- [x] `tempo` check 为 `passed`，证据仅含 `matched_spans`，证明本次 marker 的服务链路可查。
+- [x] `loki` check 为 `passed`，证据仅含 `matched_logs`，证明本次 marker 的结构化 JSON 日志可查。
+- [x] `prometheus` check 为 `passed`，`metric_delta > 0`，证明 route/status 聚合指标相对基线增长；
   不要求也不允许 request/run/trace ID 成为 metric label。
-- [ ] `langfuse_trace` check 为 `passed` 且 `matched_traces = 0`，证明 infra-only 请求没有进入 AI 平面。
-- [ ] `collector` check 为 `passed` 且 `marker_received = 0`，证明 AI downstream filter 没有收到该 marker。
-- [ ] 报告没有 credential、Authorization、原始 payload 或平台 response；若失败，保留 schema-valid
+- [x] `langfuse_trace` check 为 `passed` 且 `matched_traces = 0`，证明 infra-only 请求没有进入 AI 平面。
+- [x] `collector` check 为 `passed` 且 `marker_received = 0`，证明 AI downstream filter 没有收到该 marker。
+- [x] 报告没有 credential、Authorization、原始 payload 或平台 response；若失败，保留 schema-valid
   failed report 并按 `failure_stage/error_class` 诊断，不能用重跑后的一次通过覆盖失败事实。
 
-**当前状态**：待首次真实 `obs-infra-smoke` 报告。当前静态/离线测试和 Compose 配置不能关闭
-SC-001。
+**当前状态**：SC-001 已由本次 passed 报告关闭（六个 checks 全部 attempted/passed，
+negative checks 的 count=0 来自真实有界查询）。期间产生的 failed 报告（Loki 真实响应
+形状、counter reset、Langfuse v1 路径三处契约修正）均保留在 `build/observability/smoke-reports/`，
+修正过程见 `docs/journal/`。
 
 ## SC-006：告警资产与后续 firing/resolved 验证
 
