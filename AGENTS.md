@@ -213,6 +213,8 @@ gf gen service                       # 按 logic/ 生成 service 接口
 
 ## 仓库现状
 
-- GoFrame v2 应用骨架与 `pkg/ai` 内核模块骨架已就位（接口先行，实现待填充）。
-- 基础设施（CI、Makefile、首批测试）尚未建立——落地它们属于 ROADMAP 第一阶段。
-- 进展详见 `docs/ROADMAP.md`。
+- `pkg/ai/` 内核十大模块（llm、prompt、rag、vectordb、agent、cache、resilience、ratelimit、obs、eval）均已建立并进入实质实现阶段；其中 `pkg/ai/obs` 已落地双平面观测、隐私边界（redaction / payload policy / baggage policy）、correlation、OTel mapper、export failure 等核心契约（对应 specs/002 与 specs/003）。
+- `internal/` 下已就位 `cmd`、`controller`、`logic`（chat、observability）、`eval`、`consts`；`dao/model/service`（`gf gen` 数据层）尚未生成。
+- 测试体系已具规模（约 150 个 `_test.go`，含契约测试与架构守护测试）；Makefile 已就位；CI（GitHub Actions）尚未建立。
+- spec-kit 已产出三份规格：`001-agent-framework-spec`、`002-dual-plane-observability`、`003-real-observability-backends`（当前活跃分支）。
+- 进展详见 `docs/ROADMAP.md` 与 `docs/journal/`。
