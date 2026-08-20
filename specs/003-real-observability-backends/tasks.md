@@ -242,7 +242,7 @@
 - [X] T137 [P] [US4] 在 `hack/observability/collector_signoz_config_test.sh` 编写 SigNoz Collector RED 测试；质量门控：断言应用 OTLP 契约不变、infra 三信号路由到 SigNoz、AI marker 分支仍 OTLP/HTTP 到 Langfuse、无业务直连。
 - [X] T138 [P] [US4] 在 `internal/observability/backend/signoz_query_test.go` 编写 SigNoz 查询客户端 RED 测试；质量门控：httptest 覆盖 logs/metrics/traces、timeout/认证/畸形响应/旧 marker，错误不得回显 ingestion key。
 - [X] T139 [P] [US4] 在 `internal/observability/smoke/signoz_runner_test.go` 编写备选 E2E runner RED 测试；质量门控：使用 fake SigNoz/Langfuse query clients 离线覆盖 infra-only AI negative、chat 三信号、Langfuse trace/score、限定窗口和 schema report，RED 测试不得启动 Docker，真实 Make E2E 禁止以 compose healthy 代替查询。
-- [ ] T140 [P] [US4] 在 `hack/observability/signoz_dashboard_test.go` 编写备选 dashboard/checklist RED 测试；质量门控：覆盖 request/error/latency、export failure、token/cost/eval correlation 的专门资产，不要求复刻 Grafana JSON。
+- [X] T140 [P] [US4] 在 `hack/observability/signoz_dashboard_test.go` 编写备选 dashboard/checklist RED 测试；质量门控：覆盖 request/error/latency、export failure、token/cost/eval correlation 的专门资产，不要求复刻 Grafana JSON。
 
 ### Implementation - GREEN/REFACTOR
 
