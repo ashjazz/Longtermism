@@ -25,9 +25,9 @@ Langfuse 始终是 AI 语义平面：它接收带 AI marker 的 trace 投影，�
 | `.env.local.example`               | 无凭据本地运行配置模板                               | 已实现；复制出的 `.env.local` 被忽略                                                        | T066A      |
 | `collector/collector-grafana.yaml` | Grafana 主线 Collector ingress/fan-out      | 已实现                                                                              | T054       |
 | `grafana/`                         | datasource、dashboard、alert provisioning   | 已实现                                                                              | T059-T062  |
-| `compose.signoz.yaml`              | SigNoz 备选 Compose profile                 | 计划契约，尚未创建                                                                        | T141       |
-| `collector/collector-signoz.yaml`  | SigNoz 三信号与 Langfuse AI fan-out           | 计划契约，尚未创建                                                                        | T142       |
-| `signoz/dashboard.json`            | SigNoz 专用运营面板                             | 计划契约，尚未创建                                                                        | T145       |
+| `compose.signoz.yaml`              | SigNoz 备选 Compose profile                 | 已实现；独立 compose project，通过静态契约验证，未有 E2E digest                                                | T141       |
+| `collector/collector-signoz.yaml`  | SigNoz 三信号与 Langfuse AI fan-out           | 已实现；应用契约与主线逐字一致，metrics 改为 OTLP push                                                       | T142       |
+| `signoz/dashboard.json`            | SigNoz 专用运营面板                             | 已实现；等价运营问题 + Langfuse 跳转说明，导入方式待 E2E 校准                                                  | T145       |
 
 ## 命令状态
 
@@ -35,7 +35,7 @@ Langfuse 始终是 AI 语义平面：它接收带 AI marker 的 trace 投影，�
 | ---------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------ |
 | `bash hack/observability/config_check_test.sh` | 当前可用                          | 无 Docker、无真实凭据的静态 checker 契约测试。                                                                  |
 | `bash hack/observability/config_check.sh`      | 当前可用                          | 检查已存在的 profile 资产；在 Compose/Collector 尚未创建时会以缺失资产失败。                                             |
-| `make obs-config-check`                        | **计划契约（T009）**                | 将静态 checker 接入 Make；当前不可调用。                                                                      |
+| `make obs-config-check`                        | 已实现（当前全绿）                    | Level 0 静态门禁：版本 pin、healthcheck、资源限额、端口与 Collector 队列存储校验；不启动 Docker、不读真实 .env。                |
 | `make obs-grafana-e2e`                         | 已实现（显式 opt-in）                | 启动 Grafana profile、执行 infra → chat → score → privacy 四个查询式 smoke 聚合门禁；任一失败仍关闭当前 profile，报告目录不删除。 |
 | `make obs-chat-smoke`                          | 已实现（显式 opt-in）                | 受保护 live chat smoke：只查询已运行服务，要求 `--live` 与全部 T181 引用。                                            |
 | `make obs-langfuse-score-smoke`                | 已实现（显式 opt-in）                | 验证上一次真实 chat run 的异步 score 投影（本地 evidence 先于平台结果）。                                               |
@@ -46,7 +46,7 @@ Langfuse 始终是 AI 语义平面：它接收带 AI marker 的 trace 投影，�
 | `make obs-score-worker-failure-smoke`          | 已实现（显式 opt-in，能力收敛中）          | score worker 故障（langfuse-api case）；同样受 CLI 能力哨兵约束。                                               |
 | `make obs-resilience-e2e`                      | 已实现（显式 opt-in）                | 启动 profile 后由 CLI 串行编排 7 个子场景；trap 先 unpause 再 down，中断后 paused services 必被恢复。                    |
 | `make obs-reset`                               | 已实现（破坏性，`CONFIRM_RESET=1` 门控） | label-scoped 重置：只删当前 project 的 observability 卷与 `run-*` 残留，绝不 prune，不触碰应用数据。                     |
-| `make obs-signoz-e2e`                          | **计划契约（T148）**                | 仅在 Grafana 主线验收后提供；当前不可调用。                                                                       |
+| `make obs-signoz-up/down`、`make obs-signoz-infra-smoke`、`make obs-signoz-chat-smoke`、`make obs-signoz-e2e` | 已实现（显式 opt-in，备选 profile） | 独立 compose project（longtermism-signoz）；e2e 为 up → infra → chat，失败清理限定本 project 且不带 -v。支持声明仍以 Grafana 主线验收为前置（见 docs/observability/10-grafana-vs-signoz-runbook.md）。 |
 
 所有真实 profile 必须使用显式环境变量、secret file 或密钥管理器注入凭据。禁止把密钥、token、完整 OTLP header 或生产 endpoint 写入本目录的可提交文件；本地 override 采用已忽略的 `*.local.yaml` 或 `.env.local`。
 

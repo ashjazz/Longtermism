@@ -254,7 +254,7 @@
 - [X] T146 [US4] 在 `specs/003-real-observability-backends/checklists/signoz.md` 编写独立兼容性清单；质量门控：逐项要求 SigNoz logs/metrics/traces 与 Langfuse trace/score 查询证据，明确优先级低于 Grafana 主线。
 - [X] T147 [US4] 在 `cmd/obs-smoke/main.go` 增加 `--profile=signoz` 调度；质量门控：profile 只改变 backend query/deploy adapter，不改变请求 payload、应用 endpoint、AI marker 或 report schema。
 - [X] T148 [US4] 在 `Makefile` 增加 `obs-signoz-up/down`、`obs-signoz-e2e`；质量门控：仅在 Grafana 主线验收后纳入支持声明，失败清理限定 SigNoz compose project。
-- [ ] T149 [US4] 在 `docs/observability/10-grafana-vs-signoz-runbook.md` 记录两种 profile 的能力、成本、故障证据和选择边界；质量门控：结论引用实际 E2E report，不宣称功能完全等同，不记录 credential。
+- [X] T149 [US4] 在 `docs/observability/10-grafana-vs-signoz-runbook.md` 记录两种 profile 的能力、成本、故障证据和选择边界；质量门控：结论引用实际 E2E report，不宣称功能完全等同，不记录 credential。
 
 ## Phase 7：User Story 5 - 快速保护平台接入契约（P2）
 
