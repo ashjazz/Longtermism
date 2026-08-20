@@ -1,0 +1,283 @@
+# SigNoz 备选 profile 的 Collector（T142）：应用只向此处发送 OTLP，契约与主线
+# collector-grafana.yaml 完全一致（receiver、ingress 脱敏、tail sampling、AI filter
+# 逐字不变）——profile 切换对应用进程零感知。
+# 与主线的唯一差异在后端面：infra 三信号（traces/metrics/logs）收敛到单一
+# otlp/signoz exporter（对应 T136 的 queue/signoz 持久队列目录，分出口积压归因）；
+# AI marker 分支仍经 otlphttp/langfuse（Langfuse 只支持 HTTP+protobuf）。
+# metrics 从主线的 prometheus/app pull 改为 OTLP push：本 profile 没有 Prometheus，
+# pull exporter 只会是无消费者的死端。
+extensions:
+  # Compose health probes run from a separate network peer because the Collector
+  # image is distroless. Bind explicitly rather than relying on the extension's
+  # localhost default, while the published host port remains loopback-only.
+  health_check:
+    endpoint: 0.0.0.0:13133
+    path: /healthz
+  file_storage/signoz:
+    # Persistent queues must remain under the collector-data mount. The bounded
+    # one-shot initializer prepares these directories before the non-root
+    # Collector starts, so queue creation cannot escape into its root filesystem.
+    directory: /var/lib/otelcol/storage/queue/signoz
+    create_directory: true
+    timeout: 1s
+    compaction:
+      on_start: true
+      directory: /var/lib/otelcol/storage/queue/signoz-compaction
+  file_storage/langfuse:
+    directory: /var/lib/otelcol/storage/queue/langfuse
+    create_directory: true
+    timeout: 1s
+    compaction:
+      on_start: true
+      directory: /var/lib/otelcol/storage/queue/langfuse-compaction
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # ingress 是进入任一 persistent queue 前的第一道保护，避免敏感字段先落盘。
+  transform/redact-ingress:
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(attributes, "authorization")
+          - delete_key(attributes, "cookie")
+          - delete_key(attributes, "api_key")
+          - delete_key(attributes, "token")
+          - delete_key(attributes, "password")
+          - delete_key(attributes, "prompt")
+          - delete_key(attributes, "query")
+          - delete_key(attributes, "output")
+          - delete_key(attributes, "tool_arguments")
+          - delete_key(attributes, "provider_error_body")
+          - delete_key(resource.attributes, "authorization")
+          - delete_key(resource.attributes, "cookie")
+          - delete_key(resource.attributes, "api_key")
+          - delete_key(resource.attributes, "token")
+          - delete_key(resource.attributes, "password")
+          - delete_key(resource.attributes, "prompt")
+          - delete_key(resource.attributes, "query")
+          - delete_key(resource.attributes, "output")
+          - delete_key(resource.attributes, "tool_arguments")
+          - delete_key(resource.attributes, "provider_error_body")
+          # 覆盖语义化 OTLP 键（如 http.request.header.authorization、url.query、
+          # gen_ai.input.messages），避免攻击者仅通过改字段拼写绕过 queue 前清理。
+          - delete_matching_keys(attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+          - delete_matching_keys(resource.attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+  # 下游再次执行同样的删除。它防御未来 receiver/connector 增加旁路，而不是替代 ingress。
+  transform/redact-downstream:
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(attributes, "authorization")
+          - delete_key(attributes, "cookie")
+          - delete_key(attributes, "api_key")
+          - delete_key(attributes, "token")
+          - delete_key(attributes, "password")
+          - delete_key(attributes, "prompt")
+          - delete_key(attributes, "query")
+          - delete_key(attributes, "output")
+          - delete_key(attributes, "tool_arguments")
+          - delete_key(attributes, "provider_error_body")
+          - delete_key(resource.attributes, "authorization")
+          - delete_key(resource.attributes, "cookie")
+          - delete_key(resource.attributes, "api_key")
+          - delete_key(resource.attributes, "token")
+          - delete_key(resource.attributes, "password")
+          - delete_key(resource.attributes, "prompt")
+          - delete_key(resource.attributes, "query")
+          - delete_key(resource.attributes, "output")
+          - delete_key(resource.attributes, "tool_arguments")
+          - delete_key(resource.attributes, "provider_error_body")
+          - delete_matching_keys(attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+          - delete_matching_keys(resource.attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+  # event attributes 也会进入 trace 和持久队列；不能只清理 span/resource attributes。
+  transform/redact-span-events:
+    trace_statements:
+      - context: spanevent
+        statements:
+          - delete_key(attributes, "authorization")
+          - delete_key(attributes, "cookie")
+          - delete_key(attributes, "api_key")
+          - delete_key(attributes, "token")
+          - delete_key(attributes, "password")
+          - delete_key(attributes, "prompt")
+          - delete_key(attributes, "query")
+          - delete_key(attributes, "output")
+          - delete_key(attributes, "tool_arguments")
+          - delete_key(attributes, "provider_error_body")
+          - delete_matching_keys(attributes, "(?i).*(authorization|cookie|api[_-]?key|token|password|prompt|query|input|output|completion|tool_arguments|provider_error_body|body|statement).*")
+  # OTLP logs 在进入 SigNoz persistent queue 前再次收紧。应用侧已经使用安全值对象，
+  # Collector 仍以精确 allowlist 防御未来 SDK/resource 扩展把自由字段带入日志后端。
+  transform/redact-logs:
+    # 任一投影错误都必须在写入持久队列前 fail closed；不能让未完成 allowlist 的
+    # 记录因 ignore 语义继续进入后端。
+    error_mode: propagate
+    log_statements:
+      - context: log
+        statements:
+          - delete_key(log.attributes, "authorization")
+          - delete_key(log.attributes, "cookie")
+          - delete_key(log.attributes, "api_key")
+          - delete_key(log.attributes, "token")
+          - delete_key(log.attributes, "password")
+          - delete_key(log.attributes, "prompt")
+          - delete_key(log.attributes, "query")
+          - delete_key(log.attributes, "output")
+          - delete_key(log.attributes, "tool_arguments")
+          - delete_key(log.attributes, "provider_error_body")
+          - delete_key(log.attributes, "raw_query")
+          - keep_keys(log.attributes, ["request_id", "trace_id", "span_id", "route", "method", "status", "duration_ms", "error_class", "ai_trace_id", "smoke_run_id"])
+      - context: resource
+        statements:
+          - keep_keys(attributes, ["service.name", "service.version", "deployment.environment"])
+  # 只有显式 AI marker 才能到 Langfuse；绝不由 route 或 span 名推断 AI 语义。
+  # 纯 infra 请求不携带该 marker，因此不会进入 Langfuse（T142 门控核心）。
+  filter/ai:
+    error_mode: ignore
+    traces:
+      span:
+        - attributes["longtermism.observability.plane"] != "ai"
+  # 应用的 OTLP Logger 只发射固定 completion body；这里再次丢弃其它日志，防止共享
+  # receiver 的未来调用方把自由文本送入 SigNoz。
+  filter/http-completion-logs:
+    error_mode: ignore
+    logs:
+      log_record:
+        - body != "http request completed" and body != "http request failed"
+  # tail sampling 的保留规则优先于常规成功比例，避免 smoke/故障/回归证据被抽走。
+  tail_sampling/retain:
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 100
+    policies:
+      - name: smoke
+        type: string_attribute
+        string_attribute:
+          key: longtermism.smoke.run_id
+          enabled_regex_matching: true
+          values: [".+"]
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      # GoFrame HTTP handler 可能只设置 HTTP status attribute 而未显式标记 span ERROR；
+      # 因此单独保留 4xx/5xx，避免业务失败落入 ordinary-success 的概率采样。
+      - name: http-failures
+        type: numeric_attribute
+        numeric_attribute:
+          key: http.response.status_code
+          min_value: 400
+      - name: degraded
+        type: string_attribute
+        string_attribute:
+          key: longtermism.degraded
+          values: ["true"]
+      - name: eval-regression
+        type: string_attribute
+        string_attribute:
+          key: longtermism.eval.regression
+          values: ["true"]
+      - name: designated-ai
+        type: and
+        and:
+          and_sub_policy:
+            - name: ai-plane
+              type: string_attribute
+              string_attribute:
+                key: longtermism.observability.plane
+                values: ["ai"]
+            - name: designated
+              type: string_attribute
+              string_attribute:
+                key: longtermism.ai.designated
+                values: ["true"]
+      - name: ordinary-success
+        type: probabilistic
+        probabilistic:
+          # 本地调试将采样率设置为 100%，生产环境考虑设置为10%
+          sampling_percentage: 100
+
+connectors:
+  forward/infra: {}
+  forward/ai: {}
+
+exporters:
+  # infra 三信号共用这一个 push exporter：endpoint 是 profile 内的
+  # signoz-otel-collector OTLP gRPC 入口；独立持久队列命名空间（queue/signoz）
+  # 使 push exporter 失败证据可与 langfuse 分出口归因（T142 门控）。
+  otlp/signoz:
+    endpoint: signoz-otel-collector:4317
+    tls:
+      insecure: true
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      queue_size: 10000
+      storage: file_storage/signoz
+  otlphttp/langfuse:
+    endpoint: http://langfuse-web:3000/api/public/otel
+    # Langfuse 的 OTLP 入口只接受 HTTP 传输；显式固定 protobuf，避免 Collector
+    # 版本升级时由默认编码变化造成静默投递失败。
+    encoding: proto
+    headers:
+      Authorization: ${env:LANGFUSE_OTLP_AUTHORIZATION}
+      # v4 ingestion header 使直接 OTLP 数据进入实时 observation 路径。
+      x-langfuse-ingestion-version: ${env:LANGFUSE_OTEL_INGESTION_VERSION}
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      # 独立持久队列承担故障隔离；0s 保留队列中的事实直到后端恢复，
+      # 不因短暂 Langfuse 故障丢失已经完成脱敏的 AI 观测。
+      max_elapsed_time: 0s
+    sending_queue:
+      enabled: true
+      queue_size: 10000
+      storage: file_storage/langfuse
+
+service:
+  # Collector 自身指标保持独立诊断端点：0.0.0.0:8888 供 Compose 网络内的
+  # 抓取方（SigNoz）消费，宿主发布仍限制在 loopback。
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  extensions:
+    - health_check
+    - file_storage/signoz
+    - file_storage/langfuse
+  pipelines:
+    traces/ingress:
+      receivers: [otlp]
+      processors: [transform/redact-ingress]
+      exporters: [forward/infra, forward/ai]
+    traces/infra:
+      receivers: [forward/infra]
+      processors: [transform/redact-downstream, transform/redact-span-events, tail_sampling/retain]
+      exporters: [otlp/signoz]
+    traces/ai:
+      receivers: [forward/ai]
+      processors: [filter/ai, transform/redact-downstream, transform/redact-span-events, tail_sampling/retain]
+      # 完整 trace 已由 infra 分支写入 SigNoz；此处只投影显式 marker 的 AI span，
+      # 避免相同 trace/span identity 被重复写入 SigNoz。
+      exporters: [otlphttp/langfuse]
+    metrics:
+      receivers: [otlp]
+      exporters: [otlp/signoz]
+    logs:
+      receivers: [otlp]
+      processors: [filter/http-completion-logs, transform/redact-logs]
+      exporters: [otlp/signoz]

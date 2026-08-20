@@ -65,10 +65,13 @@ services:
           cpus: "0.50"
           memory: 512MiB
 
-  # distroless Collector 无 shell，健康探测由最小权限 sidecar 执行（主线同模式）。
+  # distroless Collector 无 shell，健康探测由最小权限 sidecar 执行：长驻容器
+  # 以自身 healthcheck 探测 collector 的真实 /healthz 端点（主线同模式），
+  # Compose 的 service_healthy 因此聚合的是后端事实而非容器存活。
   collector-health-probe:
     image: ${COLLECTOR_STORAGE_INIT_IMAGE}
     user: "65534:65534"
+    command: ["tail", "-f", "/dev/null"]
     read_only: true
     cap_drop: [ALL]
     labels:
@@ -76,6 +79,11 @@ services:
     depends_on:
       collector:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://collector:13133/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     deploy:
       resources:
         limits:
