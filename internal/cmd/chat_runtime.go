@@ -64,6 +64,9 @@ type ChatRuntimeDependencies struct {
 	ProjectionQueue      logicchat.ChatScoreProjectionQueue
 	BuildProjectionQueue func(context.Context, chatRuntimeEvidenceStore) (logicchat.ChatScoreProjectionQueue, func() error, error)
 	CloseRunManifest     func() error
+	// AIPlaneFacts 是共享的有界 AI 平面发射登记表：chat 用例在桥接 span 创建后登记
+	// 事实，infra smoke 的 marker-count 端口只读扫描同一实例。
+	AIPlaneFacts logicchat.AIPlaneFactRecorder
 }
 
 // ChatRuntime 持有 chat 独占资源。ObservabilityBootstrap 不在此生命周期内：
@@ -170,6 +173,7 @@ func BuildChatRuntime(
 		EvaluatorObserver:       appobservability.NewEvaluatorSpanAdapter(tracer),
 		EvidenceStore:           evidenceStore,
 		RunManifestWriter:       dependencies.RunManifestWriter,
+		AIPlaneFacts:            dependencies.AIPlaneFacts,
 		// ProjectionQueue is an app-layer port. The durable Langfuse lifecycle owns
 		// persistence, recovery and external delivery; chat only submits the immutable
 		// evidence/native-generation pair after evidence storage has succeeded.
@@ -195,7 +199,7 @@ func BuildChatRuntime(
 	}, nil
 }
 
-func buildDefaultChatRuntime(ctx context.Context, bootstrap *ObservabilityBootstrap) (*ChatRuntime, error) {
+func buildDefaultChatRuntime(ctx context.Context, bootstrap *ObservabilityBootstrap, aiPlaneFacts logicchat.AIPlaneFactRecorder) (*ChatRuntime, error) {
 	if bootstrap == nil {
 		return nil, fmt.Errorf("build default chat runtime: observability bootstrap is required")
 	}
@@ -262,6 +266,7 @@ func buildDefaultChatRuntime(ctx context.Context, bootstrap *ObservabilityBootst
 		dependencies.RunManifestWriter = store
 		dependencies.CloseRunManifest = store.Close
 	}
+	dependencies.AIPlaneFacts = aiPlaneFacts
 	runtime, err := BuildChatRuntime(ctx, config, bootstrap, dependencies)
 	if err != nil && dependencies.CloseRunManifest != nil {
 		_ = dependencies.CloseRunManifest()

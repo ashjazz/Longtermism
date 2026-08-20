@@ -62,10 +62,12 @@ func TestGrafanaSmokeConfigExampleIsStandaloneAndLoopbackBound(t *testing.T) {
 		{name: "observability is enabled", key: "observability.enabled", want: "true"},
 		{name: "collector mode is selected", key: "observability.mode", want: "collector"},
 		{name: "application only knows the local collector", key: "observability.collector.endpoint", want: "127.0.0.1:4317"},
-		{name: "completion logs stay under the ignored project runtime directory", key: "observability.logs.path", want: "resource/log/observability"},
 		{name: "traces are enabled", key: "observability.signals.traces_enabled", want: "true"},
 		{name: "metrics are enabled", key: "observability.signals.metrics_enabled", want: "true"},
+		{name: "completion logs travel through OTLP", key: "observability.signals.logs_transport", want: "otlp"},
+		{name: "local JSONL file logging is disabled", key: "observability.signals.local_jsonl_enabled", want: "false"},
 		{name: "smoke route is explicitly enabled", key: "observability.smoke.enabled", want: "true"},
+		{name: "ai plane marker count credential reference", key: "observability.smoke.ai_plane.authorization_env", want: "LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL"},
 	}
 
 	for _, tt := range tests {
@@ -75,6 +77,14 @@ func TestGrafanaSmokeConfigExampleIsStandaloneAndLoopbackBound(t *testing.T) {
 				t.Fatalf("%s = %q, want %q", tt.key, got, tt.want)
 			}
 		})
+	}
+
+	// OTLP 日志后，示例不得再保留宿主机 JSONL 文件路径或 filelog 前置：残留配置会让
+	// 本地 smoke 回到 bind-mount/GID 共享的老路径，与 Collector native OTLP 事实源分叉。
+	for _, key := range []string{"observability.logs", "observability.logs.path"} {
+		if got := config.MustGet(context.Background(), key).String(); got != "" {
+			t.Fatalf("%s = %q, want absent after OTLP logs calibration", key, got)
+		}
 	}
 }
 

@@ -42,7 +42,7 @@ func TestBuildChatRuntimeDoesNoProviderOrFilesystemWorkWhenDisabled(t *testing.T
 }
 
 func TestBuildDefaultChatRuntimeKeepsCheckedInDisabledConfigurationOffline(t *testing.T) {
-	runtime, err := buildDefaultChatRuntime(context.Background(), &ObservabilityBootstrap{})
+	runtime, err := buildDefaultChatRuntime(context.Background(), &ObservabilityBootstrap{}, nil)
 	if err != nil {
 		t.Fatalf("buildDefaultChatRuntime() error = %v", err)
 	}

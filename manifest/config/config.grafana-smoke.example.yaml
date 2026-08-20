@@ -3,6 +3,8 @@
 # 该文件不包含 backend endpoint、credential、header 或其他敏感值。
 
 # infra-smoke 路由无认证，仅允许本机触发探测，避免局域网请求污染验收数据或消耗本地配额。
+# marker-count AI-negative 端口另有独立只读 credential 与 loopback 约束，见
+# observability.smoke.ai_plane.authorization_env。
 server:
   address: "127.0.0.1:8000"
 
@@ -14,12 +16,17 @@ observability:
     protocol: "grpc"
     endpoint: "127.0.0.1:4317"
     insecure: true
-  logs:
-    # 本地应用写入被 .gitignore 排除的目录；Collector 通过 compose bind mount 异步读取。
-    path: "resource/log/observability"
   signals:
     traces_enabled: true
     metrics_enabled: true
+    # 完成日志经 OTLP 直接进入 Collector → Loki native OTLP。本地 smoke 不再依赖
+    # 宿主机 JSONL 文件、filelog 采集、bind mount 或 GID 共享。
+    logs_transport: otlp
+    local_jsonl_enabled: false
   smoke:
     # 仅为本地验收显式启用；生产环境保持关闭，避免意外生成探测流量。
     enabled: true
+    ai_plane:
+      # marker-count AI-negative 端点的只读 credential 引用（环境变量名，值绝不写入配置）。
+      # 应用与 smoke CLI 共用 LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL 即可。
+      authorization_env: LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL

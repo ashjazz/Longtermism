@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	appobs "github.com/ashjazz/Longtermism/internal/observability"
 	"github.com/ashjazz/Longtermism/pkg/ai/llm"
@@ -153,6 +154,110 @@ func TestChatUsecaseHandsTrustedSmokeIdentityToTelemetryAndManifest(t *testing.T
 	if manifestWriter.input.ServiceTraceID == result.Identity.AITraceID || manifestWriter.input.ServiceTraceID == "forged-domain-trace" || manifestWriter.input.SpanID == "forged-domain-span" {
 		t.Fatal("manifest native identity must not be copied or derived from domain identity")
 	}
+}
+
+// AIPlaneFactRecorder 是 infra smoke 的 AI-negative 事实源写入端口：只在受信任的
+// smoke 执行真实创建 AI 桥接 span 后登记一次，普通 chat 与失败边界绝不登记。
+func TestChatUsecaseRecordsAIPlaneFactOnlyForTrustedSmokeExecution(t *testing.T) {
+	const marker = "run-t200-ai-plane"
+	fixedNow := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+
+	t.Run("trusted smoke execution records exactly one fact", func(t *testing.T) {
+		recorder := &recordingAIPlaneFactRecorder{}
+		providerRuntime := sdktrace.NewTracerProvider()
+		t.Cleanup(func() { _ = providerRuntime.Shutdown(context.Background()) })
+		tracer := providerRuntime.Tracer("t200-ai-plane-recording")
+		rootContext, root := tracer.Start(context.Background(), "HTTP POST /api/v1/chat")
+		defer root.End()
+		usecase := NewChatUsecase(ChatUsecaseDependencies{
+			Provider: &scriptedProvider{chat: func(context.Context, *llm.ChatRequest) (*llm.ChatResponse, error) {
+				return &llm.ChatResponse{Model: "provider-model", FinishReason: llm.FinishStop}, nil
+			}},
+			RequestedModel:          "server-model",
+			NewAITraceID:            func() string { return "ai-t200-recording" },
+			CanonicalizeActualModel: allowActualModels("provider-model"),
+			Bridge:                  appobs.NewChatAIExecutionBoundary(tracer),
+			AIPlaneFacts:            recorder,
+			Now:                     func() time.Time { return fixedNow },
+		})
+		ctx := obs.ContextWithCorrelationIdentity(rootContext, obs.NewCorrelationIdentity("req-t200-recording"))
+		ctx = appobs.ContextWithChatSmokeRunID(ctx, marker)
+		if _, err := usecase.Execute(ctx, ChatCommand{Message: "controlled smoke", SmokeRunID: marker}); err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if recorder.calls != 1 || recorder.marker != marker || !recorder.at.Equal(fixedNow) {
+			t.Fatalf("ai plane fact = calls:%d marker:%q at:%s, want one fact for the trusted marker at the injected clock", recorder.calls, recorder.marker, recorder.at)
+		}
+	})
+
+	t.Run("ordinary chat never records an ai plane fact", func(t *testing.T) {
+		recorder := &recordingAIPlaneFactRecorder{}
+		usecase := NewChatUsecase(ChatUsecaseDependencies{
+			Provider: &scriptedProvider{chat: func(context.Context, *llm.ChatRequest) (*llm.ChatResponse, error) {
+				return &llm.ChatResponse{Model: "provider-model", FinishReason: llm.FinishStop}, nil
+			}},
+			RequestedModel:          "server-model",
+			NewAITraceID:            func() string { return "ai-t200-ordinary" },
+			CanonicalizeActualModel: allowActualModels("provider-model"),
+			AIPlaneFacts:            recorder,
+		})
+		ctx := obs.ContextWithCorrelationIdentity(context.Background(), obs.NewCorrelationIdentity("req-t200-ordinary"))
+		if _, err := usecase.Execute(ctx, ChatCommand{Message: "ordinary chat"}); err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if recorder.calls != 0 {
+			t.Fatalf("ordinary chat ai plane facts = %d, want zero", recorder.calls)
+		}
+	})
+
+	t.Run("untrusted execution without a bridge span records nothing", func(t *testing.T) {
+		recorder := &recordingAIPlaneFactRecorder{}
+		usecase := NewChatUsecase(ChatUsecaseDependencies{
+			Provider: &scriptedProvider{chat: func(context.Context, *llm.ChatRequest) (*llm.ChatResponse, error) {
+				return &llm.ChatResponse{Model: "provider-model", FinishReason: llm.FinishStop}, nil
+			}},
+			RequestedModel:          "server-model",
+			NewAITraceID:            func() string { return "ai-t200-untrusted" },
+			CanonicalizeActualModel: allowActualModels("provider-model"),
+			AIPlaneFacts:            recorder,
+		})
+		ctx := obs.ContextWithCorrelationIdentity(context.Background(), obs.NewCorrelationIdentity("req-t200-untrusted"))
+		ctx = appobs.ContextWithChatSmokeRunID(ctx, "run-t200-untrusted")
+		if _, err := usecase.Execute(ctx, ChatCommand{Message: "smoke without bridge", SmokeRunID: "run-t200-untrusted"}); err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if recorder.calls != 0 {
+			t.Fatalf("untrusted execution ai plane facts = %d, want zero without a real bridge span", recorder.calls)
+		}
+	})
+
+	t.Run("missing recorder keeps the business result unchanged", func(t *testing.T) {
+		usecase := NewChatUsecase(ChatUsecaseDependencies{
+			Provider: &scriptedProvider{chat: func(context.Context, *llm.ChatRequest) (*llm.ChatResponse, error) {
+				return &llm.ChatResponse{Model: "provider-model", FinishReason: llm.FinishStop}, nil
+			}},
+			RequestedModel:          "server-model",
+			NewAITraceID:            func() string { return "ai-t200-no-recorder" },
+			CanonicalizeActualModel: allowActualModels("provider-model"),
+		})
+		ctx := obs.ContextWithCorrelationIdentity(context.Background(), obs.NewCorrelationIdentity("req-t200-no-recorder"))
+		ctx = appobs.ContextWithChatSmokeRunID(ctx, "run-t200-no-recorder")
+		result, err := usecase.Execute(ctx, ChatCommand{Message: "smoke without recorder", SmokeRunID: "run-t200-no-recorder"})
+		if err != nil || result.Model != "provider-model" {
+			t.Fatalf("Execute() = (%#v, %v), want unchanged business result without a recorder", result, err)
+		}
+	})
+}
+
+type recordingAIPlaneFactRecorder struct {
+	calls  int
+	marker string
+	at     time.Time
+}
+
+func (r *recordingAIPlaneFactRecorder) RecordAIPlaneFact(marker string, at time.Time) {
+	r.calls++
+	r.marker, r.at = marker, at
 }
 
 func TestOrdinaryChatDoesNotWriteSmokeRunManifest(t *testing.T) {

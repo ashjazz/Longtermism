@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"time"
 
 	appobs "github.com/ashjazz/Longtermism/internal/observability"
 	aieval "github.com/ashjazz/Longtermism/pkg/ai/eval"
@@ -51,4 +52,11 @@ type ChatScoreProjectionInput struct {
 // 与 shutdown 属于基础设施层，usecase 不创建 goroutine。
 type ChatScoreProjectionQueue interface {
 	TryEnqueue(context.Context, ChatScoreProjectionInput) error
+}
+
+// AIPlaneFactRecorder 在 AI 执行事实真实发生后（AI 桥接 span 已创建）登记一次
+// 有界发射事实，供 infra smoke 的 marker-count AI-negative 查询读取。usecase 只在
+// 受信任的 smoke marker 存在时调用；实现必须线程安全、有界且不返回错误（旁路语义）。
+type AIPlaneFactRecorder interface {
+	RecordAIPlaneFact(marker string, at time.Time)
 }

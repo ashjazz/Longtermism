@@ -30,6 +30,22 @@ func NewLangfuseChatSmokeQueryClient(config LangfuseChatSmokeQueryConfig) (*Lang
 	return &LangfuseChatSmokeQueryClient{query: query}, nil
 }
 
+// privacyObservationsDocument 为 Langfuse trace privacy surface 执行封闭的 observations v1
+// 查询并返回原始有界平台文档。隐私适配器必须对完整文档做 scan，因此这里不做 DTO 投影：
+// 任何字段级解码都会在扫描前丢弃平台实际返回的内容，等于伪造零命中。
+func (client *LangfuseChatSmokeQueryClient) privacyObservationsDocument(ctx context.Context, filter string, startedAt, deadline time.Time, limit int) ([]byte, error) {
+	if client == nil || client.query == nil || ctx == nil || ctx.Err() != nil {
+		return nil, newBackendQueryError("langfuse", "invalid_query")
+	}
+	return client.query.get(ctx, url.Values{
+		"limit":         {strconv.Itoa(limit)},
+		"page":          {"1"},
+		"filter":        {filter},
+		"fromStartTime": {startedAt.UTC().Format(time.RFC3339Nano)},
+		"toStartTime":   {deadline.UTC().Format(time.RFC3339Nano)},
+	})
+}
+
 func (client *LangfuseChatSmokeQueryClient) Query(ctx context.Context, target smoke.ChatSmokeTarget) ([]smoke.ChatObservation, error) {
 	if client == nil || client.query == nil || !validChatSmokeTarget(target) {
 		return nil, newBackendQueryError("langfuse", "invalid_query")

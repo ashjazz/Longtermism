@@ -51,7 +51,10 @@ var (
 			}
 			defer shutdownObservabilityBootstrap(bootstrap)
 			limiter := ratelimit.NewMemoryLimiter(ratelimit.MemoryLimiterConfig{})
-			chatRuntime, err := buildDefaultChatRuntime(ctx, bootstrap)
+			// AI 平面发射登记表同时服务于两个方向：chat 用例写入真实发射事实，
+			// marker-count AI-negative 端口只读扫描同一实例。
+			aiPlaneFacts := logicobservability.NewAIPlaneEmissionRegistry(0, 0, nil)
+			chatRuntime, err := buildDefaultChatRuntime(ctx, bootstrap, aiPlaneFacts)
 			if err != nil {
 				return fmt.Errorf("initialize chat runtime: %w", err)
 			}
@@ -83,7 +86,7 @@ var (
 					v1.Bind(health.NewV1())
 				})
 			})
-			if err := registerDefaultObservabilityRoutes(ctx, s, bootstrap, limiter, completionMiddleware); err != nil {
+			if err := registerDefaultObservabilityRoutes(ctx, s, bootstrap, limiter, completionMiddleware, aiPlaneFacts); err != nil {
 				return err
 			}
 			if err := RegisterChatRoutes(s, ChatRoutesInput{
@@ -149,6 +152,7 @@ func registerDefaultObservabilityRoutes(
 	bootstrap *ObservabilityBootstrap,
 	limiter ratelimit.Limiter,
 	completionMiddleware func(http.Handler) http.Handler,
+	aiPlaneFacts logicobservability.AIPlaneFactSource,
 ) error {
 	rateLimitConfig, err := resolveInfraSmokeRateLimitConfig(ctx)
 	if err != nil {
@@ -168,12 +172,27 @@ func registerDefaultObservabilityRoutes(
 		Runner:               usecase,
 		RequestIDFromContext: RequestIDFromContext,
 	})
+	// marker-count 是显式 opt-in 扩展：只有配置了 credential 引用且环境变量解析出
+	// 值时注册，否则保持关闭；绝不以空 credential 注册一个部分受保护的事实源。
+	var aiPlaneHandler ghttp.HandlerFunc
+	var aiPlaneCredential string
+	if aiPlaneFacts != nil {
+		environmentName := g.Cfg().MustGet(ctx, "observability.smoke.ai_plane.authorization_env", "").String()
+		if value := os.Getenv(environmentName); value != "" {
+			aiPlaneCredential = value
+			aiPlaneHandler = newAIPlaneMarkerCountHTTPHandler(logicobservability.NewAIPlaneMarkerCountUsecase(
+				logicobservability.AIPlaneMarkerCountUsecaseDependencies{Source: aiPlaneFacts},
+			))
+		}
+	}
 	return RegisterObservabilityRoutes(server, ObservabilityRoutesInput{
 		Bootstrap:                   bootstrap,
 		CompletionLoggingMiddleware: completionMiddleware,
 		InfraSmokeHandler:           newInfraSmokeHTTPHandler(controller),
 		Limiter:                     limiter,
 		InfraSmokeLimit:             rateLimitConfig,
+		AIPlaneMarkerCountHandler:   aiPlaneHandler,
+		AIPlaneCredential:           aiPlaneCredential,
 		state:                       &processObservabilityRoutesState,
 	})
 }

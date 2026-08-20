@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	logicchat "github.com/ashjazz/Longtermism/internal/logic/chat"
 	appobservability "github.com/ashjazz/Longtermism/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -310,4 +312,250 @@ type inMemoryInfraSmokeDiagnostics struct {
 
 func (d *inMemoryInfraSmokeDiagnostics) RecordTelemetryFailure(_ context.Context, failure InfraSmokeTelemetryFailure) {
 	d.failures = append(d.failures, failure)
+}
+
+// ---------------------------------------------------------------------------
+// T199（RED）：AI-negative marker-count 事实源 usecase 契约。
+//
+// 事实源必须是应用自己拥有的真实 AI 平面发射记录，而不是硬编码 0、把 Collector
+// 冒充可查询存储或从日志字段猜测。usecase 在把任何输入交给事实源之前先完成
+// marker/window 校验：disabled/remote/unauthenticated/replay 由传输边界拒绝，
+// invalid query 必须在本层零事实读取地拒绝。
+// ---------------------------------------------------------------------------
+
+func aiPlaneMarkerCountNow() time.Time {
+	return time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+}
+
+func aiPlaneMarkerCountErrorClass(err error) string {
+	var classed interface{ Class() string }
+	if errors.As(err, &classed) {
+		return classed.Class()
+	}
+	return ""
+}
+
+// 拒绝路径必须在事实源之前完成：任何畸形 marker/window 都以 stable
+// invalid_query 类失败，且注入的计数事实源调用次数为 0。
+func TestAIPlaneMarkerCountUsecaseRejectsInvalidQueriesBeforeFactSource(t *testing.T) {
+	now := aiPlaneMarkerCountNow()
+	validMarker := "run-t199-ai-negative"
+	tests := []struct {
+		name      string
+		marker    string
+		startedAt time.Time
+		deadline  time.Time
+	}{
+		{name: "missing marker", startedAt: now.Add(-time.Second), deadline: now.Add(time.Second)},
+		{name: "short marker", marker: "short", startedAt: now.Add(-time.Second), deadline: now.Add(time.Second)},
+		{name: "oversized marker", marker: strings.Repeat("a", 129), startedAt: now.Add(-time.Second), deadline: now.Add(time.Second)},
+		{name: "marker with unsafe characters", marker: "run marker!@#", startedAt: now.Add(-time.Second), deadline: now.Add(time.Second)},
+		{name: "zero started at", marker: validMarker, deadline: now.Add(time.Second)},
+		{name: "zero deadline", marker: validMarker, startedAt: now.Add(-time.Second)},
+		{name: "inverted window", marker: validMarker, startedAt: now.Add(time.Second), deadline: now.Add(-time.Second)},
+		{name: "empty window", marker: validMarker, startedAt: now, deadline: now},
+		{name: "window exceeds one minute", marker: validMarker, startedAt: now.Add(-time.Second), deadline: now.Add(time.Minute)},
+		{name: "stale window start", marker: validMarker, startedAt: now.Add(-time.Minute - time.Nanosecond), deadline: now},
+		{name: "future window deadline", marker: validMarker, startedAt: now, deadline: now.Add(time.Minute + time.Nanosecond)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := &recordingAIPlaneFactSource{}
+			usecase := NewAIPlaneMarkerCountUsecase(AIPlaneMarkerCountUsecaseDependencies{
+				Source: source, Now: func() time.Time { return now },
+			})
+			count, err := usecase.Count(context.Background(), AIPlaneMarkerCountInput{
+				Marker: tt.marker, StartedAt: tt.startedAt, Deadline: tt.deadline,
+			})
+			if err == nil || aiPlaneMarkerCountErrorClass(err) != AIPlaneMarkerCountInvalidQueryClass {
+				t.Fatalf("Count() = (%d, %v), want invalid_query rejection", count, err)
+			}
+			if source.calls != 0 {
+				t.Fatalf("fact source reads = %d, want zero reads before validation", source.calls)
+			}
+		})
+	}
+}
+
+// 成功路径必须把 marker/window 原样交给真实事实源，并以内置上限约束扫描范围：
+// 结果只来自事实源，usecase 不自造 0 也不放宽扫描。
+func TestAIPlaneMarkerCountUsecaseQueriesTheRealFactSourceWithBoundedScan(t *testing.T) {
+	now := aiPlaneMarkerCountNow()
+	tests := []struct {
+		name  string
+		count int
+	}{
+		{name: "real negative evidence is zero", count: 0},
+		{name: "real positive evidence is preserved", count: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := &recordingAIPlaneFactSource{count: tt.count}
+			usecase := NewAIPlaneMarkerCountUsecase(AIPlaneMarkerCountUsecaseDependencies{
+				Source: source, Now: func() time.Time { return now },
+			})
+			startedAt := now.Add(-30 * time.Second)
+			deadline := now.Add(30 * time.Second)
+			count, err := usecase.Count(context.Background(), AIPlaneMarkerCountInput{
+				Marker: "run-t199-real", StartedAt: startedAt, Deadline: deadline,
+			})
+			if err != nil || count != tt.count {
+				t.Fatalf("Count() = (%d, %v), want (%d, nil)", count, err, tt.count)
+			}
+			if source.calls != 1 || source.marker != "run-t199-real" || !source.startedAt.Equal(startedAt) || !source.deadline.Equal(deadline) {
+				t.Fatalf("fact source received = %#v, want one verbatim marker+window query", source)
+			}
+			if source.limit != maximumAIPlaneFactSourceLimit {
+				t.Fatalf("fact source scan limit = %d, want bounded constant %d", source.limit, maximumAIPlaneFactSourceLimit)
+			}
+		})
+	}
+}
+
+// 事实源失败绝不能变成 count=0：错误必须原样浮出，调用方只能把成功的有界查询
+// 结果当作证据。同时拒绝违反事实源契约的返回值（负数、超过扫描上限）。
+func TestAIPlaneMarkerCountUsecaseNeverFabricatesZeroFromSourceFailures(t *testing.T) {
+	now := aiPlaneMarkerCountNow()
+	validInput := AIPlaneMarkerCountInput{
+		Marker: "run-t199-failure", StartedAt: now.Add(-time.Second), Deadline: now.Add(time.Second),
+	}
+
+	t.Run("source failure surfaces instead of a zero count", func(t *testing.T) {
+		sourceFailure := errors.New("synthetic ai plane fact source unavailable")
+		source := &recordingAIPlaneFactSource{err: sourceFailure}
+		usecase := NewAIPlaneMarkerCountUsecase(AIPlaneMarkerCountUsecaseDependencies{
+			Source: source, Now: func() time.Time { return now },
+		})
+		count, err := usecase.Count(context.Background(), validInput)
+		if err == nil || !errors.Is(err, sourceFailure) || count != 0 {
+			t.Fatalf("Count() = (%d, %v), want the source failure surfaced with no fabricated count", count, err)
+		}
+	})
+
+	t.Run("negative source count is a contract violation", func(t *testing.T) {
+		source := &recordingAIPlaneFactSource{count: -1}
+		usecase := NewAIPlaneMarkerCountUsecase(AIPlaneMarkerCountUsecaseDependencies{
+			Source: source, Now: func() time.Time { return now },
+		})
+		count, err := usecase.Count(context.Background(), validInput)
+		if err == nil || aiPlaneMarkerCountErrorClass(err) != AIPlaneMarkerCountQueryFailedClass || count != 0 {
+			t.Fatalf("Count() = (%d, %v), want query_failed rejection", count, err)
+		}
+	})
+
+	t.Run("count above the scan limit is a contract violation", func(t *testing.T) {
+		source := &recordingAIPlaneFactSource{count: maximumAIPlaneFactSourceLimit + 1}
+		usecase := NewAIPlaneMarkerCountUsecase(AIPlaneMarkerCountUsecaseDependencies{
+			Source: source, Now: func() time.Time { return now },
+		})
+		count, err := usecase.Count(context.Background(), validInput)
+		if err == nil || aiPlaneMarkerCountErrorClass(err) != AIPlaneMarkerCountQueryFailedClass || count != 0 {
+			t.Fatalf("Count() = (%d, %v), want query_failed rejection", count, err)
+		}
+	})
+}
+
+// 没有真实事实源时 usecase 必须 fail-closed：空 source 不能退化为固定 0。
+func TestAIPlaneMarkerCountUsecaseRequiresARealFactSource(t *testing.T) {
+	now := aiPlaneMarkerCountNow()
+	usecase := NewAIPlaneMarkerCountUsecase(AIPlaneMarkerCountUsecaseDependencies{
+		Now: func() time.Time { return now },
+	})
+	count, err := usecase.Count(context.Background(), AIPlaneMarkerCountInput{
+		Marker: "run-t199-source", StartedAt: now.Add(-time.Second), Deadline: now.Add(time.Second),
+	})
+	if err == nil || aiPlaneMarkerCountErrorClass(err) != AIPlaneMarkerCountQueryFailedClass || count != 0 {
+		t.Fatalf("Count() = (%d, %v), want query_failed rejection without a fact source", count, err)
+	}
+}
+
+type recordingAIPlaneFactSource struct {
+	calls     int
+	marker    string
+	startedAt time.Time
+	deadline  time.Time
+	limit     int
+	count     int
+	err       error
+}
+
+func (s *recordingAIPlaneFactSource) CountAIPlaneFacts(_ context.Context, marker string, startedAt, deadline time.Time, limit int) (int, error) {
+	s.calls++
+	s.marker, s.startedAt, s.deadline, s.limit = marker, startedAt, deadline, limit
+	return s.count, s.err
+}
+
+// ---------------------------------------------------------------------------
+// AIPlaneEmissionRegistry 是生产事实源的实现：真实、只读、有界。以下测试证明
+// 计数只来自登记事实（精确 marker + 闭合窗口 + 扫描上限）、TTL 驱逐与每 marker
+// 洪水上限保证内存有界，以及 chat 用例的 recorder 端口由同一实例结构性满足。
+// ---------------------------------------------------------------------------
+
+var _ logicchat.AIPlaneFactRecorder = (*AIPlaneEmissionRegistry)(nil)
+
+func TestAIPlaneEmissionRegistryCountsOnlyExactWindowedFacts(t *testing.T) {
+	registry := NewAIPlaneEmissionRegistry(0, 0, nil)
+	now := time.Now()
+	registry.RecordAIPlaneFact("run-registry-marker", now.Add(-10*time.Second))
+	// 窗口外但仍未过 TTL 的事实不得计入，其它 marker 的事实也不得计入。
+	registry.RecordAIPlaneFact("run-registry-marker", now.Add(-90*time.Second))
+	registry.RecordAIPlaneFact("run-other-marker", now.Add(-10*time.Second))
+
+	startedAt := now.Add(-30 * time.Second)
+	deadline := now.Add(30 * time.Second)
+	count, err := registry.CountAIPlaneFacts(context.Background(), "run-registry-marker", startedAt, deadline, maximumAIPlaneFactSourceLimit)
+	if err != nil || count != 1 {
+		t.Fatalf("CountAIPlaneFacts() = (%d, %v), want exactly one in-window fact for the exact marker", count, err)
+	}
+}
+
+func TestAIPlaneEmissionRegistryBoundsTheScanByLimit(t *testing.T) {
+	registry := NewAIPlaneEmissionRegistry(0, 0, nil)
+	now := time.Now()
+	for index := 0; index < 4; index++ {
+		registry.RecordAIPlaneFact("run-registry-limit", now.Add(-time.Duration(index)*time.Second))
+	}
+	count, err := registry.CountAIPlaneFacts(context.Background(), "run-registry-limit", now.Add(-time.Minute), now.Add(time.Minute), 2)
+	if err != nil || count != 2 {
+		t.Fatalf("CountAIPlaneFacts() = (%d, %v), want the scan limit capped at 2", count, err)
+	}
+}
+
+func TestAIPlaneEmissionRegistryEvictsExpiredFacts(t *testing.T) {
+	// 写路径与读路径共用注入时钟：过 TTL 的事实无论从哪一侧触发驱逐都被一致清除。
+	now := aiPlaneMarkerCountNow()
+	registry := NewAIPlaneEmissionRegistry(time.Second, 0, func() time.Time { return now })
+	registry.RecordAIPlaneFact("run-registry-ttl", now.Add(-time.Minute))
+	count, err := registry.CountAIPlaneFacts(context.Background(), "run-registry-ttl", now.Add(-time.Minute), now, maximumAIPlaneFactSourceLimit)
+	if err != nil || count != 0 {
+		t.Fatalf("CountAIPlaneFacts() = (%d, %v), want expired facts evicted", count, err)
+	}
+}
+
+func TestAIPlaneEmissionRegistryBoundsFloodedMarkers(t *testing.T) {
+	registry := NewAIPlaneEmissionRegistry(0, 2, nil)
+	now := time.Now()
+	for index := 0; index < 4; index++ {
+		registry.RecordAIPlaneFact("run-registry-flood", now.Add(-time.Duration(index)*time.Second))
+	}
+	count, err := registry.CountAIPlaneFacts(context.Background(), "run-registry-flood", now.Add(-time.Minute), now.Add(time.Minute), maximumAIPlaneFactSourceLimit)
+	if err != nil || count != 2 {
+		t.Fatalf("CountAIPlaneFacts() = (%d, %v), want per-marker facts capped at 2", count, err)
+	}
+}
+
+func TestAIPlaneEmissionRegistryRejectsMalformedAndNilInput(t *testing.T) {
+	registry := NewAIPlaneEmissionRegistry(0, 0, nil)
+	now := aiPlaneMarkerCountNow()
+	registry.RecordAIPlaneFact("bad marker", now)
+	registry.RecordAIPlaneFact("run-registry-empty", time.Time{})
+	count, err := registry.CountAIPlaneFacts(context.Background(), "bad marker", now.Add(-time.Minute), now.Add(time.Minute), maximumAIPlaneFactSourceLimit)
+	if err != nil || count != 0 {
+		t.Fatalf("CountAIPlaneFacts() = (%d, %v), want malformed records silently absent", count, err)
+	}
+	var nilRegistry *AIPlaneEmissionRegistry
+	if _, err := nilRegistry.CountAIPlaneFacts(context.Background(), "run-registry-nil", now.Add(-time.Minute), now.Add(time.Minute), maximumAIPlaneFactSourceLimit); err == nil || aiPlaneMarkerCountErrorClass(err) != AIPlaneMarkerCountQueryFailedClass {
+		t.Fatalf("nil registry error = %v, want stable query_failed", err)
+	}
 }
