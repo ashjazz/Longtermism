@@ -287,6 +287,44 @@ func TestPrivacyCompositionStopsBeforeRemoteOrFinishesTheStartedRemoteStage(t *t
 	})
 }
 
+// A confirmed leak anywhere in the run must dominate an earlier, unrelated query failure in
+// the aggregate check: secondary diagnostics can never hide the primary security fact.
+func TestPrivacyCompositionKeepsLeakPriorityOverEarlierQueryFailures(t *testing.T) {
+	startedAt := time.Now().UTC().Add(-time.Second)
+	fixture := t192Fixture(startedAt, startedAt.Add(30*time.Second))
+	surfaces := newT192Surfaces()
+	surfaces.results[PrivacySmokeSurfaceTempo] = privacyCompositionSurfaceEvidence{}
+	surfaces.errors[PrivacySmokeSurfaceTempo] = newPrivacyCompositionAttemptedFailureForTest(PrivacySmokeSurfaceTempo, "backend_timeout")
+	counts := map[string]int{"synthetic_canary": 0, "credential": 0, "authorization": 0, "token": 0, "recognized_pii": 0}
+	counts["synthetic_canary"] = 1
+	surfaces.results[PrivacySmokeSurfaceLoki] = newPrivacyCompositionSurfaceEvidenceForTest(
+		PrivacySmokeSurfaceLoki, "exact_structured_query", "1", counts, privacyCompositionCollectorBindings{},
+	)
+	report, err := runPrivacyCompositionForTest(context.Background(), t192Request(fixture), privacyCompositionDependencies{
+		Fixture: &t192FixtureRunner{result: fixture}, Surfaces: surfaces,
+		Clock: &t192CompositionClock{times: []time.Time{fixture.Deadline.Add(-time.Nanosecond)}},
+	})
+	if err != nil || report == nil || report.Status() != "failed" {
+		t.Fatalf("composition result = (%v,%v), want complete failed machine report", report, err)
+	}
+	encoded, marshalErr := json.Marshal(report)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	var document map[string]any
+	if json.Unmarshal(encoded, &document) != nil {
+		t.Fatal("report did not encode as JSON")
+	}
+	checks, ok := document["checks"].([]any)
+	if !ok || len(checks) != 1 {
+		t.Fatal("privacy report omitted the aggregate check")
+	}
+	check := checks[0].(map[string]any)
+	if check["error_class"] != "unexpected_evidence" {
+		t.Fatalf("aggregate check error_class = %v, want confirmed leak priority over earlier query failure", check["error_class"])
+	}
+}
+
 func TestPrivacyCompositionKeepsConfirmedLeakPriorityInTheCompleteReport(t *testing.T) {
 	startedAt := time.Now().UTC().Add(-time.Second)
 	fixture := t192Fixture(startedAt, startedAt.Add(30*time.Second))

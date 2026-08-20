@@ -22,7 +22,7 @@ func TestPrivacySmokeBackendRoutesAllEightSurfacesUsingOneTrustedFixture(t *test
 		smoke.PrivacySmokeSurfaceLangfuseTrace: 0, smoke.PrivacySmokeSurfaceLangfuseScore: 0,
 	}}
 	manifest := &t180PrivacyManifestBinder{fixture: t180BoundPrivacyFixture(startedAt)}
-	backend, err := NewPrivacySmokeBackend(PrivacySmokeBackendConfig{Manifest: manifest, Fixture: fixtureQuery, Remote: remoteQuery, SurfaceTimeout: time.Second})
+	backend, err := newPrivacySmokeBackendPort(privacySmokeBackendPortConfig{Manifest: manifest, Fixture: fixtureQuery, Remote: remoteQuery, SurfaceTimeout: time.Second})
 	if err != nil {
 		t.Fatalf("NewPrivacySmokeBackend() error = %v", err)
 	}
@@ -75,14 +75,14 @@ func TestPrivacySmokeBackendRoutesAllEightSurfacesUsingOneTrustedFixture(t *test
 
 func TestPrivacySmokeBackendRequiresBothTrustedQueryPlanes(t *testing.T) {
 	query := &t180PrivacySurfaceQuery{}
-	for _, config := range []PrivacySmokeBackendConfig{
+	for _, config := range []privacySmokeBackendPortConfig{
 		{Remote: query, SurfaceTimeout: time.Second},
 		{Manifest: &t180PrivacyManifestBinder{}, Fixture: query, SurfaceTimeout: time.Second},
 		{Manifest: &t180PrivacyManifestBinder{}, Remote: query, SurfaceTimeout: time.Second},
 		{Manifest: &t180PrivacyManifestBinder{}, Fixture: query, Remote: query},
 	} {
-		if backend, err := NewPrivacySmokeBackend(config); err == nil || backend != nil || len(query.calls) != 0 {
-			t.Fatalf("NewPrivacySmokeBackend(%#v) = (%#v,%v), want fail-fast configuration error", config, backend, err)
+		if backend, err := newPrivacySmokeBackendPort(config); err == nil || backend != nil || len(query.calls) != 0 {
+			t.Fatalf("newPrivacySmokeBackendPort(%#v) = (%#v,%v), want fail-fast configuration error", config, backend, err)
 		}
 	}
 }
@@ -105,7 +105,7 @@ func TestPrivacySmokeBackendRejectsUnsafeOrUnregisteredTargetsBeforeAnyQuery(t *
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			query := &t180PrivacySurfaceQuery{}
-			backend, err := NewPrivacySmokeBackend(PrivacySmokeBackendConfig{Manifest: &t180PrivacyManifestBinder{fixture: t180BoundPrivacyFixture(startedAt)}, Fixture: query, Remote: query, SurfaceTimeout: time.Second})
+			backend, err := newPrivacySmokeBackendPort(privacySmokeBackendPortConfig{Manifest: &t180PrivacyManifestBinder{fixture: t180BoundPrivacyFixture(startedAt)}, Fixture: query, Remote: query, SurfaceTimeout: time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func TestPrivacySmokeBackendRejectsForeignManifestBeforeSurfaceQuery(t *testing.
 			fixture := t180BoundPrivacyFixture(startedAt)
 			tt.mutate(&fixture)
 			query := &t180PrivacySurfaceQuery{}
-			backend, err := NewPrivacySmokeBackend(PrivacySmokeBackendConfig{Manifest: &t180PrivacyManifestBinder{fixture: fixture}, Fixture: query, Remote: query, SurfaceTimeout: time.Second})
+			backend, err := newPrivacySmokeBackendPort(privacySmokeBackendPortConfig{Manifest: &t180PrivacyManifestBinder{fixture: fixture}, Fixture: query, Remote: query, SurfaceTimeout: time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -166,7 +166,7 @@ func TestPrivacySmokeBackendTreatsUnattemptedOrMalformedSurfaceAsFailureNotZero(
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			backend, err := NewPrivacySmokeBackend(PrivacySmokeBackendConfig{Manifest: &t180PrivacyManifestBinder{fixture: t180BoundPrivacyFixture(startedAt)}, Fixture: tt.query, Remote: tt.query, SurfaceTimeout: time.Millisecond})
+			backend, err := newPrivacySmokeBackendPort(privacySmokeBackendPortConfig{Manifest: &t180PrivacyManifestBinder{fixture: t180BoundPrivacyFixture(startedAt)}, Fixture: tt.query, Remote: tt.query, SurfaceTimeout: time.Millisecond})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -181,7 +181,7 @@ func TestPrivacySmokeBackendTreatsUnattemptedOrMalformedSurfaceAsFailureNotZero(
 func TestPrivacySmokeBackendRejectsUnknownSurfaceWithoutQuery(t *testing.T) {
 	startedAt := time.Now().UTC()
 	query := &t180PrivacySurfaceQuery{}
-	backend, err := NewPrivacySmokeBackend(PrivacySmokeBackendConfig{Manifest: &t180PrivacyManifestBinder{fixture: t180BoundPrivacyFixture(startedAt)}, Fixture: query, Remote: query, SurfaceTimeout: time.Second})
+	backend, err := newPrivacySmokeBackendPort(privacySmokeBackendPortConfig{Manifest: &t180PrivacyManifestBinder{fixture: t180BoundPrivacyFixture(startedAt)}, Fixture: query, Remote: query, SurfaceTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

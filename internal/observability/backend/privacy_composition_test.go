@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,13 +12,15 @@ import (
 // Production composition must not resolve a manifest from one contained root and read its
 // registered artifacts through another. Pointer identity is intentional here: equal path text
 // cannot prove that two capabilities are bound to the same already-validated directory FD.
+// The store creates its own 0700 directory, so fixtures use nested paths instead of the
+// umask-affected t.TempDir() itself.
 func TestPrivacySmokeBackendRejectsSplitBrainArtifactStores(t *testing.T) {
-	storeA, err := smoke.OpenPrivacyArtifactStore(t.TempDir())
+	storeA, err := smoke.OpenPrivacyArtifactStore(filepath.Join(t.TempDir(), "store-a"))
 	if err != nil {
 		t.Fatalf("open store A: %v", err)
 	}
 	t.Cleanup(func() { _ = storeA.Close() })
-	storeB, err := smoke.OpenPrivacyArtifactStore(t.TempDir())
+	storeB, err := smoke.OpenPrivacyArtifactStore(filepath.Join(t.TempDir(), "store-b"))
 	if err != nil {
 		t.Fatalf("open store B: %v", err)
 	}

@@ -16,6 +16,12 @@ func TestBuildSmokeReportAggregatesChecksAndOwnedCleanupEvidence(t *testing.T) {
 		t.Fatal("BuildSmokeReport() returned an unexpected error")
 	}
 
+	// Marker 访问器只读密封的 runner-owned identity：组合根（如 resilience
+	// full aggregate）用它强制子报告 marker 唯一性，绝不能从调用方猜测。
+	if report.Marker() != "marker-t019-001" || report.Scenario() != "privacy" || report.Status() != "failed" {
+		t.Fatalf("sealed accessors = %q/%q/%q, want the frozen low-sensitivity facts", report.Marker(), report.Scenario(), report.Status())
+	}
+
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		t.Fatal("SmokeReport could not be encoded as JSON")
@@ -66,6 +72,10 @@ func TestBuildSmokeReportAggregatesPassedAndSkippedResults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			input := validSmokeReportInput()
+			// 纯检查聚合语义只能在没有 sealed proof set 的场景下独立成立：privacy 场景的
+			// 八项证明自 T198 起参与状态聚合，检查跳过不再等于整体跳过。
+			input.Scenario = "infra"
+			input.PrivacyEvidence = nil
 			input.Checks = input.Checks[:1]
 			input.Checks[0].Status = tt.checkState
 			report, err := BuildSmokeReport(input)
@@ -90,6 +100,7 @@ func TestBuildSmokeReportAggregatesPassedAndSkippedResults(t *testing.T) {
 func TestBuildSmokeReportProjectsOptionalChatIdentity(t *testing.T) {
 	input := validSmokeReportInput()
 	input.Scenario = "chat"
+	input.PrivacyEvidence = nil
 	input.RequestID = "request-t105"
 	input.AITraceID = "ai-trace-t105"
 	report, err := BuildSmokeReport(input)
@@ -242,6 +253,9 @@ func TestBuildSmokeReportRejectsSchemaAndCleanupContradictions(t *testing.T) {
 	}
 }
 
+// validSmokeReportInput 使用 T186 锁定 schema 之后的完整 privacy 场景：八项密封 surface
+// 证明与三组检查共同构成 schema-valid 报告（T198 组合契约使 proof set 成为 privacy 场景
+// 的强制语义，旧的单检查 fixture 已不再合法）。
 func validSmokeReportInput() SmokeReportInput {
 	startedAt := time.Date(2026, time.July, 13, 1, 2, 3, 0, time.UTC)
 	return SmokeReportInput{
@@ -258,6 +272,7 @@ func validSmokeReportInput() SmokeReportInput {
 			{Backend: "tempo", Status: "failed", Duration: 40 * time.Millisecond, FailureStage: "query", ErrorClass: "backend_timeout", Evidence: map[string]any{"matched_spans": 0}},
 			{Backend: "loki", Status: "passed", Duration: 8 * time.Millisecond, FailureStage: "none", Evidence: map[string]any{"matched_logs": 1}},
 		},
+		PrivacyEvidence: t019PrivacyEvidence(),
 		Cleanup: SmokeCleanupInput{
 			Status:               "completed",
 			ResidualResources:    []string{},
@@ -265,6 +280,18 @@ func validSmokeReportInput() SmokeReportInput {
 			TemporaryData:        "deleted",
 		},
 	}
+}
+
+func t019PrivacyEvidence() []PrivacySmokeReportEvidenceInput {
+	evidence := make([]PrivacySmokeReportEvidenceInput, 0, len(privacyCompositionSchemaOrder))
+	for _, surface := range privacyCompositionSchemaOrder {
+		evidence = append(evidence, PrivacySmokeReportEvidenceInput{
+			Surface: surface, EvidenceMethod: privacyCompositionMethod(surface), Status: "passed",
+			ScannerPolicyVersion: "1", Counts: privacyCompositionZeroCounts(),
+			CollectorProofVerified: surface == PrivacySmokeSurfaceCollectorQueue,
+		})
+	}
+	return evidence
 }
 
 func assertSmokeReportDoesNotContainSensitiveValues(t *testing.T, rendered string) {

@@ -358,17 +358,36 @@ func t188ChatReport(t *testing.T, input PrivacyFixtureArtifactInput, scenario st
 	if evidence == nil {
 		evidence = map[string]any{"response_status": int64(200)}
 	}
+	var privacyEvidence []PrivacySmokeReportEvidenceInput
+	if scenario == "privacy" {
+		// T186 锁定 schema 后 privacy 场景必须携带八项密封证明；本 fixture 用于证明
+		// privacy 报告会被 chat fixture artifact 契约拒绝，而不是在构造阶段就失败。
+		privacyEvidence = t188PrivacyEvidence()
+	}
 	report, err := BuildSmokeReport(SmokeReportInput{
 		RunID: input.RunID, Marker: input.Marker, Profile: "grafana", Scenario: scenario,
 		RequestID: input.RequestID, AITraceID: input.AITraceID,
 		StartedAt: input.StartedAt, Deadline: input.Deadline, FinishedAt: input.StartedAt.Add(time.Second),
-		Checks:  []BackendCheckInput{{Backend: "api", Status: "passed", FailureStage: "none", Evidence: evidence}},
-		Cleanup: SmokeCleanupInput{Status: "not_required", ResidualResources: []string{}, TemporaryCredentials: "not_created", TemporaryData: "not_created"},
+		Checks:          []BackendCheckInput{{Backend: "api", Status: "passed", FailureStage: "none", Evidence: evidence}},
+		PrivacyEvidence: privacyEvidence,
+		Cleanup:         SmokeCleanupInput{Status: "not_required", ResidualResources: []string{}, TemporaryCredentials: "not_created", TemporaryData: "not_created"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return report
+}
+
+func t188PrivacyEvidence() []PrivacySmokeReportEvidenceInput {
+	evidence := make([]PrivacySmokeReportEvidenceInput, 0, len(privacyCompositionSchemaOrder))
+	for _, surface := range privacyCompositionSchemaOrder {
+		evidence = append(evidence, PrivacySmokeReportEvidenceInput{
+			Surface: surface, EvidenceMethod: privacyCompositionMethod(surface), Status: "passed",
+			ScannerPolicyVersion: "1", Counts: privacyCompositionZeroCounts(),
+			CollectorProofVerified: surface == PrivacySmokeSurfaceCollectorQueue,
+		})
+	}
+	return evidence
 }
 
 func assertT188TreeContainsNoForbiddenBytes(t *testing.T, root string) {
