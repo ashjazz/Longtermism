@@ -229,9 +229,7 @@ func TestPlatformSmokeLocalRunSkipsByDefaultWithZeroExternalAttempts(t *testing.
 func TestPlatformSmokeLocalRunRequiresTransport(t *testing.T) {
 	// transport 是外连审计的强制通道：缺失时必须 fail-fast，不允许静默
 	// 构造一个"看不见外连"的受控运行。
-	_, err := RunLocalPlatformSmoke(context.Background(), LocalPlatformSmokeRunConfig{
-		Config: completeLocalPlatformSmokeRunConfig(nil),
-	})
+	_, err := RunLocalPlatformSmoke(context.Background(), completeLocalPlatformSmokeRunConfig(nil))
 	if err == nil {
 		t.Fatalf("RunLocalPlatformSmoke() error = nil, want fail-fast error when transport is missing")
 	}
@@ -283,7 +281,10 @@ func TestPlatformSmokeLocalRunFailsFastOnMissingIdentityFacts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// fixture 必须补齐 transport：identity 校验测试的前提是审计通道
+			// 已就位，否则会先命中更早的 transport fail-fast。
 			config := completeLocalPlatformSmokeRunConfig(tt.mutate)
+			config.Transport = &countingLocalPlatformTransport{}
 
 			result, err := RunLocalPlatformSmoke(context.Background(), config)
 			if err == nil {
