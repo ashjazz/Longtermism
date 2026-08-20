@@ -275,7 +275,7 @@
 - [X] T155 [US5] 在 `internal/eval/smoke/platform_smoke.go` 增加双平面 marker/identity 和零外连断言；质量门控：使 T151 GREEN，复用生产 mapper/payload policy，禁止维护第二套语义。
 - [X] T156 [US5] 在 `internal/eval/smoke/platform_privacy.go` 实现 controlled payload canary 扫描；质量门控：使 T152 GREEN，敏感命中立即失败，输出只含类别/计数。
 - [X] T157 [US5] 在 `internal/eval/smoke/platform_report.go` 生成 local schema report；质量门控：使 T153 GREEN，真实 backend checks 必须标记 skipped 且说明范围，不得伪造 passed。
-- [ ] T158 [US5] 在 `Makefile` 收紧 `obs-platform-smoke` 目标；质量门控：无 Docker/credential 可运行、30 秒内完成、强制 `-count=1` 防止缓存假阳性并保持默认零网络。
+- [X] T158 [US5] 在 `Makefile` 收紧 `obs-platform-smoke` 目标；质量门控：无 Docker/credential 可运行、30 秒内完成、强制 `-count=1` 防止缓存假阳性并保持默认零网络。
 - [ ] T159 [US5] 在 `specs/003-real-observability-backends/quickstart.md` 更新 Level 0 平台 smoke 证据边界；质量门控：明确 controlled sender 保护的是 payload/identity/privacy contract，真实接收/查询只由 Grafana/SigNoz E2E 证明。
 
 ## Final Phase：Polish & Cross-Cutting Concerns

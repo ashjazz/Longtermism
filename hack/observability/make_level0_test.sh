@@ -53,7 +53,7 @@ run_isolated_target() {
   fi
 }
 
-for target in verify obs-contract obs-smoke-offline obs-config-check; do
+for target in verify obs-contract obs-smoke-offline obs-config-check obs-platform-smoke; do
   make -C "${REPO_ROOT}" -n "${target}" >"${TEST_TMPDIR}/${target}.dry-run" 2>&1 || {
     cat "${TEST_TMPDIR}/${target}.dry-run" >&2
     fail "${target} is not a Make target"
@@ -68,5 +68,8 @@ run_isolated_target obs-contract zero
 run_isolated_target obs-smoke-offline zero
 # 部署资产在 T051/T052 前尚不存在；静态 checker 应明确拒绝而不能假通过。
 run_isolated_target obs-config-check nonzero
+# US5：本地平台契约 smoke 必须在最小环境（无 Docker、无任何凭据 env）下通过，
+# 且 -mod=readonly 让缺依赖直接失败——这是"无外连可运行"的持续守护。
+run_isolated_target obs-platform-smoke zero
 
 printf 'PASS: Level 0 Make targets are offline and fail closed\n'

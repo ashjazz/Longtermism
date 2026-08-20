@@ -62,10 +62,15 @@ obs-coverage:
 	go test -count=1 -covermode=atomic -coverprofile=build/coverage/observability.out $$packages
 	bash hack/observability/coverage_check.sh --profile build/coverage/observability.out --base origin/main --threshold 80 --scope internal/cmd --scope internal/observability --scope internal/logic/chat --scope pkg/ai/obs
 
-# 本地平台接入契约 smoke：验证最小双平面 payload、显式启用与低敏边界。
-# 它不连接真实 Collector 或后端；真实平台查询由后续 obs-*-e2e 命令承担。
+# 本地平台接入契约 smoke（US5）：无 Docker、无 credential、默认零网络地验证
+# 最小双平面 payload、identity、隐私边界与 local platform_contract 报告。
+# 收紧点：-count=1 防测试缓存把红测漂白成绿；-timeout=30s 把 US5 的 30 秒预算
+# 编译进门禁（超时即失败并指认超时测试）；-mod=readonly 禁止 go 隐式联网拉
+# 依赖，缺依赖时直接失败而不是静默下载。凭据零读取面与零外连由
+# TestPlatformSmoke* 契约（env allowlist 审计 + counting transport）守护；
+# 真实平台接收/查询只由 obs-grafana-e2e / obs-signoz-e2e 证明。
 obs-platform-smoke:
-	go test ./internal/eval/smoke -run 'TestResolvePlatformSmokeConfig|TestPlatformSmoke' -count=1
+	go test -mod=readonly ./internal/eval/smoke -run 'TestResolvePlatformSmokeConfig|TestPlatformSmoke' -count=1 -timeout=30s
 
 # 首次冷启动不能复用完整 profile：Compose 会在启动任何服务前解析 Collector 的
 # Langfuse project key。此 target 只加载 Langfuse 服务，创建项目/API key 后再走 warm start。
