@@ -50,19 +50,19 @@ func TestMetricsRecordRequiredInstrumentsWithOnlyLowCardinalityAttributes(t *tes
 	llmRequestAttributes := metricAttributes("gen_ai.provider.name", "openai-compatible", "gen_ai.request.model", "gpt-test", "outcome", "failed")
 	evalAttributes := metricAttributes("evaluator", "deterministic", "status", "passed", "metric.name", "answer_quality")
 	want := map[string]metricExpectation{
-		"longtermism.http.server.request.count":    {kind: metricKindCounter, expectedAttributeSets: []map[string]string{requestAttributes}},
-		"longtermism.http.server.request.duration": {kind: metricKindHistogram, expectedAttributeSets: []map[string]string{requestAttributes}},
-		"longtermism.llm.request.count":            {kind: metricKindCounter, expectedAttributeSets: []map[string]string{llmRequestAttributes}},
-		"longtermism.llm.duration":                 {kind: metricKindHistogram, expectedAttributeSets: []map[string]string{llmRequestAttributes}},
-		"longtermism.llm.tokens": {kind: metricKindCounter, expectedAttributeSets: []map[string]string{
+		"longtermism.http.server.request.count":    {kind: metricKindInt64Counter, unit: "", expectedAttributeSets: []map[string]string{requestAttributes}},
+		"longtermism.http.server.request.duration": {kind: metricKindHistogram, unit: "s", expectedAttributeSets: []map[string]string{requestAttributes}},
+		"longtermism.llm.request.count":            {kind: metricKindInt64Counter, unit: "", expectedAttributeSets: []map[string]string{llmRequestAttributes}},
+		"longtermism.llm.duration":                 {kind: metricKindHistogram, unit: "s", expectedAttributeSets: []map[string]string{llmRequestAttributes}},
+		"longtermism.llm.tokens": {kind: metricKindInt64Counter, unit: "{token}", expectedAttributeSets: []map[string]string{
 			metricAttributes("gen_ai.provider.name", "openai-compatible", "gen_ai.response.model", "gpt-test-actual", "gen_ai.token.type", "input"),
 			metricAttributes("gen_ai.provider.name", "openai-compatible", "gen_ai.response.model", "gpt-test-actual", "gen_ai.token.type", "output"),
 		}},
-		"longtermism.llm.cost":           {kind: metricKindCounter, expectedAttributeSets: []map[string]string{metricAttributes("gen_ai.provider.name", "openai-compatible", "gen_ai.response.model", "gpt-test-actual", "currency", "USD", "estimate.status", "estimated")}},
-		"longtermism.eval.result":        {kind: metricKindCounter, expectedAttributeSets: []map[string]string{evalAttributes}},
-		"longtermism.eval.score":         {kind: metricKindHistogram, expectedAttributeSets: []map[string]string{evalAttributes}},
-		"longtermism.score.projection":   {kind: metricKindCounter, expectedAttributeSets: []map[string]string{metricAttributes("backend", "langfuse", "status", "sent")}},
-		"longtermism.score.worker.queue": {kind: metricKindGauge, expectedAttributeSets: []map[string]string{metricAttributes("backend", "langfuse")}},
+		"longtermism.llm.cost":           {kind: metricKindFloat64Counter, unit: "", expectedAttributeSets: []map[string]string{metricAttributes("gen_ai.provider.name", "openai-compatible", "gen_ai.response.model", "gpt-test-actual", "currency", "USD", "estimate.status", "estimated")}},
+		"longtermism.eval.result":        {kind: metricKindInt64Counter, unit: "", expectedAttributeSets: []map[string]string{evalAttributes}},
+		"longtermism.eval.score":         {kind: metricKindHistogram, unit: "", expectedAttributeSets: []map[string]string{evalAttributes}},
+		"longtermism.score.projection":   {kind: metricKindInt64Counter, unit: "", expectedAttributeSets: []map[string]string{metricAttributes("backend", "langfuse", "status", "sent")}},
+		"longtermism.score.worker.queue": {kind: metricKindGauge, unit: "", expectedAttributeSets: []map[string]string{metricAttributes("backend", "langfuse")}},
 	}
 
 	seen := make(map[string]struct{}, len(want))
@@ -73,6 +73,11 @@ func TestMetricsRecordRequiredInstrumentsWithOnlyLowCardinalityAttributes(t *tes
 				t.Fatal("scoped meter emitted an unknown metric instrument")
 			}
 			seen[collectedMetric.Name] = struct{}{}
+			// OTel unit 会参与 Prometheus 名称归一化。这里逐项锁定，防止代码仍能记录、
+			// 但 dashboard 因 `_seconds` / `_token` 等后缀漂移而静默查不到数据。
+			if collectedMetric.Unit != expectation.unit {
+				t.Fatalf("metric %q unit = %q, want %q", collectedMetric.Name, collectedMetric.Unit, expectation.unit)
+			}
 			assertMetricAggregationKind(t, collectedMetric.Data, expectation.kind)
 			assertMetricDataPointAttributes(t, collectedMetric.Data, expectation.expectedAttributeSets)
 		}
@@ -258,33 +263,31 @@ func TestStatusClass(t *testing.T) {
 type metricKind string
 
 const (
-	metricKindCounter   metricKind = "counter"
-	metricKindHistogram metricKind = "histogram"
-	metricKindGauge     metricKind = "gauge"
+	metricKindInt64Counter   metricKind = "int64_counter"
+	metricKindFloat64Counter metricKind = "float64_counter"
+	metricKindHistogram      metricKind = "float64_histogram"
+	metricKindGauge          metricKind = "int64_gauge"
 )
 
 type metricExpectation struct {
 	kind                  metricKind
+	unit                  string
 	expectedAttributeSets []map[string]string
 }
 
 func assertMetricAggregationKind(t *testing.T, aggregation metricdata.Aggregation, want metricKind) {
 	t.Helper()
 	switch want {
-	case metricKindCounter:
-		// 成本是小数金额；强制它使用 int64 counter 会截断真实事实。首批契约只要求
-		// 单调 counter，因此同时接受整数计数与浮点金额两种合法的 OTLP 聚合。
-		switch counter := aggregation.(type) {
-		case metricdata.Sum[int64]:
-			if !counter.IsMonotonic {
-				t.Fatal("metric did not use the expected monotonic counter aggregation")
-			}
-		case metricdata.Sum[float64]:
-			if !counter.IsMonotonic {
-				t.Fatal("metric did not use the expected monotonic counter aggregation")
-			}
-		default:
-			t.Fatal("metric did not use the expected counter aggregation")
+	case metricKindInt64Counter:
+		counter, ok := aggregation.(metricdata.Sum[int64])
+		if !ok || !counter.IsMonotonic {
+			t.Fatal("metric did not use the expected int64 monotonic counter aggregation")
+		}
+	case metricKindFloat64Counter:
+		// 成本必须保留小数金额，若误换成 Int64Counter 会截断生产事实。
+		counter, ok := aggregation.(metricdata.Sum[float64])
+		if !ok || !counter.IsMonotonic {
+			t.Fatal("metric did not use the expected float64 monotonic counter aggregation")
 		}
 	case metricKindHistogram:
 		if _, ok := aggregation.(metricdata.Histogram[float64]); !ok {

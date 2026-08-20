@@ -52,6 +52,15 @@ def delete_statement?(processor, field)
     .flat_map { |statement| statement.is_a?(Hash) ? Array(statement["statements"]) : [] }
     .any? { |statement| statement.to_s.gsub(/\s+/, "").match?(expected) }
 end
+def event_delete_statement?(processor, field)
+  expected = /\Adelete_key\(attributes,["'']#{Regexp.escape(field)}["'']\)\z/
+  trace_statements = processor["trace_statements"]
+  return false unless trace_statements.is_a?(Array)
+  trace_statements
+    .select { |statement| statement.is_a?(Hash) && statement["context"] == "spanevent" }
+    .flat_map { |statement| Array(statement["statements"]) }
+    .any? { |statement| statement.to_s.gsub(/\s+/, "").match?(expected) }
+end
 def attribute_policy?(policy, key, value)
   return false unless policy.is_a?(Hash) && policy["type"] == "string_attribute"
   config = policy["string_attribute"]
@@ -161,9 +170,9 @@ require_exact(ingress.fetch("exporters"), ["forward/infra", "forward/ai"], "inva
 require_includes(ingress.fetch("processors", []), ["transform/redact-ingress"], "missing_ingress_redaction")
 require_exact(infra.fetch("receivers"), ["forward/infra"], "invalid_infra_receivers")
 require_exact(infra.fetch("exporters"), ["otlp/signoz"], "invalid_infra_exporters")
-require_includes(infra.fetch("processors", []), ["transform/redact-downstream", "tail_sampling/retain"], "missing_infra_privacy_or_sampling")
+require_includes(infra.fetch("processors", []), ["transform/redact-downstream", "transform/redact-span-events", "tail_sampling/retain"], "missing_infra_privacy_or_sampling")
 require_exact(ai.fetch("receivers"), ["forward/ai"], "invalid_ai_receivers")
-require_includes(ai.fetch("processors", []), ["filter/ai", "transform/redact-downstream", "tail_sampling/retain"], "missing_ai_filter_privacy_or_sampling")
+require_includes(ai.fetch("processors", []), ["filter/ai", "transform/redact-downstream", "transform/redact-span-events", "tail_sampling/retain"], "missing_ai_filter_privacy_or_sampling")
 require_exact(ai.fetch("exporters"), ["otlphttp/langfuse"], "invalid_ai_exporters")
 # metrics 从主线 prometheus/app（pull，依赖 Prometheus 抓取）改为 OTLP push 到 SigNoz：
 # 这是后端边界变化，应用仍向同一 receiver push，应用契约不变。
@@ -198,6 +207,7 @@ fail_check("invalid_logs_resource_allowlist") unless kept_log_resource_attribute
   %w[transform/redact-ingress transform/redact-downstream].each do |processor|
     fail_check("missing_second_field_removal:#{processor}:#{forbidden}") unless delete_statement?(processors.fetch(processor), forbidden)
   end
+  fail_check("missing_span_event_field_removal:#{forbidden}") unless event_delete_statement?(processors.fetch("transform/redact-span-events"), forbidden)
 end
 ai_filter = processors.fetch("filter/ai").dig("traces", "span")
 fail_check("invalid_ai_filter") unless ai_filter.is_a?(Array)

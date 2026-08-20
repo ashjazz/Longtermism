@@ -103,6 +103,13 @@ func TestHTTPCompletionLoggingMiddlewareWritesAuthenticatedChatSmokeMarker(t *te
 	if got := attributes["longtermism.smoke.run_id"].AsString(); got != marker {
 		t.Fatalf("HTTP root smoke marker = %q, want %q", got, marker)
 	}
+	// HTTP service span 即使属于 chat，也只能记录基础设施完成事实；AI marker 和 AI
+	// domain identity 由其下方 owned ai.chat bridge 持有，防止整条 HTTP 子树误投 Langfuse。
+	for _, forbidden := range []string{"longtermism.observability.plane", "longtermism.ai.designated", "longtermism.ai.trace_id"} {
+		if _, exists := attributes[forbidden]; exists {
+			t.Fatalf("HTTP root unexpectedly carried AI semantic attribute %q", forbidden)
+		}
+	}
 	encoded, err := json.Marshal(writer.entries[0])
 	if err != nil {
 		t.Fatalf("marshal completion log: %v", err)

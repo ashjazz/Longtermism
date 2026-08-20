@@ -285,7 +285,7 @@
 **独立验收**：Level 0 全离线门禁通过；显式配置环境后 Grafana Level 1-3 全部通过；SigNoz Level 4 独立通过；checklist、quickstart、ADR/journal 与机器报告互相可追溯且无敏感泄漏。
 
 - [X] T160 [P] 在 `specs/003-real-observability-backends/contracts/http-api.yaml` 根据最终 Go contract 做 OpenAPI 回归校准；质量门控：使用 OpenAPI parser 校验，所有示例无 secret/raw payload，禁止为迁就实现删除已决策的错误/identity/debug 约束。
-- [ ] T161 [P] 在 `specs/003-real-observability-backends/contracts/telemetry-contract.md` 根据最终 instruments/component IDs 更新遥测契约；质量门控：逐项引用实现测试，保留高基数禁区、AI marker 边界和真实失败证据源。
+- [X] T161 [P] 在 `specs/003-real-observability-backends/contracts/telemetry-contract.md` 根据最终 instruments/component IDs 更新遥测契约；质量门控：逐项引用实现测试，保留高基数禁区、AI marker 边界和真实失败证据源。
 - [ ] T162 [P] 在 `specs/003-real-observability-backends/contracts/runtime-configuration.md` 更新最终配置/端口/资源/retention 矩阵；质量门控：应用配置仍只包含 Collector endpoint，所有 secret 只记录 env 名与 present 状态。
 - [ ] T163 [P] 在 `specs/003-real-observability-backends/contracts/smoke-report.schema.json` 校准最终 scenario/backend/error fields；质量门控：运行正反 fixture 校验，保持 schema version 兼容或显式升级，不允许任意嵌套 payload 泄漏。
 - [ ] T164 在 `specs/003-real-observability-backends/quickstart.md` 完成环境准备、Level 0-4、故障注入、诊断、cleanup、credential rotation 与门禁频率 runbook；质量门控：明确 PR、观测配置变更、阶段里程碑、release candidate、scheduled canary 分别运行哪些命令及其外部依赖/费用；smoke 自建凭据必须撤销/删除、自建临时文件和数据必须清零，而外部注入的长期凭据不得被 smoke 撤销；每个命令必须真实存在，不能把未执行命令写成已通过。
