@@ -250,7 +250,7 @@
 - [X] T142 [US4] 在 `deploy/observability/collector/collector-signoz.yaml` 实现 SigNoz 三信号与 Langfuse AI fan-out；质量门控：使 T137 GREEN，纯 infra 请求不进入 Langfuse，push exporter 失败证据仍可分出口归因。
 - [X] T143 [US4] 在 `internal/observability/backend/signoz_query.go` 实现只读查询客户端；质量门控：使 T138 GREEN，context timeout、response limit、稳定 error class 与 low-sensitive evidence。
 - [X] T144 [US4] 在 `internal/observability/smoke/signoz_runner.go` 实现备选 profile 查询闭环；质量门控：使 T139 GREEN，复用公共 report/poller/privacy，不复制或放宽 Grafana 主线的 identity/隐私断言。
-- [ ] T145 [US4] 在 `deploy/observability/signoz/dashboard.json` 维护 SigNoz 专用 dashboard 资产；质量门控：使 T140 GREEN，面板回答与主线等价的运营问题，并保留 AI/score 到 Langfuse 的跳转说明。
+- [X] T145 [US4] 在 `deploy/observability/signoz/dashboard.json` 维护 SigNoz 专用 dashboard 资产；质量门控：使 T140 GREEN，面板回答与主线等价的运营问题，并保留 AI/score 到 Langfuse 的跳转说明。
 - [ ] T146 [US4] 在 `specs/003-real-observability-backends/checklists/signoz.md` 编写独立兼容性清单；质量门控：逐项要求 SigNoz logs/metrics/traces 与 Langfuse trace/score 查询证据，明确优先级低于 Grafana 主线。
 - [ ] T147 [US4] 在 `cmd/obs-smoke/main.go` 增加 `--profile=signoz` 调度；质量门控：profile 只改变 backend query/deploy adapter，不改变请求 payload、应用 endpoint、AI marker 或 report schema。
 - [ ] T148 [US4] 在 `Makefile` 增加 `obs-signoz-up/down`、`obs-signoz-e2e`；质量门控：仅在 Grafana 主线验收后纳入支持声明，失败清理限定 SigNoz compose project。

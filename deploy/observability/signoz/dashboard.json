@@ -1,0 +1,91 @@
+{
+  "uuid": "longtermism-signoz-overview",
+  "title": "Longtermism Observability (SigNoz profile)",
+  "description": "SigNoz 备选基础设施 profile 的首屏运营视图（T145）。面板回答与 Grafana 主线等价的运营问题，查询沿用主线已验证的同源低基数指标；infra 三信号经 otlp/signoz 出口进入本 backend。AI trace 与 score 投影的证据面在 Langfuse，不在本 dashboard。",
+  "panels": [
+    {
+      "title": "HTTP Request Rate",
+      "description": "服务面请求速率：按低基数 route/method 维度聚合。",
+      "queries": [
+        {
+          "query": "sum by (http_route, http_request_method) (rate(longtermism_http_server_request_count_total[5m]))"
+        }
+      ]
+    },
+    {
+      "title": "HTTP Error Rate",
+      "description": "5xx 占比：分母 clamp_min 防止低流量窗口放大噪声。",
+      "queries": [
+        {
+          "query": "sum(rate(longtermism_http_server_request_count_total{http_response_status_class=\"5xx\"}[5m])) / clamp_min(sum(rate(longtermism_http_server_request_count_total[5m])), 1)"
+        }
+      ]
+    },
+    {
+      "title": "HTTP Latency p95",
+      "description": "延迟 p95：与主线同源的 histogram 分位数。",
+      "queries": [
+        {
+          "query": "histogram_quantile(0.95, sum by (le, http_route, http_request_method) (rate(longtermism_http_server_request_duration_bucket[5m])))"
+        }
+      ]
+    },
+    {
+      "title": "Collector Export Failures",
+      "description": "分出口归因：infra 三信号经 otlp/signoz（spans 与 metric points），AI 分支经 otlphttp/langfuse（log records）。两个出口的投递故障在此分开可见，互不掩盖。",
+      "queries": [
+        {
+          "query": "sum by (exporter) (rate(otelcol_exporter_send_failed_spans_total{exporter=~\"otlp/signoz\"}[5m]))"
+        },
+        {
+          "query": "sum by (exporter) (rate(otelcol_exporter_send_failed_metric_points_total{exporter=~\"otlp/signoz\"}[5m]))"
+        },
+        {
+          "query": "sum by (exporter) (rate(otelcol_exporter_send_failed_log_records_total{exporter=~\"otlphttp/langfuse\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "title": "LLM Tokens and Cost",
+      "description": "token 与成本：沿用主线的低基数 provider/token_type/currency 维度。",
+      "queries": [
+        {
+          "query": "sum by (gen_ai_provider_name, gen_ai_token_type) (rate(longtermism_llm_tokens_token_total[5m]))"
+        },
+        {
+          "query": "sum by (gen_ai_provider_name, currency, estimate_status) (rate(longtermism_llm_cost_total{currency=\"USD\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "title": "Evaluation Results",
+      "description": "评估结果与失败分流：正常与 failed|error 分开统计。",
+      "queries": [
+        {
+          "query": "sum by (evaluator, status, metric_name) (rate(longtermism_eval_result_total{status!~\"failed|error\"}[5m]))"
+        },
+        {
+          "query": "sum by (evaluator, status, metric_name) (rate(longtermism_eval_result_total{status=~\"failed|error\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "title": "Langfuse Score Projection",
+      "description": "score 投影的投递面：按 backend/status 观察 worker 健康。",
+      "queries": [
+        {
+          "query": "sum by (backend, status) (rate(longtermism_score_projection_total[5m]))"
+        }
+      ]
+    },
+    {
+      "title": "AI Trace and Score live in Langfuse",
+      "description": "SigNoz 只承接基础设施三信号（logs/metrics/traces）。AI trace 与 score 投影的证据在 Langfuse UI：http://127.0.0.1:3001（经 langfuse score/runbook 关联）。在本 dashboard 找不到 AI 数据不是 profile 故障。",
+      "queries": [
+        {
+          "query": "sum(rate(longtermism_llm_request_count_total[15m]))"
+        }
+      ]
+    }
+  ]
+}
