@@ -267,7 +267,7 @@
 - [X] T150 [P] [US5] 在 `internal/eval/smoke/platform_config_test.go` 扩展显式启用 RED 测试；质量门控：覆盖默认 disabled、完整 local test config、缺字段 fail-fast、任何真实 endpoint/credential 默认不加载。
 - [X] T151 [P] [US5] 在 `internal/eval/smoke/platform_smoke_test.go` 扩展零外连与 identity RED 测试；质量门控：注入 counting transport，覆盖 infra payload 无 AI marker、AI payload 有 root/semantic marker、request/service/AI/eval identity 分离。
 - [X] T152 [P] [US5] 在 `internal/eval/smoke/platform_privacy_test.go` 编写平台 payload 隐私 RED 测试；质量门控：覆盖三种 payload policy、baggage allowlist、synthetic secret/PII、报告/错误输出零原文且 debug 不绕过 scanner。
-- [ ] T153 [P] [US5] 在 `internal/eval/smoke/platform_report_test.go` 编写 local `platform_contract` smoke report RED 测试；质量门控：覆盖 local profile、30 秒 deadline、checks/cleanup/schema 与“未验证真实后端”的明确 skipped evidence。
+- [X] T153 [P] [US5] 在 `internal/eval/smoke/platform_report_test.go` 编写 local `platform_contract` smoke report RED 测试；质量门控：覆盖 local profile、30 秒 deadline、checks/cleanup/schema 与“未验证真实后端”的明确 skipped evidence。
 
 ### Implementation - GREEN/REFACTOR
 
