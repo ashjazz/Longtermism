@@ -31,9 +31,9 @@ const (
 // 层与受控链路层的类型咬合。
 func completeLocalPlatformContractInput() LocalPlatformContractReportInput {
 	return LocalPlatformContractReportInput{
-		RunID:     localPlatformContractRunID,
-		Marker:    localPlatformContractMarker,
-		StartedAt: mustLocalPlatformContractTime(localPlatformContractStarted),
+		RunID:      localPlatformContractRunID,
+		Marker:     localPlatformContractMarker,
+		StartedAt:  mustLocalPlatformContractTime(localPlatformContractStarted),
 		FinishedAt: mustLocalPlatformContractTime(localPlatformContractStarted).Add(2 * time.Second),
 		Payload: LocalPlatformSmokeResult{
 			Ready:       true,
@@ -177,7 +177,7 @@ func TestPlatformSmokeReportPropagatesControlledOutcomesWithoutInflatingStatus(t
 	t.Run("privacy findings fail the report with a non-none failure stage", func(t *testing.T) {
 		input := completeLocalPlatformContractInput()
 		input.Privacy = PlatformPrivacyScanResult{
-			Clean: false,
+			Clean:           false,
 			ScannedSurfaces: []string{"payload_json", "payload_debug", "baggage"},
 			Findings: []PlatformPrivacyFinding{
 				{Surface: "payload_debug", Category: "sensitive_value", Count: 1},

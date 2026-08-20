@@ -168,19 +168,19 @@ func TestPlatformSmokeLocalConfigResolvesCompleteLocalTestConfig(t *testing.T) {
 
 func TestPlatformSmokeLocalConfigFailsFastWhenEnabledButIncomplete(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  PlatformSmokeLocalInput
+		name        string
+		input       PlatformSmokeLocalInput
 		wantErrPart string
 	}{
 		{
-			name:         "enabled without provider fails fast instead of skipping",
-			input:        PlatformSmokeLocalInput{Enabled: true},
-			wantErrPart:  "provider",
+			name:        "enabled without provider fails fast instead of skipping",
+			input:       PlatformSmokeLocalInput{Enabled: true},
+			wantErrPart: "provider",
 		},
 		{
-			name:         "enabled with blank provider fails fast",
-			input:        PlatformSmokeLocalInput{Enabled: true, Provider: "   "},
-			wantErrPart:  "provider",
+			name:        "enabled with blank provider fails fast",
+			input:       PlatformSmokeLocalInput{Enabled: true, Provider: "   "},
+			wantErrPart: "provider",
 		},
 	}
 
@@ -293,11 +293,11 @@ func TestPlatformSmokeLocalEnvLoadRequiresExplicitOptInAndNeverReadsCredentials(
 // 只作为"绝不能被读取或泄漏"的哨兵值存在，不是任何真实环境的凭据。
 func withProductionCredentialLeftovers() map[string]string {
 	return map[string]string{
-		"LANGFUSE_PUBLIC_KEY":                        "pk-production-leftover",
-		"LANGFUSE_SECRET_KEY":                        "sk-production-leftover",
-		"OPENAI_API_KEY":                             "sk-openai-production-leftover",
+		"LANGFUSE_PUBLIC_KEY":                         "pk-production-leftover",
+		"LANGFUSE_SECRET_KEY":                         "sk-production-leftover",
+		"OPENAI_API_KEY":                              "sk-openai-production-leftover",
 		"LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL": "basic-production-leftover",
-		"OTEL_EXPORTER_OTLP_ENDPOINT":                "https://collector.production.example.test",
+		"OTEL_EXPORTER_OTLP_ENDPOINT":                 "https://collector.production.example.test",
 	}
 }
 

@@ -60,9 +60,9 @@ func TestPlatformSmokePrivacyScanCoversAllThreePayloadPolicies(t *testing.T) {
 	// 特别注意 content_raw：显式授权只解锁本地调试工件，不改变外发边界——
 	// "raw 已开启"绝不能成为原文进入观测 payload 的理由（FR-006）。
 	tests := []struct {
-		name             string
-		payloadMode      obs.PayloadMode
-		environment      string
+		name              string
+		payloadMode       obs.PayloadMode
+		environment       string
 		rawContentEnabled bool
 	}{
 		{

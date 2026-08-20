@@ -271,7 +271,7 @@
 
 ### Implementation - GREEN/REFACTOR
 
-- [ ] T154 [US5] 在 `internal/eval/smoke/platform_config.go` 收紧 local controlled-sender 配置；质量门控：使 T150 GREEN，默认不从生产 env 隐式启用，不保存或打印 credential。
+- [X] T154 [US5] 在 `internal/eval/smoke/platform_config.go` 收紧 local controlled-sender 配置；质量门控：使 T150 GREEN，默认不从生产 env 隐式启用，不保存或打印 credential。
 - [ ] T155 [US5] 在 `internal/eval/smoke/platform_smoke.go` 增加双平面 marker/identity 和零外连断言；质量门控：使 T151 GREEN，复用生产 mapper/payload policy，禁止维护第二套语义。
 - [ ] T156 [US5] 在 `internal/eval/smoke/platform_privacy.go` 实现 controlled payload canary 扫描；质量门控：使 T152 GREEN，敏感命中立即失败，输出只含类别/计数。
 - [ ] T157 [US5] 在 `internal/eval/smoke/platform_report.go` 生成 local schema report；质量门控：使 T153 GREEN，真实 backend checks 必须标记 skipped 且说明范围，不得伪造 passed。
