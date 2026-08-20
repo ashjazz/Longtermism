@@ -1,4 +1,4 @@
-.PHONY: test test-race vet eval-smoke obs-smoke obs-platform-smoke verify obs-contract obs-smoke-offline obs-config-check obs-foundation-test obs-foundation-race obs-coverage obs-langfuse-bootstrap-up obs-langfuse-bootstrap-down obs-grafana-up obs-grafana-down obs-stack-health obs-infra-smoke obs-chat-smoke obs-langfuse-score-smoke obs-privacy-platform-smoke obs-direct-langfuse-smoke obs-grafana-e2e obs-exporter-failure-smoke obs-persistent-queue-smoke obs-score-worker-failure-smoke obs-resilience-e2e obs-reset
+.PHONY: test test-race vet eval-smoke obs-smoke obs-platform-smoke verify obs-contract obs-smoke-offline obs-config-check obs-foundation-test obs-foundation-race obs-coverage obs-langfuse-bootstrap-up obs-langfuse-bootstrap-down obs-grafana-up obs-grafana-down obs-stack-health obs-infra-smoke obs-chat-smoke obs-langfuse-score-smoke obs-privacy-platform-smoke obs-direct-langfuse-smoke obs-grafana-e2e obs-signoz-up obs-signoz-down obs-signoz-infra-smoke obs-signoz-chat-smoke obs-signoz-e2e obs-exporter-failure-smoke obs-persistent-queue-smoke obs-score-worker-failure-smoke obs-resilience-e2e obs-reset
 
 # 两条启动路径必须固定到同一个 project，才能复用首次冷启动创建的 Langfuse 数据卷。
 # 本地 .env 文件可选：不存在时继续接受 shell export，存在时才交给 Compose 读取。
@@ -161,6 +161,61 @@ obs-grafana-e2e:
 		$(MAKE) obs-chat-smoke; \
 		$(MAKE) obs-langfuse-score-smoke; \
 		$(MAKE) obs-privacy-platform-smoke
+
+# ── SigNoz 备选 profile（T148）────────────────────────────────────────────
+# 支持声明前置：只有在 Grafana 主线（checklists/real-backend-acceptance.md）
+# 完成验收后，本节目标才构成对备选方案的支持声明；备选 profile 的通过证据
+# 不改变主线优先级（checklists/signoz.md 定位声明）。
+# 独立 compose project：与 Grafana 主线互斥运行，Langfuse 栈在各自 project
+# 内独立实例化，观测卷互不可见（T141 契约），失败清理只触碰本 project。
+OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT ?= longtermism-signoz
+OBS_SIGNOZ_COMPOSE = docker compose --project-name $(OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml -f deploy/observability/compose.signoz.yaml
+
+obs-signoz-up:
+	$(OBS_SIGNOZ_COMPOSE) up -d --wait --wait-timeout 240
+
+# down 不带 -v：低敏 smoke 报告与 named-volume 中的故障证据保持可诊断，
+# 且清理严格限定本 compose project（门控：不触碰 Grafana 主线 project）。
+obs-signoz-down:
+	$(OBS_SIGNOZ_COMPOSE) down
+
+# 备选 profile 的 infra smoke：与主线同一查询式验收（绝不以 compose healthy
+# 代替查询），预检只引用变量名；ingestion key 可选（查询认证在未启用时省略）。
+obs-signoz-infra-smoke:
+	@missing=''; \
+		for variable in LONGTERMISM_SMOKE_SIGNOZ_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL; do \
+			if [ -z "$$(printenv "$$variable")" ]; then missing="$$missing $$variable"; fi; \
+		done; \
+		if [ -n "$$missing" ]; then \
+			printf '%s\n' "obs-signoz-infra-smoke preflight failed: missing required environment variables:$$missing" >&2; \
+			printf '%s\n' "Start the local SigNoz profile and application first; see deploy/observability/README.md." >&2; \
+			exit 2; \
+		fi
+	@printf '%s\n' "obs-signoz-infra-smoke: querying the already-running SigNoz profile; it will not start services." >&2
+	LONGTERMISM_SMOKE_PROFILE=signoz go run ./cmd/obs-smoke infra --profile=signoz
+
+obs-signoz-chat-smoke:
+	@missing=''; \
+		for variable in LONGTERMISM_SMOKE_APP_BASE_URL LONGTERMISM_SMOKE_CHAT_AUTHORIZATION LONGTERMISM_SMOKE_CHAT_MANIFEST_ROOT LONGTERMISM_SMOKE_SIGNOZ_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL; do \
+			if [ -z "$$(printenv "$$variable")" ]; then missing="$$missing $$variable"; fi; \
+		done; \
+		if [ -n "$$missing" ]; then \
+			printf '%s\n' "obs-signoz-chat-smoke preflight failed: missing required environment variables:$$missing" >&2; \
+			printf '%s\n' "Start the local SigNoz profile and application first; see deploy/observability/README.md." >&2; \
+			exit 2; \
+		fi
+	@printf '%s\n' "obs-signoz-chat-smoke: querying the already-running SigNoz profile; it will not start services." >&2
+	LONGTERMISM_SMOKE_PROFILE=signoz go run ./cmd/obs-smoke chat --live --profile=signoz
+
+# 备选 E2E 聚合顺序与主线同构：compose up -> infra（三信号+AI 负向）-> chat
+# （三信号+Langfuse trace/score）。score/privacy 的证据面绑定主线后端，不在
+# 备选 E2E 内伪装。失败时 trap 清理只针对本 project 的 compose down。
+obs-signoz-e2e:
+	@set -eu; \
+		trap '$(OBS_SIGNOZ_COMPOSE) down' EXIT; \
+		$(MAKE) obs-signoz-up; \
+		$(MAKE) obs-signoz-infra-smoke; \
+		$(MAKE) obs-signoz-chat-smoke
 
 # T131：US3 破坏性 live smoke 目标。全部显式 `--live` opt-in，只操作已运行
 # 服务、绝不启动 Docker；预检引用名与 T130 钉死的 CLI 契约逐字一致。
