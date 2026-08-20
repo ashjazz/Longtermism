@@ -1,6 +1,6 @@
 # Quickstart：真实可观测后端与最小 HTTP 闭环
 
-本文是 003 阶段的验证/run guide。除当前已存在的 `obs-platform-smoke` 外，其余新 Make targets 是实施计划契约，需在 `/speckit-tasks` 与实现阶段逐步落地；文档出现命令不代表它已经通过验收。
+本文是 003 阶段的验证/run guide。Level 0 离线门禁与 Level 1 静态/部署命令已实现并通过离线验证；涉及真实后端的命令（Level 2+ 的 E2E、Level 3 resilience、Level 4 SigNoz）已装配但需要 Docker 与显式凭据，其通过状态以 [real backend acceptance checklist](checklists/real-backend-acceptance.md) 的实际证据为准——文档出现命令不代表它已经跑过真实验收。
 
 ## 1. 阅读顺序
 
@@ -42,13 +42,19 @@ make obs-platform-smoke
 make eval-smoke
 ```
 
-当前已可运行的轻量平台契约：
+当前已可运行且收紧后的本地平台契约（US5）：
 
 ```bash
 make obs-platform-smoke
 ```
 
-期望：受控 sender 验证最小双平面 payload；默认无外连；它不证明 Collector 或任何后端可用。
+期望与证据边界：
+
+- 运行性质：无 Docker、无任何 credential、默认零网络（`-mod=readonly` 使缺依赖直接失败而不是隐式联网下载），30 秒预算内完成（`-timeout=30s`，超时即失败并指认超时测试），`-count=1` 防止测试缓存把红测漂白成绿；`hack/observability/make_level0_test.sh` 以 `env -i` 最小环境持续守护这些性质。
+- 它证明的是三份受控契约：local controlled-sender 配置边界（显式 opt-in，对生产凭据 env 零读取）、双平面 payload 与 identity（infra 面无 AI marker、AI span 携带生产路由 marker、request/service/AI/eval 身份显式分离且零外连）、以及隐私 canary（三种 payload policy 下合成 secret/PII/业务原文在外发表面零命中，命中立即失败且输出只含类别/计数）。
+- 受控运行产物是 schema-valid 的 local `platform_contract` 报告（profile=local）：报告内全部真实后端 checks 一律 `skipped` 并注明 `not_verified_local_profile` 范围，任何真实后端都不得标记 passed。
+- 因此 controlled sender 保护的是 payload/identity/privacy contract，**不是**后端验收：Collector 真实接收与 Grafana/SigNoz 查询闭环只由 `make obs-grafana-e2e`（Level 2）与 `make obs-signoz-e2e`（Level 4）证明。
+- env 入口 `LONGTERMISM_PLATFORM_SMOKE_ENABLED` / `LONGTERMISM_PLATFORM_SMOKE_PROVIDER` 只影响受控运行的显式装配，且只接受严格的 `1/true`、`0/false`；本目标与仓库内任何凭据变量无关。
 
 ## 4. 准备本地配置
 
