@@ -98,11 +98,14 @@ langfuse_services = required_hash(langfuse_compose["services"], "missing_langfus
 services = signoz_services.merge(langfuse_services)
 fail_check("duplicate_split_service") unless services.length == signoz_services.length + langfuse_services.length
 
-# 服务拓扑契约：SigNoz profile 用 signoz/signoz-otel-collector/signoz-clickhouse 替换
+# 服务拓扑契约：SigNoz profile 用 signoz/signoz-otel-collector/clickhouse 替换
 # 主线的 prometheus/loki/tempo/grafana 四个后端，但保留同一 Collector 入口（contrib 镜像、
 # distroless sidecar 健康探测与 queue 初始化模式）与整个 Langfuse AI 平面。
+# ClickHouse 服务名不带 signoz- 前缀：SigNoz 官方 collector 默认配置的 DSN 硬编码
+# tcp://clickhouse:9000，贴合官方命名可以直接复用默认配置，避免把整份 collector
+# 配置塞进环境变量。与 Langfuse 栈的 langfuse-clickhouse 分属不同 compose project，不冲突。
 # 精确清单匹配同时防止：主线后端残留（半迁移状态）与意外的多余服务（预算外的资源消耗）。
-required_signoz_services = %w[collector collector-health-probe collector-storage-init signoz signoz-otel-collector signoz-clickhouse]
+required_signoz_services = %w[collector collector-health-probe collector-storage-init signoz signoz-otel-collector clickhouse]
 required_langfuse_services = %w[langfuse-web langfuse-worker langfuse-db langfuse-clickhouse langfuse-clickhouse-init langfuse-redis langfuse-minio langfuse-minio-init]
 fail_check("invalid_signoz_profile_services") unless signoz_services.keys.sort == required_signoz_services.sort
 fail_check("invalid_langfuse_profile_services") unless langfuse_services.keys.sort == required_langfuse_services.sort
@@ -151,7 +154,7 @@ fail_check("invalid_langfuse_web_memory_limit") unless langfuse_web.dig("deploy"
 # 版本固定契约：所有镜像经 versions.env 变量解析，禁止 latest（T003 已 pin SigNoz 三镜像）。
 image_variables = {
   "collector" => "OTELCOL_CONTRIB_IMAGE", "collector-health-probe" => "COLLECTOR_STORAGE_INIT_IMAGE", "signoz" => "SIGNOZ_IMAGE",
-  "signoz-otel-collector" => "SIGNOZ_OTELCOL_IMAGE", "signoz-clickhouse" => "SIGNOZ_CLICKHOUSE_IMAGE",
+  "signoz-otel-collector" => "SIGNOZ_OTELCOL_IMAGE", "clickhouse" => "SIGNOZ_CLICKHOUSE_IMAGE",
   "langfuse-web" => "LANGFUSE_IMAGE", "langfuse-worker" => "LANGFUSE_WORKER_IMAGE", "langfuse-db" => "LANGFUSE_POSTGRES_IMAGE",
   "langfuse-clickhouse" => "LANGFUSE_CLICKHOUSE_IMAGE", "langfuse-redis" => "LANGFUSE_REDIS_IMAGE", "langfuse-minio" => "LANGFUSE_MINIO_IMAGE"
 }
@@ -168,12 +171,12 @@ end
 end
 
 # healthcheck 分层契约：
-# - signoz/signoz-clickhouse 是查询与数据面，必须自带结构合法的健康探测；
+# - signoz/clickhouse 是查询与数据面，必须自带结构合法的健康探测；
 # - collector 与 signoz-otel-collector 是 distroless Collector 镜像，无 shell 可用，
 #   collector 用 sidecar probe（见下），signoz-otel-collector 的健康性由 E2E 查询闭环
 #   （T139/T143）证明，禁止伪造 shell 探测；
 # - langfuse-worker 无健康端点（主线先例），initializer 是 one-shot 任务不应有 healthcheck。
-healthcheck_required = %w[signoz signoz-clickhouse langfuse-web langfuse-db langfuse-clickhouse langfuse-redis langfuse-minio]
+healthcheck_required = %w[signoz clickhouse langfuse-web langfuse-db langfuse-clickhouse langfuse-redis langfuse-minio]
 healthcheck_required.each do |service_name|
   healthcheck = services.fetch(service_name)["healthcheck"]
   fail_check("missing_healthcheck:#{service_name}") unless healthcheck.is_a?(Hash) && healthcheck["test"].is_a?(Array) && healthcheck["test"].length > 1 && healthcheck["interval"].to_s.match?(/\A[1-9][0-9]*s\z/) && healthcheck["timeout"].to_s.match?(/\A[1-9][0-9]*s\z/) && healthcheck["retries"].is_a?(Integer) && healthcheck["retries"].positive?
@@ -246,18 +249,19 @@ services.each do |name, service|
 end
 allowed_ports.each { |name, ports| fail_check("missing_loopback_port:#{name}") unless Array(services.fetch(name)["ports"]).map { |port| port.is_a?(Hash) ? port["target"] : nil }.sort == ports.sort }
 
-# 卷契约：SigNoz profile 只声明自己需要的状态卷。signoz 本体（UI+query）无持久状态，
-# 数据全部落在 signoz-clickhouse；与 Langfuse 的卷严格隔离，两个 profile 的数据
-# 互不可见，安全 reset 可以按 compose project 独立清理。
+# 卷契约：SigNoz profile 只声明自己需要的状态卷。signoz 本体持有 SQLite 状态
+# （官方挂载点 /var/lib/signoz/signoz.db：用户、告警等配置），必须持久化到
+# signoz-data；遥测数据全部落在 clickhouse。与 Langfuse 的卷严格隔离，两个
+# profile 的数据互不可见，安全 reset 可以按 compose project 独立清理。
 volumes = required_hash(compose["volumes"], "missing_observability_volumes").merge(required_hash(langfuse_compose["volumes"], "missing_langfuse_volumes"))
-required_volumes = %w[collector-data signoz-clickhouse-data langfuse-postgres-data langfuse-clickhouse-data langfuse-redis-data langfuse-minio-data]
+required_volumes = %w[collector-data signoz-data signoz-clickhouse-data langfuse-postgres-data langfuse-clickhouse-data langfuse-redis-data langfuse-minio-data]
 fail_check("invalid_observability_volumes") unless volumes.keys.sort == required_volumes.sort
 fail_check("external_or_overridden_volume") unless volumes.values.all? { |definition| definition == {} }
 fail_check("unsupported_compose_secret_or_config") if [compose, langfuse_compose].any? { |document| document.key?("secrets") || document.key?("configs") } || services.values.any? { |service| service.key?("secrets") || service.key?("configs") }
 
 state_volume_mounts = {
   "collector" => ["collector-data", "/var/lib/otelcol/storage"], "collector-storage-init" => ["collector-data", "/var/lib/otelcol/storage"],
-  "signoz-clickhouse" => ["signoz-clickhouse-data", "/var/lib/clickhouse"], "langfuse-db" => ["langfuse-postgres-data", "/var/lib/postgresql/data"],
+  "signoz" => ["signoz-data", "/var/lib/signoz"], "clickhouse" => ["signoz-clickhouse-data", "/var/lib/clickhouse"], "langfuse-db" => ["langfuse-postgres-data", "/var/lib/postgresql/data"],
   "langfuse-clickhouse" => ["langfuse-clickhouse-data", "/var/lib/clickhouse"], "langfuse-redis" => ["langfuse-redis-data", "/data"],
   "langfuse-minio" => ["langfuse-minio-data", "/data"]
 }
@@ -289,8 +293,8 @@ end
 
 # SigNoz 查询面与摄取面依赖 ClickHouse 健康：冷启动顺序是数据面先行的硬约束。
 %w[signoz signoz-otel-collector].each do |service_name|
-  fail_check("missing_signoz_clickhouse_dependency:#{service_name}") unless dependency_names(services.fetch(service_name)["depends_on"]).include?("signoz-clickhouse")
-  fail_check("unhealthy_signoz_clickhouse_dependency:#{service_name}") unless services.fetch(service_name).dig("depends_on", "signoz-clickhouse", "condition") == "service_healthy"
+  fail_check("missing_signoz_clickhouse_dependency:#{service_name}") unless dependency_names(services.fetch(service_name)["depends_on"]).include?("clickhouse")
+  fail_check("unhealthy_signoz_clickhouse_dependency:#{service_name}") unless services.fetch(service_name).dig("depends_on", "clickhouse", "condition") == "service_healthy"
 end
 %w[langfuse-db langfuse-clickhouse langfuse-redis].each do |dependency|
   fail_check("missing_langfuse_dependency:#{dependency}") unless dependency_names(services.fetch("langfuse-web")["depends_on"]).include?(dependency) && dependency_names(services.fetch("langfuse-worker")["depends_on"]).include?(dependency)

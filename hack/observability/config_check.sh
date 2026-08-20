@@ -174,11 +174,15 @@ compose_paths.sort.each do |compose_path|
     # make a network request without weakening the Collector container.
     sidecar_probe_name = "#{service_name}-health-probe"
     is_probed_by_sidecar = %w[collector loki tempo].include?(service_name) && services.dig(sidecar_probe_name, "depends_on", service_name, "condition") == "service_started"
+    # The SigNoz profile-local collector shares the upstream minimal base
+    # without a shell: the official docs explicitly warn that CMD-SHELL health
+    # checks fail there. Its health is proven by the SigNoz E2E query loop.
+    is_distroless_without_shell = service_name == "signoz-otel-collector"
     if is_one_shot_initializer
       fail_check(compose_path, "invalid_one_shot_initializer") unless service["restart"] == "no" && !service.key?("healthcheck")
     elsif is_langfuse_worker_without_health_endpoint
       fail_check(compose_path, "unexpected_langfuse_worker_healthcheck") if service.key?("healthcheck")
-    elsif is_probed_by_sidecar
+    elsif is_probed_by_sidecar || is_distroless_without_shell
       fail_check(compose_path, "unexpected_sidecar_probed_healthcheck") if service.key?("healthcheck")
     else
       fail_check(compose_path, "missing_healthcheck") unless service["healthcheck"].is_a?(Hash)

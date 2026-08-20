@@ -120,6 +120,39 @@ apply_fixture_mutation() {
   case "${name}" in
     valid_minimum)
       ;;
+    signoz_distroless_collector_exempt)
+      # SigNoz profile-local collector 镜像无 shell（官方文档明确警告），
+      # 健康探测必须缺席且不被误判为 missing_healthcheck；其健康由 E2E 查询闭环证明。
+      cat >"${fixture_root}/deploy/observability/compose.signoz.yaml" <<'EOF'
+services:
+  collector:
+    image: ${OTELCOL_CONTRIB_IMAGE}
+    ports:
+      - "127.0.0.1:4317:4317"
+    healthcheck:
+      test: ["CMD", "true"]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+    user: "__CURRENT_UID__"
+    volumes:
+      - type: bind
+        source: __STORAGE_SOURCE__
+        target: /var/lib/otelcol/storage
+  signoz-otel-collector:
+    image: ${OTELCOL_CONTRIB_IMAGE}
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+EOF
+      sed -i.bak "s/__CURRENT_UID__/$(id -u)/" "${fixture_root}/deploy/observability/compose.signoz.yaml"
+      sed -i.bak "s|__STORAGE_SOURCE__|${fixture_root}/storage|" "${fixture_root}/deploy/observability/compose.signoz.yaml"
+      rm -f "${fixture_root}/deploy/observability/compose.signoz.yaml.bak"
+      ;;
     latest_image)
       printf 'OTELCOL_CONTRIB_IMAGE=otel/opentelemetry-collector-contrib:latest\n' >"${fixture_root}/deploy/observability/versions.env"
       ;;
@@ -282,6 +315,11 @@ run_case() {
 
 run_case \
   'valid_minimum' \
+  'pass' \
+  '' \
+  ''
+run_case \
+  'signoz_distroless_collector_exempt' \
   'pass' \
   '' \
   ''

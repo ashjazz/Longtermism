@@ -1,0 +1,184 @@
+# SigNoz 备选基础设施 profile（T141）：替换主线的 Prometheus/Loki/Tempo/Grafana 四后端，
+# 与 compose.langfuse.yaml 叠加启动（AI 平面不变）。数据流：
+#   应用 → collector(本 profile) → ├ otlp/signoz    → signoz-otel-collector → clickhouse（infra 三信号）
+#                                  └ otlphttp/langfuse → langfuse-web（AI marker 分支）
+# 服务名沿用官方默认的 `clickhouse`：SigNoz collector 默认配置的 DSN 硬编码
+# tcp://clickhouse:9000，贴合官方命名可直接复用默认配置（见 T136 契约注释）。
+# 镜像、预算与保留基线见 versions.env、x-observability-budget、x-observability-retention。
+
+x-observability-budget:
+  cpus: "8"
+  memory: 12GiB
+  volumes: 20GiB
+
+# 保留基线（runtime-configuration.md §9）：三信号沿用被替换后端的基线
+# （metrics=Prometheus 15d，logs/traces=Loki/Tempo 7d），Langfuse 保持 14d。
+x-observability-retention:
+  metrics: 15d
+  logs: 7d
+  traces: 7d
+  langfuse: 14d
+
+volumes:
+  collector-data: {}
+  signoz-data: {}
+  signoz-clickhouse-data: {}
+
+services:
+  # 唯一的平台 fan-out 边界：应用只认识 OTLP 4317/4318；AI 分支凭据在本服务
+  # 以 ${VAR:?} fail-fast 形式提供，缺失时容器创建前即失败（无默认 secret）。
+  collector:
+    image: ${OTELCOL_CONTRIB_IMAGE}
+    user: "10001:10001"
+    labels:
+      longtermism.observability.profile: signoz
+    environment:
+      LANGFUSE_OTLP_AUTHORIZATION: ${LANGFUSE_OTLP_AUTHORIZATION:?LANGFUSE_OTLP_AUTHORIZATION is required}
+      LANGFUSE_OTEL_INGESTION_VERSION: ${LANGFUSE_OTEL_INGESTION_VERSION:?LANGFUSE_OTEL_INGESTION_VERSION is required}
+    volumes:
+      - type: bind
+        source: ./collector/collector-signoz.yaml
+        target: /etc/otelcol-contrib/config.yaml
+        read_only: true
+      - type: volume
+        source: collector-data
+        target: /var/lib/otelcol/storage
+    ports:
+      - host_ip: 127.0.0.1
+        target: 4317
+        published: "4317"
+      - host_ip: 127.0.0.1
+        target: 4318
+        published: "4318"
+      - host_ip: 127.0.0.1
+        target: 13133
+        published: "13133"
+      - host_ip: 127.0.0.1
+        target: 8888
+        published: "8888"
+    depends_on:
+      collector-storage-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512MiB
+
+  # distroless Collector 无 shell，健康探测由最小权限 sidecar 执行（主线同模式）。
+  collector-health-probe:
+    image: ${COLLECTOR_STORAGE_INIT_IMAGE}
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    labels:
+      longtermism.observability.profile: signoz
+    depends_on:
+      collector:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 128MiB
+
+  # one-shot 队列目录初始化：queue 子目录按 exporter 目标命名（signoz/langfuse），
+  # 与 collector-signoz.yaml 的 file_storage 扩展一一对应，使分出口积压归因成为可能。
+  collector-storage-init:
+    image: ${COLLECTOR_STORAGE_INIT_IMAGE}
+    user: "0:0"
+    restart: "no"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    labels:
+      longtermism.observability.profile: signoz
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mkdir -p /var/lib/otelcol/storage/queue/signoz /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/signoz-compaction /var/lib/otelcol/storage/queue/langfuse-compaction;
+        chown 10001:10001 /var/lib/otelcol/storage/queue /var/lib/otelcol/storage/queue/signoz /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/signoz-compaction /var/lib/otelcol/storage/queue/langfuse-compaction;
+        chmod 0750 /var/lib/otelcol/storage/queue /var/lib/otelcol/storage/queue/signoz /var/lib/otelcol/storage/queue/langfuse /var/lib/otelcol/storage/queue/signoz-compaction /var/lib/otelcol/storage/queue/langfuse-compaction
+    volumes:
+      - type: volume
+        source: collector-data
+        target: /var/lib/otelcol/storage
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 128MiB
+
+  # SigNoz 查询与 UI 面（统一二进制）。SQLite 状态（用户/告警配置）持久化到
+  # signoz-data；环境变量对齐官方自托管定义，DSN 指向同 profile 的 clickhouse。
+  signoz:
+    image: ${SIGNOZ_IMAGE}
+    labels:
+      longtermism.observability.profile: signoz
+    environment:
+      SIGNOZ_TELEMETRYSTORE_PROVIDER: clickhouse
+      SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN: tcp://clickhouse:9000
+      SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_CLUSTER: cluster
+      SIGNOZ_SQLSTORE_SQLITE_PATH: /var/lib/signoz/signoz.db
+      SIGNOZ_ALERTMANAGER_PROVIDER: signoz
+      SIGNOZ_EMAILING_ENABLED: "false"
+      SIGNOZ_PROMETHEUS_ACTIVE__QUERY__TRACKER_ENABLED: "false"
+    volumes:
+      - type: volume
+        source: signoz-data
+        target: /var/lib/signoz
+    ports:
+      - host_ip: 127.0.0.1
+        target: 3301
+        published: "3301"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q localhost:8080/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 1536MiB
+
+  # SigNoz 摄取面：接收本 profile collector 的 infra 三信号并写入 ClickHouse。
+  # 官方镜像基于无 shell 的最小基础镜像，禁止配置 CMD-SHELL 健康探测
+  # （官方文档明确警告）；其健康由 obs-signoz-e2e 的查询闭环证明。
+  signoz-otel-collector:
+    image: ${SIGNOZ_OTELCOL_IMAGE}
+    labels:
+      longtermism.observability.profile: signoz
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512MiB
+
+  # SigNoz 数据面（官方默认命名，见文件头注释）。
+  clickhouse:
+    image: ${SIGNOZ_CLICKHOUSE_IMAGE}
+    labels:
+      longtermism.observability.profile: signoz
+    volumes:
+      - type: volume
+        source: signoz-clickhouse-data
+        target: /var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q 0.0.0.0:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 2048MiB
