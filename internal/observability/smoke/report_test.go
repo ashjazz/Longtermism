@@ -41,7 +41,7 @@ func TestBuildSmokeReportAggregatesChecksAndOwnedCleanupEvidence(t *testing.T) {
 	if !reflect.DeepEqual(got["checks"], wantChecks) {
 		t.Fatal("SmokeReport checks did not preserve the stable backend evidence")
 	}
-	if got["schema_version"] != "2" || got["status"] != "failed" || got["run_id"] != "run-t019-001" || got["marker"] != "marker-t019-001" || got["profile"] != "local" || got["scenario"] != "privacy" || got["started_at"] != "2026-07-13T01:02:03Z" || got["finished_at"] != "2026-07-13T01:02:53Z" {
+	if got["schema_version"] != "3" || got["status"] != "failed" || got["run_id"] != "run-t019-001" || got["marker"] != "marker-t019-001" || got["profile"] != "local" || got["scenario"] != "privacy" || got["started_at"] != "2026-07-13T01:02:03Z" || got["finished_at"] != "2026-07-13T01:02:53Z" {
 		t.Fatal("SmokeReport did not aggregate run identity and overall status")
 	}
 	wantCleanup := map[string]any{
@@ -53,7 +53,7 @@ func TestBuildSmokeReportAggregatesChecksAndOwnedCleanupEvidence(t *testing.T) {
 	if !reflect.DeepEqual(got["cleanup"], wantCleanup) {
 		t.Fatal("SmokeReport did not retain smoke-owned credential and data cleanup evidence")
 	}
-	if !reflect.DeepEqual(got["versions"], map[string]any{"collector": "0.127.0", "schema": "2"}) {
+	if !reflect.DeepEqual(got["versions"], map[string]any{"collector": "0.127.0", "schema": "3"}) {
 		t.Fatal("SmokeReport did not retain the low-sensitivity version matrix")
 	}
 	assertSmokeReportDoesNotContainSensitiveValues(t, string(encoded))
@@ -237,6 +237,9 @@ func TestBuildSmokeReportRejectsSchemaAndCleanupContradictions(t *testing.T) {
 	}{
 		{name: "short run ID", mutate: func(input *SmokeReportInput) { input.RunID = "short" }},
 		{name: "short marker", mutate: func(input *SmokeReportInput) { input.Marker = "short" }},
+		{name: "run ID contains raw text", mutate: func(input *SmokeReportInput) { input.RunID = "run id with raw text" }},
+		{name: "marker contains a sensitive identity word", mutate: func(input *SmokeReportInput) { input.Marker = "marker-secret-t163" }},
+		{name: "version matrix contradicts root schema version", mutate: func(input *SmokeReportInput) { input.Versions["schema"] = "2" }},
 		{name: "non-finite evidence", mutate: func(input *SmokeReportInput) { input.Checks[1].Evidence["matched_spans"] = math.NaN() }},
 		{name: "completed cleanup with failed credentials", mutate: func(input *SmokeReportInput) { input.Cleanup.TemporaryCredentials = "failed" }},
 		{name: "completed cleanup with residual resource", mutate: func(input *SmokeReportInput) { input.Cleanup.ResidualResources = []string{"run-directory"} }},
@@ -266,7 +269,7 @@ func validSmokeReportInput() SmokeReportInput {
 		StartedAt:  startedAt,
 		Deadline:   startedAt.Add(time.Minute),
 		FinishedAt: startedAt.Add(50 * time.Second),
-		Versions:   map[string]string{"collector": "0.127.0", "schema": "2"},
+		Versions:   map[string]string{"collector": "0.127.0", "schema": "3"},
 		Checks: []BackendCheckInput{
 			{Backend: "api", Status: "passed", Duration: 12 * time.Millisecond, FailureStage: "none", Evidence: map[string]any{"marker_seen": true}},
 			{Backend: "tempo", Status: "failed", Duration: 40 * time.Millisecond, FailureStage: "query", ErrorClass: "backend_timeout", Evidence: map[string]any{"matched_spans": 0}},

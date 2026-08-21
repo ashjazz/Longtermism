@@ -173,7 +173,7 @@ func validatePrivacyLocalCollector(payload []byte, request PrivacyLocalSurfaceSc
 
 func validatePrivacyLocalReport(payload []byte, request PrivacyLocalSurfaceScanRequest) error {
 	var wire privacyLocalReportWire
-	if strictPrivacyLocalJSON(payload, &wire) != nil || wire.SchemaVersion != "2" || wire.Scenario != "chat" || wire.Status != "passed" ||
+	if strictPrivacyLocalJSON(payload, &wire) != nil || wire.SchemaVersion != "3" || wire.Scenario != "chat" || wire.Status != "passed" ||
 		wire.RunID != request.RunID || wire.Marker != request.Marker || wire.RequestID != request.RequestID || wire.AITraceID != request.AITraceID {
 		return errPrivacyLocalSurface
 	}

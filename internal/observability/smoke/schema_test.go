@@ -192,6 +192,240 @@ func TestSmokeReportSchemaValidatorRejectsInvalidDocumentsWithoutEchoingPayload(
 	}
 }
 
+func TestSmokeReportSchemaValidatorRejectsFinalClosedVocabularyFixtures(t *testing.T) {
+	validator, err := NewSmokeReportSchemaValidator(loadSmokeReportSchema(t))
+	if err != nil {
+		t.Fatal("NewSmokeReportSchemaValidator() returned an unexpected error")
+	}
+
+	// T163 将 schema 校准为两个真实报告生产者（核心 SmokeReport 与 local
+	// platform_contract）的并集。未知错误、evidence/version 键和 cleanup 矛盾
+	// 不能借助 JSON 的开放 map 把 payload、身份或伪造证据塞进机器报告。
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "unknown error class", mutate: func(document map[string]any) {
+			document["checks"].([]map[string]any)[1]["error_class"] = "provider_body_contains_secret"
+		}},
+		{name: "error class on passed check", mutate: func(document map[string]any) {
+			document["checks"].([]map[string]any)[0]["error_class"] = "query_failed"
+		}},
+		{name: "failure uses a skipped scope class", mutate: func(document map[string]any) {
+			document["checks"].([]map[string]any)[1]["error_class"] = "not_verified_local_profile"
+		}},
+		{name: "skipped check with failure stage", mutate: func(document map[string]any) {
+			check := document["checks"].([]map[string]any)[0]
+			check["status"] = "skipped"
+			check["failure_stage"] = "query"
+		}},
+		{name: "skipped check uses a failure class", mutate: func(document map[string]any) {
+			check := document["checks"].([]map[string]any)[0]
+			check["status"] = "skipped"
+			check["error_class"] = "query_failed"
+		}},
+		{name: "unknown numeric evidence key", mutate: func(document map[string]any) {
+			document["checks"].([]map[string]any)[0]["evidence"].(map[string]any)["user_id"] = 42
+		}},
+		{name: "evidence key belongs to another backend", mutate: func(document map[string]any) {
+			document["checks"].([]map[string]any)[0]["evidence"] = map[string]any{"matched_spans": 1}
+		}},
+		{name: "nested evidence payload", mutate: func(document map[string]any) {
+			document["checks"].([]map[string]any)[0]["evidence"].(map[string]any)["debug"] = map[string]any{"body": "synthetic-private-payload-t163"}
+		}},
+		{name: "unknown version key", mutate: func(document map[string]any) {
+			document["versions"] = map[string]any{"provider_endpoint": "1"}
+		}},
+		{name: "invalid version value", mutate: func(document map[string]any) {
+			document["versions"] = map[string]any{"schema": "contains whitespace"}
+		}},
+		{name: "version matrix contradicts root schema version", mutate: func(document map[string]any) {
+			document["versions"] = map[string]any{"schema": "2"}
+		}},
+		{name: "unsupported schema version", mutate: func(document map[string]any) {
+			document["schema_version"] = "2"
+		}},
+		{name: "unknown scenario", mutate: func(document map[string]any) {
+			document["scenario"] = "arbitrary_payload_probe"
+		}},
+		{name: "run identity contains raw text", mutate: func(document map[string]any) {
+			document["run_id"] = "run id with raw report text"
+		}},
+		{name: "marker contains a sensitive identity word", mutate: func(document map[string]any) {
+			document["marker"] = "marker-secret-t163"
+		}},
+		{name: "unpaired chat identity", mutate: func(document map[string]any) {
+			document["request_id"] = "request-t163-001"
+		}},
+		{name: "unknown residual resource", mutate: func(document map[string]any) {
+			document["cleanup"].(map[string]any)["residual_resources"] = []string{"/tmp/raw-report"}
+		}},
+		{name: "not required cleanup claims deletion", mutate: func(document map[string]any) {
+			cleanup := document["cleanup"].(map[string]any)
+			cleanup["status"] = "not_required"
+		}},
+		{name: "passed report contains a failed check", mutate: func(document map[string]any) {
+			document["status"] = "passed"
+		}},
+		{name: "failed report has no failed fact", mutate: func(document map[string]any) {
+			check := document["checks"].([]map[string]any)[1]
+			check["status"] = "passed"
+			check["failure_stage"] = "none"
+			delete(check, "error_class")
+		}},
+		{name: "passed privacy report contains failed evidence", mutate: func(document map[string]any) {
+			document["scenario"] = "privacy"
+			document["status"] = "passed"
+			for _, check := range document["checks"].([]map[string]any) {
+				check["status"] = "passed"
+				check["failure_stage"] = "none"
+				delete(check, "error_class")
+			}
+			privacyEvidence := validPrivacyEvidenceDocument()
+			privacyEvidence[0]["status"] = "failed"
+			privacyEvidence[0]["counts"].(map[string]any)["credential"] = 1
+			document["privacy_evidence"] = privacyEvidence
+		}},
+		{name: "passed report contains failed cleanup", mutate: func(document map[string]any) {
+			document["status"] = "passed"
+			for _, check := range document["checks"].([]map[string]any) {
+				check["status"] = "passed"
+				check["failure_stage"] = "none"
+				delete(check, "error_class")
+			}
+			cleanup := document["cleanup"].(map[string]any)
+			cleanup["status"] = "failed"
+			cleanup["temporary_data"] = "failed"
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			document := validSmokeReportDocument("infra")
+			tt.mutate(document)
+			err := validator.ValidateJSON(marshalSmokeReportDocument(t, document))
+			if err == nil {
+				t.Fatal("ValidateJSON() accepted a report outside the final closed vocabulary")
+			}
+			assertSchemaValidationErrorDoesNotEchoSensitiveValues(t, err.Error())
+		})
+	}
+}
+
+func TestSmokeReportSchemaValidatorAcceptsNilResidualResourcesFromFinalProducer(t *testing.T) {
+	validator, err := NewSmokeReportSchemaValidator(loadSmokeReportSchema(t))
+	if err != nil {
+		t.Fatal("NewSmokeReportSchemaValidator() returned an unexpected error")
+	}
+
+	// 多个 resilience runner 在没有残留资源时传 nil；encoding/json 会把该合法
+	// v3 生产者状态编码为 null。schema 必须兼容已经生成的 wire shape，而不能
+	// 要求 runner 为了通过文档契约伪造一个非 nil slice。
+	document := validSmokeReportDocument("persistent_queue")
+	document["cleanup"].(map[string]any)["residual_resources"] = nil
+	if err := validator.ValidateJSON(marshalSmokeReportDocument(t, document)); err != nil {
+		t.Fatal("ValidateJSON() rejected final producer residual_resources=null")
+	}
+}
+
+func TestSmokeReportSchemaValidatorAcceptsPrivacyEvidenceAsPassedAggregateFact(t *testing.T) {
+	validator, err := NewSmokeReportSchemaValidator(loadSmokeReportSchema(t))
+	if err != nil {
+		t.Fatal("NewSmokeReportSchemaValidator() returned an unexpected error")
+	}
+
+	// privacy proof set 与 checks 同为核心 producer 的聚合事实。checks 全 skipped
+	// 但八项 privacy evidence 全 passed 时，producer 会如实输出 passed；schema
+	// 不能错误要求至少一个 passed check。
+	input := validSmokeReportInput()
+	for index := range input.Checks {
+		input.Checks[index].Status = "skipped"
+		input.Checks[index].FailureStage = "none"
+		input.Checks[index].ErrorClass = ""
+	}
+	report, err := BuildSmokeReport(input)
+	if err != nil {
+		t.Fatal("BuildSmokeReport() rejected a valid privacy aggregate fixture")
+	}
+	if report.Status() != "passed" {
+		t.Fatalf("BuildSmokeReport() status = %q, want passed", report.Status())
+	}
+	document, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal("failed to encode the final producer fixture")
+	}
+	if err := validator.ValidateJSON(document); err != nil {
+		t.Fatal("ValidateJSON() rejected passed privacy evidence as the positive aggregate fact")
+	}
+}
+
+func TestSmokeReportSchemaValidatorAcceptsFinalBackendAndErrorClassVocabulary(t *testing.T) {
+	validator, err := NewSmokeReportSchemaValidator(loadSmokeReportSchema(t))
+	if err != nil {
+		t.Fatal("NewSmokeReportSchemaValidator() returned an unexpected error")
+	}
+
+	backends := []string{
+		"api", "collector", "tempo", "loki", "prometheus", "grafana",
+		"langfuse_trace", "langfuse_score", "signoz", "signoz_traces",
+		"signoz_logs", "signoz_metrics", "privacy", "platform_payload",
+	}
+	document := validSmokeReportDocument("platform_contract")
+	document["status"] = "passed"
+	checks := make([]map[string]any, 0, len(backends))
+	for _, backend := range backends {
+		checks = append(checks, map[string]any{
+			"backend": backend, "status": "passed", "duration_ms": 0, "failure_stage": "none",
+		})
+	}
+	document["checks"] = checks
+	if err := validator.ValidateJSON(marshalSmokeReportDocument(t, document)); err != nil {
+		t.Fatal("ValidateJSON() rejected a backend from the final producer vocabulary")
+	}
+
+	failureClasses := []string{
+		"authentication_failed", "backend_timeout", "temporary_credential_revoke_failed",
+		"backend_unavailable", "export_failed", "identity_mismatch", "invalid_query",
+		"malformed_response", "marker_missing", "query_failed", "metric_delta_missing",
+		"unexpected_evidence", "storage_unavailable", "queue_full", "alert_not_firing",
+		"alert_not_resolved", "invalid_configuration", "retention_violation",
+		"score_projection_missing", "privacy_canary_hits", "payload_not_sent",
+	}
+	for _, errorClass := range failureClasses {
+		t.Run(errorClass, func(t *testing.T) {
+			fixture := validSmokeReportDocument("full")
+			fixture["checks"] = []map[string]any{{
+				"backend": "api", "status": "failed", "duration_ms": 0,
+				"failure_stage": "api", "error_class": errorClass,
+			}}
+			if err := validator.ValidateJSON(marshalSmokeReportDocument(t, fixture)); err != nil {
+				t.Fatal("ValidateJSON() rejected a final failure error class")
+			}
+		})
+	}
+
+	skipFixtures := []struct {
+		backend    string
+		errorClass string
+	}{
+		{backend: "collector", errorClass: "not_verified_local_profile"},
+		{backend: "platform_payload", errorClass: "platform_smoke_disabled"},
+	}
+	for _, fixture := range skipFixtures {
+		t.Run(fixture.errorClass, func(t *testing.T) {
+			document := validSmokeReportDocument("platform_contract")
+			document["status"] = "skipped"
+			document["checks"] = []map[string]any{{
+				"backend": fixture.backend, "status": "skipped", "duration_ms": 0,
+				"failure_stage": "none", "error_class": fixture.errorClass,
+			}}
+			if err := validator.ValidateJSON(marshalSmokeReportDocument(t, document)); err != nil {
+				t.Fatal("ValidateJSON() rejected a final skipped-scope error class")
+			}
+		})
+	}
+}
+
 func TestSmokeReportSchemaValidatorNeverResolvesRemoteReferences(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -300,7 +534,7 @@ func TestSmokeReportSchemaValidatorRejectsOversizedDocuments(t *testing.T) {
 
 func validSmokeReportDocument(scenario string) map[string]any {
 	document := map[string]any{
-		"schema_version": "2",
+		"schema_version": "3",
 		"run_id":         "run-t020-" + scenario,
 		"marker":         "marker-t020-" + scenario,
 		"profile":        "local",
@@ -369,6 +603,7 @@ func assertSchemaValidationErrorDoesNotEchoSensitiveValues(t *testing.T, message
 		"synthetic-private-payload-t020",
 		"synthetic-t020-authorization",
 		"smoke-owned-t020-credential",
+		"synthetic-private-payload-t163",
 	} {
 		if strings.Contains(message, forbidden) {
 			t.Fatal("ValidateJSON() error echoed a forbidden payload value")

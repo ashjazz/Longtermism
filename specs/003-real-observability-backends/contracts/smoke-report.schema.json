@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://longtermism.local/schemas/observability-smoke-report.json",
+  "$comment": "Schema version 3 explicitly upgrades v2: both Go producers now emit v3; vocabulary and payload-shaped extension points are closed, aggregate status is bound to failure facts, and nil residual resources remain a legal empty producer state.",
   "title": "Observability Smoke Report",
   "type": "object",
   "additionalProperties": false,
@@ -17,9 +18,9 @@
     "cleanup"
   ],
   "properties": {
-    "schema_version": { "type": "string", "const": "2" },
-    "run_id": { "type": "string", "minLength": 8, "maxLength": 128 },
-    "marker": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "schema_version": { "type": "string", "const": "3" },
+    "run_id": { "$ref": "#/$defs/smokeIdentity" },
+    "marker": { "$ref": "#/$defs/smokeIdentity" },
     "profile": { "type": "string", "enum": ["grafana", "signoz", "local"] },
     "scenario": {
       "type": "string",
@@ -41,12 +42,9 @@
     "started_at": { "type": "string", "format": "date-time" },
     "finished_at": { "type": "string", "format": "date-time" },
     "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
-    "request_id": { "type": "string" },
-    "ai_trace_id": { "type": "string" },
-    "versions": {
-      "type": "object",
-      "additionalProperties": { "type": "string" }
-    },
+    "request_id": { "$ref": "#/$defs/smokeIdentity" },
+    "ai_trace_id": { "$ref": "#/$defs/smokeIdentity" },
+    "versions": { "$ref": "#/$defs/versions" },
     "checks": {
       "type": "array",
       "minItems": 1,
@@ -58,50 +56,292 @@
       "minItems": 8,
       "maxItems": 8,
       "prefixItems": [
-        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "api" }, "evidence_method": { "const": "bounded_memory_scan" } } }] },
-        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "application_log" }, "evidence_method": { "const": "projection_and_exact_query" } } }] },
-        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "collector_queue" }, "evidence_method": { "const": "configuration_and_telemetry" }, "runtime_config_digest_verified": { "const": true }, "prequeue_artifact_hash_verified": { "const": true }, "component_identity_verified": { "const": true }, "export_admission_correlated": { "const": true } }, "required": ["runtime_config_digest_verified", "prequeue_artifact_hash_verified", "component_identity_verified", "export_admission_correlated"] }] },
-        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "tempo" }, "evidence_method": { "const": "bounded_trace_document" } } }] },
-        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "loki" }, "evidence_method": { "const": "exact_structured_query" } } }] },
-        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "langfuse_trace" }, "evidence_method": { "const": "bounded_platform_document" } } }] },
-        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "langfuse_score" }, "evidence_method": { "const": "bounded_platform_document" } } }] },
-        { "allOf": [{ "$ref": "#/$defs/privacyEvidence" }, { "properties": { "surface": { "const": "report" }, "evidence_method": { "const": "contained_artifact_scan" } } }] }
+        {
+          "allOf": [
+            { "$ref": "#/$defs/privacyEvidence" },
+            {
+              "properties": {
+                "surface": { "const": "api" },
+                "evidence_method": { "const": "bounded_memory_scan" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/privacyEvidence" },
+            {
+              "properties": {
+                "surface": { "const": "application_log" },
+                "evidence_method": { "const": "projection_and_exact_query" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/privacyEvidence" },
+            {
+              "properties": {
+                "surface": { "const": "collector_queue" },
+                "evidence_method": { "const": "configuration_and_telemetry" },
+                "runtime_config_digest_verified": { "const": true },
+                "prequeue_artifact_hash_verified": { "const": true },
+                "component_identity_verified": { "const": true },
+                "export_admission_correlated": { "const": true }
+              },
+              "required": [
+                "runtime_config_digest_verified",
+                "prequeue_artifact_hash_verified",
+                "component_identity_verified",
+                "export_admission_correlated"
+              ]
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/privacyEvidence" },
+            {
+              "properties": {
+                "surface": { "const": "tempo" },
+                "evidence_method": { "const": "bounded_trace_document" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/privacyEvidence" },
+            {
+              "properties": {
+                "surface": { "const": "loki" },
+                "evidence_method": { "const": "exact_structured_query" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/privacyEvidence" },
+            {
+              "properties": {
+                "surface": { "const": "langfuse_trace" },
+                "evidence_method": { "const": "bounded_platform_document" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/privacyEvidence" },
+            {
+              "properties": {
+                "surface": { "const": "langfuse_score" },
+                "evidence_method": { "const": "bounded_platform_document" }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/privacyEvidence" },
+            {
+              "properties": {
+                "surface": { "const": "report" },
+                "evidence_method": { "const": "contained_artifact_scan" }
+              }
+            }
+          ]
+        }
       ],
       "items": false
     },
     "cleanup": { "$ref": "#/$defs/cleanup" }
   },
+  "dependentRequired": {
+    "request_id": ["ai_trace_id"],
+    "ai_trace_id": ["request_id"]
+  },
   "allOf": [
     {
-      "if": { "properties": { "scenario": { "const": "privacy" } }, "required": ["scenario"] },
+      "if": {
+        "properties": { "scenario": { "const": "privacy" } },
+        "required": ["scenario"]
+      },
       "then": { "required": ["privacy_evidence"] },
       "else": { "not": { "required": ["privacy_evidence"] } }
     },
     {
-      "if": { "properties": { "scenario": { "const": "privacy" }, "status": { "const": "passed" } }, "required": ["scenario", "status"] },
+      "if": {
+        "properties": { "status": { "const": "passed" } },
+        "required": ["status"]
+      },
       "then": {
-        "properties": {
-          "privacy_evidence": {
-            "items": {
-              "properties": {
-                "status": { "const": "passed" },
-                "counts": {
-                  "properties": {
-                    "synthetic_canary": { "maximum": 0 },
-                    "credential": { "maximum": 0 },
-                    "authorization": { "maximum": 0 },
-                    "token": { "maximum": 0 },
-                    "recognized_pii": { "maximum": 0 }
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "checks": {
+                    "contains": {
+                      "properties": { "status": { "const": "passed" } },
+                      "required": ["status"]
+                    }
                   }
                 }
+              },
+              {
+                "required": ["privacy_evidence"],
+                "properties": {
+                  "privacy_evidence": {
+                    "contains": {
+                      "properties": { "status": { "const": "passed" } },
+                      "required": ["status"]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "checks": {
+            "not": {
+              "contains": {
+                "properties": { "status": { "const": "failed" } },
+                "required": ["status"]
+              }
+            }
+          },
+          "cleanup": {
+            "properties": { "status": { "not": { "const": "failed" } } }
+          },
+          "privacy_evidence": {
+            "not": {
+              "contains": {
+                "properties": { "status": { "const": "failed" } },
+                "required": ["status"]
               }
             }
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "skipped" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "checks": {
+            "allOf": [
+              {
+                "contains": {
+                  "properties": { "status": { "const": "skipped" } },
+                  "required": ["status"]
+                }
+              },
+              {
+                "not": {
+                  "contains": {
+                    "properties": { "status": { "const": "failed" } },
+                    "required": ["status"]
+                  }
+                }
+              }
+            ]
+          },
+          "cleanup": {
+            "properties": { "status": { "not": { "const": "failed" } } }
+          },
+          "privacy_evidence": {
+            "not": {
+              "contains": {
+                "properties": { "status": { "const": "failed" } },
+                "required": ["status"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "failed" } },
+        "required": ["status"]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": ["checks"],
+            "properties": {
+              "checks": {
+                "contains": {
+                  "properties": { "status": { "const": "failed" } },
+                  "required": ["status"]
+                }
+              }
+            }
+          },
+          {
+            "required": ["cleanup"],
+            "properties": {
+              "cleanup": {
+                "properties": { "status": { "const": "failed" } },
+                "required": ["status"]
+              }
+            }
+          },
+          {
+            "required": ["privacy_evidence"],
+            "properties": {
+              "privacy_evidence": {
+                "contains": {
+                  "properties": { "status": { "const": "failed" } },
+                  "required": ["status"]
+                }
+              }
+            }
+          }
+        ]
+      }
     }
   ],
   "$defs": {
+    "smokeIdentity": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$",
+      "allOf": [
+        { "not": { "pattern": "[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]" } },
+        { "not": { "pattern": "[Bb][Ee][Aa][Rr][Ee][Rr]" } },
+        { "not": { "pattern": "[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]" } },
+        { "not": { "pattern": "[Pp][Aa][Yy][Ll][Oo][Aa][Dd]" } },
+        { "not": { "pattern": "[Tt][Oo][Kk][Ee][Nn]" } },
+        { "not": { "pattern": "[Ss][Ee][Cc][Rr][Ee][Tt]" } }
+      ]
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "api": { "$ref": "#/$defs/versionValue" },
+        "collector": { "$ref": "#/$defs/versionValue" },
+        "grafana": { "$ref": "#/$defs/versionValue" },
+        "langfuse": { "$ref": "#/$defs/versionValue" },
+        "loki": { "$ref": "#/$defs/versionValue" },
+        "prometheus": { "$ref": "#/$defs/versionValue" },
+        "schema": { "const": "3" },
+        "signoz": { "$ref": "#/$defs/versionValue" },
+        "smoke_runner": { "$ref": "#/$defs/versionValue" },
+        "tempo": { "$ref": "#/$defs/versionValue" }
+      }
+    },
+    "versionValue": {
+      "type": "string",
+      "pattern": "^[0-9][0-9A-Za-z.+-]{0,63}$"
+    },
     "check": {
       "type": "object",
       "additionalProperties": false,
@@ -109,7 +349,22 @@
       "properties": {
         "backend": {
           "type": "string",
-          "enum": ["api", "collector", "tempo", "loki", "prometheus", "grafana", "langfuse_trace", "langfuse_score", "signoz", "signoz_traces", "signoz_logs", "signoz_metrics", "privacy", "platform_payload"]
+          "enum": [
+            "api",
+            "collector",
+            "tempo",
+            "loki",
+            "prometheus",
+            "grafana",
+            "langfuse_trace",
+            "langfuse_score",
+            "signoz",
+            "signoz_traces",
+            "signoz_logs",
+            "signoz_metrics",
+            "privacy",
+            "platform_payload"
+          ]
         },
         "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
         "duration_ms": { "type": "integer", "minimum": 0 },
@@ -117,31 +372,318 @@
           "type": "string",
           "enum": ["none", "preflight", "api", "export", "query", "cleanup"]
         },
-        "error_class": { "type": "string" },
-        "evidence": {
-          "type": "object",
-          "additionalProperties": {
-            "type": ["number", "integer", "boolean", "null"]
-          }
-        }
+        "error_class": { "$ref": "#/$defs/errorClass" },
+        "evidence": { "type": "object" }
       },
-      "allOf": [
+      "oneOf": [
         {
-          "if": { "properties": { "status": { "const": "passed" } }, "required": ["status"] },
-          "then": { "properties": { "failure_stage": { "const": "none" } } }
+          "properties": {
+            "backend": { "const": "api" },
+            "evidence": { "$ref": "#/$defs/apiEvidence" }
+          }
         },
         {
-          "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
-          "then": { "properties": { "failure_stage": { "not": { "const": "none" } } } }
+          "properties": {
+            "backend": { "const": "collector" },
+            "evidence": { "$ref": "#/$defs/collectorEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "tempo" },
+            "evidence": { "$ref": "#/$defs/tempoEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "loki" },
+            "evidence": { "$ref": "#/$defs/lokiEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "prometheus" },
+            "evidence": { "$ref": "#/$defs/prometheusEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "grafana" },
+            "evidence": { "$ref": "#/$defs/grafanaEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "langfuse_trace" },
+            "evidence": { "$ref": "#/$defs/langfuseTraceEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "langfuse_score" },
+            "evidence": { "$ref": "#/$defs/langfuseScoreEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "signoz" },
+            "evidence": { "$ref": "#/$defs/signozEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "signoz_traces" },
+            "evidence": { "$ref": "#/$defs/signozTracesEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "signoz_logs" },
+            "evidence": { "$ref": "#/$defs/signozLogsEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "signoz_metrics" },
+            "evidence": { "$ref": "#/$defs/signozMetricsEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "privacy" },
+            "evidence": { "$ref": "#/$defs/privacyCheckEvidence" }
+          }
+        },
+        {
+          "properties": {
+            "backend": { "const": "platform_payload" },
+            "evidence": { "$ref": "#/$defs/platformPayloadEvidence" }
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "passed" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": { "failure_stage": { "const": "none" } },
+            "not": { "required": ["error_class"] }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "skipped" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "failure_stage": { "const": "none" },
+              "error_class": {
+                "enum": ["not_verified_local_profile", "platform_smoke_disabled"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "failed" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "failure_stage": { "not": { "const": "none" } },
+              "error_class": { "$ref": "#/$defs/failureErrorClass" }
+            }
+          }
         }
       ]
+    },
+    "errorClass": {
+      "type": "string",
+      "enum": [
+        "authentication_failed",
+        "backend_timeout",
+        "temporary_credential_revoke_failed",
+        "backend_unavailable",
+        "export_failed",
+        "identity_mismatch",
+        "invalid_query",
+        "malformed_response",
+        "marker_missing",
+        "query_failed",
+        "metric_delta_missing",
+        "unexpected_evidence",
+        "storage_unavailable",
+        "queue_full",
+        "alert_not_firing",
+        "alert_not_resolved",
+        "invalid_configuration",
+        "retention_violation",
+        "score_projection_missing",
+        "not_verified_local_profile",
+        "platform_smoke_disabled",
+        "privacy_canary_hits",
+        "payload_not_sent"
+      ]
+    },
+    "failureErrorClass": {
+      "type": "string",
+      "enum": [
+        "authentication_failed",
+        "backend_timeout",
+        "temporary_credential_revoke_failed",
+        "backend_unavailable",
+        "export_failed",
+        "identity_mismatch",
+        "invalid_query",
+        "malformed_response",
+        "marker_missing",
+        "query_failed",
+        "metric_delta_missing",
+        "unexpected_evidence",
+        "storage_unavailable",
+        "queue_full",
+        "alert_not_firing",
+        "alert_not_resolved",
+        "invalid_configuration",
+        "retention_violation",
+        "score_projection_missing",
+        "privacy_canary_hits",
+        "payload_not_sent"
+      ]
+    },
+    "evidenceScalar": {
+      "type": ["number", "boolean", "null"]
+    },
+    "apiEvidence": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["cleanup_attempted", "marker_seen", "response_status", "retention_days"]
+      },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "collectorEvidence": {
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "exporter_failed",
+          "exporter_sent",
+          "marker_received",
+          "queue_depth",
+          "tempo_sent_delta",
+          "tempo_failed_delta",
+          "tempo_enqueue_delta",
+          "tempo_queue_delta",
+          "loki_sent_delta",
+          "loki_failed_delta",
+          "loki_enqueue_delta",
+          "loki_queue_delta",
+          "langfuse_sent_delta",
+          "langfuse_failed_delta",
+          "langfuse_enqueue_delta",
+          "langfuse_queue_delta",
+          "duplicate_delivered",
+          "enqueue_failed_delta",
+          "dropped_delta",
+          "storage_writable",
+          "shutdown_timed_out"
+        ]
+      },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "tempoEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": ["matched_spans", "retention_days", "raw_payload_found"] },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "lokiEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": ["matched_logs", "retention_days", "raw_payload_found"] },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "prometheusEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": ["metric_delta", "target_up", "retention_days", "raw_payload_found"] },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "grafanaEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": ["datasource_healthy", "query_succeeded", "alerts_firing", "alerts_resolved"] },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "langfuseTraceEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": ["matched_traces", "retention_days", "raw_payload_found"] },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "langfuseScoreEvidence": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["matched_scores", "score_attempts", "dropped_projections", "local_evidence_intact", "shutdown_timed_out"]
+      },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "signozEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": ["matched_logs", "matched_spans"] },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "signozTracesEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": ["matched_spans"] },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "signozLogsEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": ["matched_logs"] },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "signozMetricsEvidence": {
+      "type": "object",
+      "propertyNames": { "enum": ["metric_delta"] },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "privacyCheckEvidence": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["forbidden_marker_hits", "scanned_surface_count", "finding_count"]
+      },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
+    },
+    "platformPayloadEvidence": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["infra_stage_count", "ai_span_count", "external_attempts"]
+      },
+      "additionalProperties": { "$ref": "#/$defs/evidenceScalar" }
     },
     "privacyEvidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["surface", "evidence_method", "attempted", "status", "scanner_policy_version", "counts"],
+      "required": [
+        "surface",
+        "evidence_method",
+        "attempted",
+        "status",
+        "scanner_policy_version",
+        "counts"
+      ],
       "properties": {
-        "surface": { "type": "string", "enum": ["api", "application_log", "collector_queue", "tempo", "loki", "langfuse_trace", "langfuse_score", "report"] },
+        "surface": {
+          "type": "string",
+          "enum": [
+            "api",
+            "application_log",
+            "collector_queue",
+            "tempo",
+            "loki",
+            "langfuse_trace",
+            "langfuse_score",
+            "report"
+          ]
+        },
         "evidence_method": { "$ref": "#/$defs/privacyEvidenceMethod" },
         "attempted": { "const": true },
         "status": { "type": "string", "enum": ["passed", "failed"] },
@@ -151,12 +693,39 @@
         "prequeue_artifact_hash_verified": { "type": "boolean" },
         "component_identity_verified": { "type": "boolean" },
         "export_admission_correlated": { "type": "boolean" }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "passed" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "counts": {
+                "properties": {
+                  "synthetic_canary": { "const": 0 },
+                  "credential": { "const": 0 },
+                  "authorization": { "const": 0 },
+                  "token": { "const": 0 },
+                  "recognized_pii": { "const": 0 }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "privacyCategoryCounts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["synthetic_canary", "credential", "authorization", "token", "recognized_pii"],
+      "required": [
+        "synthetic_canary",
+        "credential",
+        "authorization",
+        "token",
+        "recognized_pii"
+      ],
       "properties": {
         "synthetic_canary": { "type": "integer", "minimum": 0 },
         "credential": { "type": "integer", "minimum": 0 },
@@ -177,16 +746,40 @@
         "contained_artifact_scan"
       ]
     },
+    "residualResources": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "string",
+        "enum": [
+          "run-directory",
+          "temporary-debug-data",
+          "temporary-queue-data",
+          "paused-service",
+          "unwritable-storage",
+          "langfuse-api-unavailable",
+          "score-worker-queue-full",
+          "alert-condition-active"
+        ]
+      }
+    },
+    "noResidualResources": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "array", "maxItems": 0 }
+      ]
+    },
     "cleanup": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "residual_resources", "temporary_credentials", "temporary_data"],
+      "required": [
+        "status",
+        "residual_resources",
+        "temporary_credentials",
+        "temporary_data"
+      ],
       "properties": {
         "status": { "type": "string", "enum": ["not_required", "completed", "failed"] },
-        "residual_resources": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
+        "residual_resources": { "$ref": "#/$defs/residualResources" },
         "temporary_credentials": {
           "type": "string",
           "enum": ["not_created", "revoked", "deleted", "failed"]
@@ -195,7 +788,60 @@
           "type": "string",
           "enum": ["not_created", "deleted", "failed"]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "not_required" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "residual_resources": { "$ref": "#/$defs/noResidualResources" },
+              "temporary_credentials": { "const": "not_created" },
+              "temporary_data": { "const": "not_created" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "completed" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "residual_resources": { "$ref": "#/$defs/noResidualResources" },
+              "temporary_credentials": { "not": { "const": "failed" } },
+              "temporary_data": { "not": { "const": "failed" } }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "failed" } },
+            "required": ["status"]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "properties": {
+                  "residual_resources": { "type": "array", "minItems": 1 }
+                }
+              },
+              {
+                "properties": {
+                  "temporary_credentials": { "const": "failed" }
+                }
+              },
+              {
+                "properties": {
+                  "temporary_data": { "const": "failed" }
+                }
+              }
+            ]
+          }
+        }
+      ]
     }
   }
 }

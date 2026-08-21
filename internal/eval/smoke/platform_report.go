@@ -2,8 +2,9 @@ package smoke
 
 import (
 	"fmt"
-	"strings"
 	"time"
+
+	obssmoke "github.com/ashjazz/Longtermism/internal/observability/smoke"
 )
 
 // === US5：local platform_contract smoke report（T157，使 T153 GREEN）===
@@ -20,7 +21,9 @@ import (
 const LocalPlatformContractDeadline = 30 * time.Second
 
 const (
-	localPlatformContractSchemaVersion = "2"
+	// v3 与核心 SmokeReport 同步关闭 v2 的开放词表；local producer 不能继续
+	// 输出旧版本号，否则同一 wire version 会具有两套安全语义。
+	localPlatformContractSchemaVersion = "3"
 	localPlatformContractProfile       = "local"
 	localPlatformContractScenario      = "platform_contract"
 
@@ -106,6 +109,11 @@ type LocalPlatformContractReport struct {
 // skipped 是"声明范围外"的证据而非未完成的验证，若参与聚合，任何 local
 // 报告都将是 skipped，通过证据与范围声明就无法区分。
 func BuildLocalPlatformContractReport(input LocalPlatformContractReportInput) (LocalPlatformContractReport, error) {
+	// local producer 与核心 producer 共用 v3 identity 值边界。这里必须在序列化前
+	// fail-fast；依赖后续 schema 校验会允许一份自称 v3 的敏感/非法报告先被持久化。
+	if !obssmoke.IsSafeSmokeReportIdentity(input.RunID) || !obssmoke.IsSafeSmokeReportIdentity(input.Marker) {
+		return LocalPlatformContractReport{}, fmt.Errorf("invalid local platform contract report identity")
+	}
 	elapsed := input.FinishedAt.Sub(input.StartedAt)
 	if elapsed > LocalPlatformContractDeadline {
 		return LocalPlatformContractReport{}, fmt.Errorf(
@@ -124,8 +132,8 @@ func BuildLocalPlatformContractReport(input LocalPlatformContractReportInput) (L
 
 	return LocalPlatformContractReport{
 		SchemaVersion: localPlatformContractSchemaVersion,
-		RunID:         strings.TrimSpace(input.RunID),
-		Marker:        strings.TrimSpace(input.Marker),
+		RunID:         input.RunID,
+		Marker:        input.Marker,
 		Profile:       localPlatformContractProfile,
 		Scenario:      localPlatformContractScenario,
 		StartedAt:     input.StartedAt,

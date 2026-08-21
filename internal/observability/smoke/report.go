@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	smokeReportSchemaVersion = "2"
-	minimumSmokeIdentitySize = 8
-	maximumSmokeIdentitySize = 128
+	// v3 是一次显式 wire upgrade：v2 的开放 error/evidence/version 空间会让外部
+	// 文档绕过 producer 的闭集校验。两个报告生产者必须同步升级，避免同一版本号
+	// 同时表达宽松旧契约和收紧新契约。
+	smokeReportSchemaVersion = "3"
 )
 
 var (
@@ -329,7 +330,8 @@ func clonePrivacySmokeWireEvidence(input []privacySmokeReportEvidence) []privacy
 
 func validateVersions(versions map[string]string) error {
 	for key, value := range versions {
-		if !contains(allowedVersionKeys, key) || !smokeVersionPattern.MatchString(value) {
+		if !contains(allowedVersionKeys, key) || !smokeVersionPattern.MatchString(value) ||
+			key == "schema" && value != smokeReportSchemaVersion {
 			return errSensitiveSmokeReportData
 		}
 	}
@@ -395,9 +397,9 @@ func isSafeEvidenceValue(value any) bool {
 }
 
 func isOpaqueSmokeIdentity(value string) bool {
-	// run_id 与 marker 是 runner 生成的低敏 opaque identity；报告层只执行公开 schema
-	// 规定的长度边界，以免把 UUID 或其他合法 opaque 表达错误地拒绝。
-	return len(value) >= minimumSmokeIdentitySize && len(value) <= maximumSmokeIdentitySize
+	// run_id 与 marker 虽由 runner 生成，仍会持久化到报告。复用查询 marker 的
+	// 闭合字符/敏感词边界，避免调用方把原文、credential 或换行文本伪装成身份。
+	return IsSafeSmokeReportIdentity(value)
 }
 
 func aggregateSmokeStatus(checks []BackendCheck, cleanup SmokeCleanup, privacyEvidence []privacySmokeReportEvidence) string {

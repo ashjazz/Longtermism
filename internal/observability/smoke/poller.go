@@ -181,6 +181,13 @@ func isSafePollMarker(marker string) bool {
 	return true
 }
 
+// IsSafeSmokeReportIdentity 复用 smoke 查询 marker 的闭合字符集与敏感词边界。
+// 其他报告生产者必须调用同一判定，避免它们生成核心 schema 随后会拒绝的 v3 身份，
+// 或把 credential/raw payload 等文本伪装成可持久化的 run_id/marker。
+func IsSafeSmokeReportIdentity(value string) bool {
+	return isSafePollMarker(value)
+}
+
 func currentRunObservation(observations []MarkerObservation, target PollMarkerTarget) (MarkerObservation, bool) {
 	for _, observation := range observations {
 		if observation.Marker != target.Marker || observation.ObservedAt.Before(target.StartedAt) || observation.ObservedAt.After(target.Deadline) {

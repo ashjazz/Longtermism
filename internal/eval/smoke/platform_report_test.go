@@ -81,8 +81,8 @@ func TestPlatformSmokeReportBuildsSchemaValidLocalPlatformContractReport(t *test
 	if report.Scenario != "platform_contract" {
 		t.Fatalf("Scenario = %q, want %q", report.Scenario, "platform_contract")
 	}
-	if report.SchemaVersion != "2" {
-		t.Fatalf("SchemaVersion = %q, want %q", report.SchemaVersion, "2")
+	if report.SchemaVersion != "3" {
+		t.Fatalf("SchemaVersion = %q, want %q", report.SchemaVersion, "3")
 	}
 	if report.Status != "passed" {
 		t.Fatalf("Status = %q, want passed for a clean controlled run", report.Status)
@@ -243,6 +243,43 @@ func TestPlatformSmokeReportEnforcesLocalContractDeadline(t *testing.T) {
 	boundary.FinishedAt = boundary.StartedAt.Add(LocalPlatformContractDeadline)
 	if _, err := BuildLocalPlatformContractReport(boundary); err != nil {
 		t.Fatalf("BuildLocalPlatformContractReport() error = %v, want nil at exactly the deadline boundary", err)
+	}
+}
+
+func TestPlatformSmokeReportRejectsUnsafeV3IdentityWithoutEcho(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*LocalPlatformContractReportInput)
+		value  string
+	}{
+		{
+			name: "run ID contains raw text",
+			mutate: func(input *LocalPlatformContractReportInput) {
+				input.RunID = "run id with raw text"
+			},
+			value: "run id with raw text",
+		},
+		{
+			name: "marker contains a sensitive identity word",
+			mutate: func(input *LocalPlatformContractReportInput) {
+				input.Marker = "marker-secret-t163"
+			},
+			value: "marker-secret-t163",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := completeLocalPlatformContractInput()
+			tt.mutate(&input)
+			_, err := BuildLocalPlatformContractReport(input)
+			if err == nil {
+				t.Fatal("BuildLocalPlatformContractReport() error = nil, want unsafe v3 identity rejected")
+			}
+			if strings.Contains(err.Error(), tt.value) {
+				t.Fatal("BuildLocalPlatformContractReport() error echoed rejected identity")
+			}
+		})
 	}
 }
 

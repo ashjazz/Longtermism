@@ -97,6 +97,27 @@ func TestPrivacyArtifactStorePublishesTypedManifestLast(t *testing.T) {
 	assertT188TreeContainsNoForbiddenBytes(t, root)
 }
 
+func TestDecodePrivacyChatReportRejectsUnsupportedSmokeSchemaVersion(t *testing.T) {
+	input := t188ArtifactInput(t)
+	payload, err := json.Marshal(input.ChatReport)
+	if err != nil {
+		t.Fatal("failed to encode the valid chat fixture report")
+	}
+	var document map[string]any
+	if err := json.Unmarshal(payload, &document); err != nil {
+		t.Fatal("failed to decode the valid chat fixture report")
+	}
+	document["schema_version"] = "2"
+	payload, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal("failed to encode the unsupported-version fixture")
+	}
+
+	if _, err := decodePrivacyChatReport(payload); err == nil {
+		t.Fatal("decodePrivacyChatReport() accepted a report from an unsupported schema version")
+	}
+}
+
 // TestPrivacyArtifactStoreCloseIsIdempotentAndFailClosed protects the directory-fd
 // ownership boundary: once shutdown starts, no later call may accidentally operate on a
 // recycled descriptor or revive the store through a second Close.

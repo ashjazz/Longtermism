@@ -340,6 +340,11 @@ func decodePrivacyChatReport(payload []byte) (*SmokeReport, error) {
 	if err := strictPrivacyArtifactJSON(payload, &wire); err != nil {
 		return nil, errPrivacyArtifactStore
 	}
+	// v3 是闭集安全契约。旧版或未知 wire 不能经由当前 builder 被静默重标为 v3，
+	// 否则持久化制品会丢失原始版本事实并绕过显式升级边界。
+	if wire.SchemaVersion != smokeReportSchemaVersion {
+		return nil, errPrivacyArtifactStore
+	}
 	startedAt, err := time.Parse(time.RFC3339Nano, wire.StartedAt)
 	if err != nil {
 		return nil, errPrivacyArtifactStore
