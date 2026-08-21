@@ -1,0 +1,7 @@
+# Reviewed schema-v3 SmokeReport evidence for checklist acceptance.
+#
+# Each non-comment line must use:
+# <sha256>  specs/003-real-observability-backends/evidence/<report>.json
+#
+# T166 intentionally registers no live report. A future acceptance PR must add the reviewed,
+# low-sensitivity report and its exact digest here before a `report:` reference can close a check.
