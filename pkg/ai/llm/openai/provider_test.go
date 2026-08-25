@@ -196,7 +196,7 @@ func TestNewProviderNormalizesStableConfig(t *testing.T) {
 	}
 }
 
-func TestNewProviderUsesDefaultHTTPTimeout(t *testing.T) {
+func TestNewProviderUsesHardenedDefaultHTTPClient(t *testing.T) {
 	t.Parallel()
 
 	provider, err := NewProvider(Config{
@@ -212,6 +212,15 @@ func TestNewProviderUsesDefaultHTTPTimeout(t *testing.T) {
 	// 避免连接、TLS 握手或响应读取永久占用 goroutine 和连接池。
 	if provider.httpClient.Timeout != defaultRequestTimeout {
 		t.Fatalf("HTTP client timeout = %v, want %v", provider.httpClient.Timeout, defaultRequestTimeout)
+	}
+	// Authorization 属于当前 base URL 的信任边界，不能因为上游返回 3xx 就被默认
+	// client 带到新的请求目标。这里要求 adapter 独立使用时也 fail closed，而不是只
+	// 依赖应用装配层恰好注入了更严格的 client。
+	if provider.httpClient.CheckRedirect == nil {
+		t.Fatal("default HTTP client CheckRedirect = nil, want redirects rejected")
+	}
+	if err := provider.httpClient.CheckRedirect(&http.Request{}, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("default HTTP client CheckRedirect() error = %v, want http.ErrUseLastResponse", err)
 	}
 }
 
