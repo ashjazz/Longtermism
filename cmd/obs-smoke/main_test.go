@@ -893,6 +893,7 @@ func reportChecksForLiveTest(status, scenario string) []smoke.BackendCheckInput 
 
 func TestRunLiveScenarioCommandContract(t *testing.T) {
 	passedChat := newLiveScenarioTestReport(t, "chat", "passed")
+	failedChat := newLiveScenarioTestReport(t, "chat", "failed")
 	failedScore := newLiveScenarioTestReport(t, "score", "failed")
 	skippedScore := newLiveScenarioTestReport(t, "score", "skipped")
 	passedPrivacy := newLiveScenarioTestReport(t, "privacy", "passed")
@@ -943,6 +944,22 @@ func TestRunLiveScenarioCommandContract(t *testing.T) {
 			runnerResult: passedPrivacy, wantConfigCall: 1, wantNewCall: 1, wantRunnerCall: 1,
 			wantWriteCall: 1, wantExitCode: 0, wantStdoutJSON: true, wantStatus: "passed",
 			forbidden: []string{"marker-live-privacy", liveScenarioTestCredential, "synthetic_canary"},
+		},
+		{
+			name:     "chat trigger error still persists the failed diagnostic report",
+			scenario: "chat", args: []string{"--live", "-profile", "grafana"},
+			runnerResult: failedChat, runnerErr: errors.New("raw backend response Authorization: Bearer live-secret"),
+			wantConfigCall: 1, wantNewCall: 1, wantRunnerCall: 1, wantWriteCall: 1,
+			wantExitCode: 1, wantStdoutJSON: true, wantStatus: "failed",
+			forbidden: []string{"marker-live-chat", liveScenarioTestCredential, "live-secret", "Authorization", "raw backend response"},
+		},
+		{
+			name:     "runner error cannot be masked by a passed report",
+			scenario: "chat", args: []string{"--live", "-profile", "grafana"},
+			runnerResult: passedChat, runnerErr: errors.New("raw backend response Authorization: Bearer live-secret"),
+			wantConfigCall: 1, wantNewCall: 1, wantRunnerCall: 1, wantWriteCall: 1,
+			wantExitCode: 1, wantStdoutJSON: true, wantStatus: "passed",
+			forbidden: []string{"marker-live-chat", liveScenarioTestCredential, "live-secret", "Authorization", "raw backend response"},
 		},
 		{
 			name:     "runner operational error has no report and no sensitive stdout",
@@ -1009,6 +1026,7 @@ func TestRunLiveScenarioCommandContract(t *testing.T) {
 			stderr := &bytes.Buffer{}
 			runner := &liveScenarioTestRunner{report: tt.runnerResult, err: tt.runnerErr}
 			configCalls, newCalls, writeCalls := 0, 0, 0
+			var writtenReport *smoke.SmokeReport
 			reportWrittenBeforeSummary := true
 			dependencies := liveScenarioCommandDependencies{
 				ResolveConfig: func(_ context.Context, scenario string) (liveScenarioConfig, error) {
@@ -1024,11 +1042,12 @@ func TestRunLiveScenarioCommandContract(t *testing.T) {
 				},
 				WriteReport: func(directory string, report *smoke.SmokeReport) (string, error) {
 					writeCalls++
-					if tt.writerErr != nil {
-						return "", tt.writerErr
-					}
 					if report == nil {
 						return "", errors.New("missing report")
+					}
+					writtenReport = report
+					if tt.writerErr != nil {
+						return "", tt.writerErr
 					}
 					// 报告必须比 stdout 摘要更早安全持久化：写入时 stdout 必须仍然为空。
 					if stdout.Len() != 0 {
@@ -1049,6 +1068,9 @@ func TestRunLiveScenarioCommandContract(t *testing.T) {
 			if configCalls != tt.wantConfigCall || newCalls != tt.wantNewCall || runner.calls != tt.wantRunnerCall || writeCalls != tt.wantWriteCall {
 				t.Fatalf("composition calls = config:%d new:%d runner:%d write:%d, want config:%d new:%d runner:%d write:%d",
 					configCalls, newCalls, runner.calls, writeCalls, tt.wantConfigCall, tt.wantNewCall, tt.wantRunnerCall, tt.wantWriteCall)
+			}
+			if tt.wantWriteCall > 0 && writtenReport != tt.runnerResult {
+				t.Fatal("writer did not receive the report returned by the runner")
 			}
 			if !reportWrittenBeforeSummary {
 				t.Fatal("report was not persisted before the stdout summary")
@@ -1072,8 +1094,8 @@ func TestRunLiveScenarioCommandContract(t *testing.T) {
 				t.Fatalf("stdout summary = %v, want only scenario/status/trusted report path", output)
 			}
 			for _, forbidden := range tt.forbidden {
-				if strings.Contains(stdout.String(), forbidden) {
-					t.Fatalf("stdout leaked %q: %s", forbidden, stdout.String())
+				if strings.Contains(stdout.String(), forbidden) || strings.Contains(stderr.String(), forbidden) {
+					t.Fatalf("output leaked %q: stdout=%q stderr=%q", forbidden, stdout.String(), stderr.String())
 				}
 			}
 		})

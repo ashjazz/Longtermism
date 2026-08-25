@@ -825,19 +825,21 @@ func runLiveScenario(ctx context.Context, scenario string, args []string, stdout
 	if closer, ok := runner.(interface{ Close() error }); ok {
 		defer func() { _ = closer.Close() }()
 	}
-	report, err := runner.Run(ctx)
-	if err != nil || report == nil {
+	report, runErr := runner.Run(ctx)
+	if report == nil {
 		return 1
 	}
-	path, err := dependencies.WriteReport(infrastructureSmokeReportDirectory, report)
-	if err != nil || !isTrustedInfrastructureReportPath(infrastructureSmokeReportDirectory, path) {
+	// runner error 可能与一份完整的失败报告同时返回（例如真实模型触发失败）。
+	// 该报告是后续诊断与回归的证据，必须先安全落盘；原始错误仍不得进入 stdout。
+	path, writeErr := dependencies.WriteReport(infrastructureSmokeReportDirectory, report)
+	if writeErr != nil || !isTrustedInfrastructureReportPath(infrastructureSmokeReportDirectory, path) {
 		return 1
 	}
 	status := report.Status()
-	if err := json.NewEncoder(stdout).Encode(liveScenarioCommandOutput{Scenario: scenario, Status: status, ReportPath: path}); err != nil {
+	if encodeErr := json.NewEncoder(stdout).Encode(liveScenarioCommandOutput{Scenario: scenario, Status: status, ReportPath: path}); encodeErr != nil {
 		return 1
 	}
-	if status == "passed" {
+	if runErr == nil && status == "passed" {
 		return 0
 	}
 	return 1
