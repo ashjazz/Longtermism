@@ -59,6 +59,38 @@ Longtermism 是一个**观测与评估驱动的生产级 Go AI Agent Harness**�
 
 003 的完成标准不仅是“能上报到某个平台”，还包括：真实请求可在两个平面中关联、纯基础设施请求不会误入 AI 平面、投递故障不改写业务结果、恢复与安全边界可被重复验证。
 
+### 003 实施与验证状态
+
+截至 2026-08-25，003 整体为 `in-progress`。路线图使用以下证据词汇；它们描述的是不同层级，不能因为后一个任务开始就自动改写前一个层级：
+
+- `generated`：设计、代码、配置、测试或文档资产已经进入仓库，但尚未因此获得运行结论。
+- `planned`：验收目标和入口已明确，但尚未取得所需证据。
+- `in-progress`：实现或证据收集仍有未关闭任务、门禁或 blocker。
+- `verified`：只有与声明范围匹配的可复验证据才能支持该状态；验证范围必须同时写明。
+
+| 路线切片 | 状态 | 当前证据与下一步 |
+| --- | --- | --- |
+| 003 整体 | `in-progress` | T160-T168 已完成局部收口；任务状态源仍保留 T035，T169 仍需执行最终质量、安全和可选 live 门禁。 |
+| 应用/Collector/profile/smoke/dashboard/Make 资产 | `generated` | Grafana 主线与 SigNoz 备选资产已进入仓库，并有静态或 fake-backend 契约；这不是 live support 声明。 |
+| T160-T168 局部契约 | `verified` | OpenAPI、遥测、运行配置、schema、runbook、ADR、acceptance requirements、最终 Make targets 与项目状态文档已由对应针对性测试验证。 |
+| Grafana infra 历史运行 | `verified`（仅 schema v2 范围） | 2026-08-14 的本机 infra report 证明当次有界查询通过；ignored 历史报告不能关闭当前 schema v3 live acceptance。 |
+| Grafana release/resilience | `planned` | 门禁已 `generated`，但尚无当前 schema v3 passed report；privacy、alert、reset 等 blocker 仍在 acceptance checklist 中保留。 |
+| SigNoz live 兼容 | `planned` | 资产已 `generated`；端口/query 校准与端到端报告未完成，尚无当前 schema v3 passed report。 |
+
+`docs/observability/01-07` 的历史归属保持不变：它们来自 `specs/002-dual-plane-observability` 的 T072-T078，文件状态仍是 `drafted`，003 只复用这些学习资产，不改写为 003 产物。003 的 workbench、兼容矩阵和 profile runbook 从 08-10 单独承接真实后端路线。
+
+#### 当前验证入口
+
+| 层级 | 命令 | 使用规则 |
+| --- | --- | --- |
+| 默认离线 | `make verify` | 不启动 Docker；结果必须以当前执行为准，T169 负责最终记录。 |
+| 静态观测配置 | `make obs-config-check` | 验证资产与配置契约，不代表后端可查询。 |
+| 诊断 | `OBS_PROFILE=grafana make obs-status` | 只输出 `diagnostic_only` 健康/版本投影，不参与通过判定。 |
+| Grafana release | `make obs-release-gate` | 显式 opt-in；需要 Docker、凭据与资源预算，真实模型 API 可能计费。 |
+| SigNoz compatibility | `make obs-signoz-compat-gate` | 显式 opt-in、独立运行且不进入默认 PR 门禁；需要 Docker/凭据，真实模型 API 可能计费。 |
+
+因此，当前不能给出 Grafana release/resilience 的通过结论，也不能给出任何 SigNoz 端到端完成结论；只有 T169 记录的本次门禁结果和受审 schema-v3 evidence 才能更新这些状态。
+
 ---
 
 ## 0. 推进的底层逻辑（先理解方法论，再看路线）
@@ -555,13 +587,18 @@ make eval-smoke
 - [x] US5 后端可替换边界：provider、vectordb、obs、eval dataset、fallback cache 契约测试，向量库和可观测 adapter ADR。
 - [ ] P1 / P2 / P3 / P4 / P5 …
 
+003 的当前状态以本文“003 实施与验证状态”和
+`specs/003-real-observability-backends/tasks.md` 为准；这里保留的 P0/US3-US5 条目是早期框架路线历史，不能替代 003 的 live acceptance。
+
 当前默认验证命令：
 
 ```bash
-make test
-make test-race
-make vet
+make verify
+make obs-contract
+make obs-smoke-offline
+make obs-platform-smoke
 make eval-smoke
+make obs-config-check
 ```
 
 关键局部契约验证：

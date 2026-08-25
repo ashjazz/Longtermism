@@ -27,6 +27,38 @@ Longtermism 是一个**观测与评估驱动的生产级 Go AI Agent Harness**�
 - Quickstart：`specs/003-real-observability-backends/quickstart.md`
 - ADR：`docs/adr/0008-real-observability-backends-and-minimal-http-loop.md`
 
+## 003 实施与验证状态
+
+截至 2026-08-25，003 仍处于收口阶段。这里使用四个互不替代的状态，避免把文件存在、测试通过和真实后端验收混成同一件事：
+
+- `generated`：设计、代码、配置、测试或运维资产已经进入仓库，但不代表它已经在真实环境执行。
+- `planned`：目标或验证入口已经定义，但尚未取得所需证据。
+- `in-progress`：实现或验收正在推进，仍有任务、门禁或 evidence blocker 未关闭。
+- `verified`：只有与声明范围匹配的可复验证据，才能在该范围内使用此状态；它不会从 `generated` 自动晋级。
+
+| 范围 | 当前状态 | 证据边界 |
+| --- | --- | --- |
+| 003 整体 | `in-progress` | T160-T168 已收口；任务状态源仍保留 T035 与 T169，最终质量/安全审查尚未执行。 |
+| 应用观测、Collector、Grafana/SigNoz profile、smoke runner、dashboard、门禁入口 | `generated` | 资产与离线契约已进入仓库；资产存在不等于真实平台支持声明。 |
+| T160-T168 的局部契约 | `verified` | 仅表示对应 schema、配置、runbook、ADR、checklist、Make 聚合与项目状态文档契约的针对性测试已经通过；不替代 T169 的全量门禁。 |
+| Grafana infra 历史运行 | `verified`（仅 schema v2 范围） | 2026-08-14 曾取得 infra passed report；该本地 ignored 报告不能关闭当前 schema v3 live acceptance。 |
+| Grafana release/resilience | `planned` | 入口已生成，但尚无当前 schema v3 passed report，不能宣称主线 release 或恢复能力完成。 |
+| SigNoz 兼容性 | `generated`（资产）/`planned`（live 验收） | Compose、查询 adapter 和独立门禁已存在；尚无当前 schema v3 passed report，不能宣称 SigNoz 已获得端到端支持。 |
+
+`docs/observability/01-07` 是 `specs/002-dual-plane-observability` 的 T072-T078 学习资产，当前文档头中的状态仍为 `drafted`。003 复用并深化这些知识，但不改写为 003 产物；003 新增的真实后端决策与运行资产从 08 起单独追踪。
+
+### 验证入口
+
+| 目的 | 命令 | 当前边界 |
+| --- | --- | --- |
+| 默认离线检查 | `make verify` | 不启动 Docker；是否全绿由本次运行决定，最终审查记录由 T169 生成。 |
+| 观测静态契约 | `make obs-config-check` | 校验版本、Compose、Collector 与配置保护，不证明真实查询成功。 |
+| 低敏状态诊断 | `OBS_PROFILE=grafana make obs-status` | 输出 `diagnostic_only`；容器健康与版本信息不能作为 release evidence。 |
+| Grafana release candidate | `make obs-release-gate` | 显式 opt-in，串行运行离线、覆盖率、配置、Grafana 和 resilience 门禁；需要 Docker/凭据，本地真实模型 API 可能计费。 |
+| SigNoz 独立兼容门禁 | `make obs-signoz-compat-gate` | 显式 opt-in，独立于 Grafana 主线且不进入默认 PR 门禁；需要 Docker/凭据，真实模型 API 可能计费。 |
+
+真实运行的完整环境、报告、cleanup 与 credential 规则以 `specs/003-real-observability-backends/quickstart.md` 为准。
+
 ## 为什么做这个项目
 
 很多 Agent 框架关注“如何更容易组合 Agent”。Longtermism 更关注“如何让 Agent 在生产环境中更容易被理解、评估、回归和改进”。
