@@ -72,7 +72,14 @@ func NewProvider(config Config) (*Provider, error) {
 		// 不直接复用 http.DefaultClient：它的 Timeout 默认为 0，意味着调用方若传入
 		// context.Background()，连接或响应读取可能无限阻塞。独立 client 也避免修改
 		// 全局默认客户端后影响进程内其它 HTTP 调用。
-		httpClient = &http.Client{Timeout: defaultRequestTimeout}
+		httpClient = &http.Client{
+			Timeout: defaultRequestTimeout,
+			// Bearer credential 只属于调用方显式配置的 base URL。默认 client 禁止
+			// 跟随重定向，避免 adapter 独立使用时把认证请求扩散到未授权目标。
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 	}
 
 	return &Provider{
