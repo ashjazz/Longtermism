@@ -293,7 +293,7 @@
 - [X] T166 在 `specs/003-real-observability-backends/checklists/real-backend-acceptance.md` 逐项关闭 CHK001-CHK041；质量门控：每个完成项引用具体 task/test/report，缺证据保持未勾选，不以代码存在替代实际 backend 查询；SmokeReport 必须含 marker、每个 backend check 的 failure_stage，以及 smoke 自建临时凭据/数据的 cleanup 证据。
 - [X] T167 在 `Makefile` 增加最终 `obs-status`、`obs-release-gate` 与 `obs-signoz-compat-gate`；质量门控：status 仅输出低敏健康/版本信息，release gate 顺序执行 verify/config/Grafana/resilience 并 fail-fast，SigNoz gate 独立且不成为默认 PR 付费/外部门禁。
 - [X] T168 在 `docs/ROADMAP.md` 与 `README.md` 更新 003 实施状态和验证入口；质量门控：区分 generated/planned/in-progress/verified，保留 002 学习资产历史归属，不提前宣告 SigNoz 或真实后端完成。
-- [ ] T169 执行最终质量与安全审查并把低敏结果写入 `specs/003-real-observability-backends/checklists/final-verification.md`；质量门控：至少运行 `git diff --check`、`make verify`、`go test -race ./...`、覆盖率门禁、secret scan、`make obs-config-check`，有真实配置时再运行 Grafana/resilience/SigNoz gates，任何未运行项必须写明原因和剩余风险。
+- [X] T169 执行最终质量与安全审查并把低敏结果写入 `specs/003-real-observability-backends/checklists/final-verification.md`；质量门控：至少运行 `git diff --check`、`make verify`、`go test -race ./...`、覆盖率门禁、secret scan、`make obs-config-check`，有真实配置时再运行 Grafana/resilience/SigNoz gates，任何未运行项必须写明原因和剩余风险。
 
 ## Phase 3A：US1 本地日志出口去 bind-mount 化（P1，插入真实后端验收前）
 
