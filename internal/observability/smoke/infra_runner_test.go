@@ -19,7 +19,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 
 	tests := []struct {
 		name                 string
-		backend              fakeInfrastructureBackend
+		backend              *fakeInfrastructureBackend
 		wantStatus           string
 		wantFailedBackend    string
 		wantFailureStage     string
@@ -33,7 +33,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 	}{
 		{
 			name: "polls delayed backend observations before the smoke deadline",
-			backend: fakeInfrastructureBackend{
+			backend: &fakeInfrastructureBackend{
 				marker: "infra-t064a-marker",
 				tempoResponses: []markerQueryResponse{
 					{observations: []MarkerObservation{{Marker: "infra-t064a-marker", ObservedAt: startedAt.Add(-time.Second)}}},
@@ -55,7 +55,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "recovers after a transient Tempo query failure",
-			backend: fakeInfrastructureBackend{
+			backend: &fakeInfrastructureBackend{
 				marker: "infra-t172-tempo",
 				tempoResponses: []markerQueryResponse{
 					{err: classifiedInfrastructureQueryError{class: "backend_unavailable", raw: "raw-t172-tempo-response"}},
@@ -70,7 +70,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "recovers after a transient Loki query failure",
-			backend: fakeInfrastructureBackend{
+			backend: &fakeInfrastructureBackend{
 				marker:         "infra-t172-loki",
 				tempoResponses: []markerQueryResponse{{observations: []MarkerObservation{{Marker: "infra-t172-loki", ObservedAt: startedAt.Add(time.Second)}}}},
 				lokiResponses: []markerQueryResponse{
@@ -85,7 +85,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "records a zero protected HTTP metric delta as stable report evidence",
-			backend: fakeInfrastructureBackend{
+			backend: &fakeInfrastructureBackend{
 				marker: "infra-t064a-marker",
 				tempoResponses: []markerQueryResponse{{observations: []MarkerObservation{
 					{Marker: "infra-t064a-marker", ObservedAt: startedAt.Add(time.Second)},
@@ -104,7 +104,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "records nonzero Langfuse evidence without returning a nil report",
-			backend: fakeInfrastructureBackend{
+			backend: &fakeInfrastructureBackend{
 				marker: "infra-t064a-marker",
 				tempoResponses: []markerQueryResponse{{observations: []MarkerObservation{
 					{Marker: "infra-t064a-marker", ObservedAt: startedAt.Add(time.Second)},
@@ -128,7 +128,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "records nonzero AI plane evidence without returning a nil report",
-			backend: fakeInfrastructureBackend{
+			backend: &fakeInfrastructureBackend{
 				marker: "infra-t064a-marker",
 				tempoResponses: []markerQueryResponse{{observations: []MarkerObservation{
 					{Marker: "infra-t064a-marker", ObservedAt: startedAt.Add(time.Second)},
@@ -151,7 +151,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "fails when forbidden AI plane evidence appears during the stable window",
-			backend: fakeInfrastructureBackend{
+			backend: &fakeInfrastructureBackend{
 				marker: "infra-t064a-marker",
 				tempoResponses: []markerQueryResponse{{observations: []MarkerObservation{
 					{Marker: "infra-t064a-marker", ObservedAt: startedAt.Add(time.Second)},
@@ -185,7 +185,7 @@ func TestInfrastructureSmokeRunnerContract(t *testing.T) {
 			identity := InfrastructureSmokeIdentity{RunID: backend.marker, Marker: backend.marker}
 			triggerCalls := 0
 			report, err := RunInfrastructureSmoke(context.Background(), InfrastructureSmokeRequest{Deadline: deadline, Profile: "grafana"}, InfrastructureSmokeRunnerDependencies{
-				Backend: &backend, Clock: clock, PollInterval: time.Second,
+				Backend: backend, Clock: clock, PollInterval: time.Second,
 				IdentityFactory: func(context.Context) (InfrastructureSmokeIdentity, error) { return identity, nil },
 				Trigger: func(ctx context.Context, got InfrastructureSmokeIdentity) error {
 					triggerCalls++

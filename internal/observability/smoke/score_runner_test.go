@@ -20,8 +20,8 @@ func TestScoreSmokeRunnerContract(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		store            fakeScoreSmokeEvidenceStore
-		backend          fakeScoreSmokeBackend
+		store            *fakeScoreSmokeEvidenceStore
+		backend          *fakeScoreSmokeBackend
 		wantReportStatus string
 		wantCheckStatus  string
 		wantFailure      scoreSmokeFailure
@@ -29,8 +29,8 @@ func TestScoreSmokeRunnerContract(t *testing.T) {
 	}{
 		{
 			name:  "confirms an asynchronous score sent within the two minute deadline",
-			store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}},
-			backend: fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{
+			store: &fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}},
+			backend: &fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{
 				{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "queued", ObservedAt: startedAt.Add(time.Second)}}},
 				{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "sent", ObservedAt: startedAt.Add(2 * time.Second)}}},
 			}},
@@ -40,16 +40,16 @@ func TestScoreSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name:             "treats not configured projection as an explicit skipped backend state",
-			store:            fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{{EvalRunID: evidence.EvalRunID, RequestID: evidence.RequestID, AITraceID: evidence.AITraceID}}},
-			backend:          fakeScoreSmokeBackend{notConfigured: true},
+			store:            &fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{{EvalRunID: evidence.EvalRunID, RequestID: evidence.RequestID, AITraceID: evidence.AITraceID}}},
+			backend:          &fakeScoreSmokeBackend{notConfigured: true},
 			wantReportStatus: "skipped",
 			wantCheckStatus:  "skipped",
 			wantQueryCount:   0,
 		},
 		{
 			name:  "accepts a retry only when every observation keeps the stable projection identity",
-			store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}},
-			backend: fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{
+			store: &fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}},
+			backend: &fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{
 				{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "retry_wait", Attempt: 1, ObservedAt: startedAt.Add(time.Second)}}},
 				{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "sent", Attempt: 1, ObservedAt: startedAt.Add(2 * time.Second)}}},
 			}},
@@ -59,8 +59,8 @@ func TestScoreSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name:             "records permanent projection failure without erasing local evidence",
-			store:            fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}},
-			backend:          fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "failed_permanent", ObservedAt: startedAt.Add(time.Second)}}}}},
+			store:            &fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}},
+			backend:          &fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "failed_permanent", ObservedAt: startedAt.Add(time.Second)}}}}},
 			wantReportStatus: "failed",
 			wantCheckStatus:  "failed",
 			wantFailure:      scoreSmokeFailure{backend: "langfuse_score", stage: "query", class: "export_failed"},
@@ -68,8 +68,8 @@ func TestScoreSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name:  "rejects a sent score that arrived after the two minute window",
-			store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}},
-			backend: fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{
+			store: &fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}},
+			backend: &fakeScoreSmokeBackend{responses: []scoreSmokeQueryResponse{
 				{observations: []ScoreSmokeProjectionObservation{{ProjectionID: evidence.ProjectionID, Status: "sent", ObservedAt: deadline.Add(time.Second)}}},
 			}},
 			wantReportStatus: "failed",
@@ -87,8 +87,8 @@ func TestScoreSmokeRunnerContract(t *testing.T) {
 			store.order = order
 			backend.order = order
 			report, err := RunScoreSmoke(context.Background(), ScoreSmokeRequest{Deadline: deadline, Profile: "grafana"}, ScoreSmokeRunnerDependencies{
-				EvidenceStore: &store,
-				Backend:       &backend,
+				EvidenceStore: store,
+				Backend:       backend,
 				Clock:         newPollerTestClock(startedAt),
 				PollInterval:  time.Second,
 				IdentityFactory: func(context.Context) (ScoreSmokeIdentity, error) {
@@ -277,21 +277,21 @@ func TestScoreSmokeRunnerBoundaries(t *testing.T) {
 		name      string
 		ctx       context.Context
 		deadline  time.Time
-		store     fakeScoreSmokeEvidenceStore
+		store     *fakeScoreSmokeEvidenceStore
 		mutate    func(*ScoreSmokeRunnerDependencies)
 		wantErr   bool
 		wantClass string
 	}{
-		{name: "nil context", ctx: nil, deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}, wantErr: true},
-		{name: "window exceeds limit", ctx: context.Background(), deadline: startedAt.Add(maximumScoreSmokeWindow + time.Nanosecond), store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}, wantErr: true},
-		{name: "identity factory fails", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}, mutate: func(deps *ScoreSmokeRunnerDependencies) {
+		{name: "nil context", ctx: nil, deadline: startedAt.Add(time.Minute), store: &fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}, wantErr: true},
+		{name: "window exceeds limit", ctx: context.Background(), deadline: startedAt.Add(maximumScoreSmokeWindow + time.Nanosecond), store: &fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}, wantErr: true},
+		{name: "identity factory fails", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: &fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{evidence}}, mutate: func(deps *ScoreSmokeRunnerDependencies) {
 			deps.IdentityFactory = func(context.Context) (ScoreSmokeIdentity, error) {
 				return ScoreSmokeIdentity{}, errors.New("identity unavailable")
 			}
 		}, wantErr: true},
-		{name: "evidence store fails", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{err: errors.New("storage unavailable")}, wantClass: "storage_unavailable"},
-		{name: "evidence is missing", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{}, wantClass: "unexpected_evidence"},
-		{name: "not configured still rejects an empty local record", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{{}}}, mutate: func(deps *ScoreSmokeRunnerDependencies) {
+		{name: "evidence store fails", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: &fakeScoreSmokeEvidenceStore{err: errors.New("storage unavailable")}, wantClass: "storage_unavailable"},
+		{name: "evidence is missing", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: &fakeScoreSmokeEvidenceStore{}, wantClass: "unexpected_evidence"},
+		{name: "not configured still rejects an empty local record", ctx: context.Background(), deadline: startedAt.Add(time.Minute), store: &fakeScoreSmokeEvidenceStore{evidence: []ScoreSmokeEvidence{{}}}, mutate: func(deps *ScoreSmokeRunnerDependencies) {
 			deps.Backend = &fakeScoreSmokeBackend{notConfigured: true, order: &scoreSmokeEventOrder{}}
 		}, wantClass: "unexpected_evidence"},
 	}
@@ -300,7 +300,7 @@ func TestScoreSmokeRunnerBoundaries(t *testing.T) {
 			store := tt.store
 			backend := fakeScoreSmokeBackend{order: &scoreSmokeEventOrder{}}
 			store.order = backend.order
-			deps := validDeps(&store, &backend)
+			deps := validDeps(store, &backend)
 			if tt.mutate != nil {
 				tt.mutate(&deps)
 			}

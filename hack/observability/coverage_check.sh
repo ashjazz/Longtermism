@@ -2,6 +2,9 @@
 # 解析调用方刚刚生成的 atomic coverprofile，并对 merge-base 后的核心 Go 行执行门禁。
 set -euo pipefail
 
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly COVERAGE_FILES_HELPER="${SCRIPT_DIR}/coveragefiles/main.go"
+
 profile=""
 base_ref="origin/main"
 threshold="80"
@@ -45,7 +48,19 @@ else
 fi
 
 diff_file="$(mktemp)"
-trap 'rm -f "${diff_file}"' EXIT
+executable_files="$(mktemp)"
+trap 'rm -f "${diff_file}" "${executable_files}"' EXIT
+
+# 只把 Git 跟踪或未忽略的 Go 源码交给 AST helper。这样声明型 ports/config types
+# 不制造假分母，而任何包含真实函数语句的新文件仍必须出现在本次 coverprofile。
+source_files=()
+while IFS= read -r -d '' file; do
+  is_allowed_generated_or_test_file "${file}" || source_files+=("${file}")
+done < <(git ls-files -z --cached --others --exclude-standard -- "${scopes[@]}")
+if [[ ${#source_files[@]} -gt 0 ]]; then
+  go run "${COVERAGE_FILES_HELPER}" -- "${source_files[@]}" >"${executable_files}"
+fi
+
 # 与 merge-base 比较工作树而非仅 HEAD：本地提交前也必须检查 staged/unstaged 的
 # 项目源码改动。未忽略的临时 Go 源码仍须进入门禁；只有 Git 明确忽略的本地学习/实验
 # 文件不参与统计，避免污染项目质量信号。
@@ -70,6 +85,7 @@ FILENAME == ARGV[1] {
   count=$3 + 0; n[file]++; start[file,n[file]]=start_part[1]; finish[file,n[file]]=end_part[1]; hit[file,n[file]]=(count > 0)
   seen[file]=1; next
 }
+FILENAME == ARGV[3] { executable[$0]=1; next }
 /^\+\+\+ b\// { file=$0; sub(/^\+\+\+ b\//, "", file); next }
 /^\+\+\+ \/dev\/null/ { file=""; next }
 /^@@/ { if (match($0, /\+[0-9]+/)) { new_line=substr($0, RSTART+1, RLENGTH-1) + 0 }; next }
@@ -86,12 +102,12 @@ FILENAME == ARGV[1] {
 /^-[^-]/ || /^\\/ { next }
 { new_line++ }
 END {
-  for (file in missing) missing_text=missing_text file ","
+  for (file in missing) if (executable[file]) missing_text=missing_text file ","
   if (missing_text != "") { print "missing=" missing_text; exit 2 }
   percent=(total == 0 ? 100 : 100 * hits / total)
   printf "summary=%d/%d %.1f\n", hits, total, percent
   if (percent < threshold) { print "missed=" missed; exit 1 }
-}' "${profile}" "${diff_file}")" || status=$?
+}' "${profile}" "${diff_file}" "${executable_files}")" || status=$?
 status="${status:-0}"
 
 printf 'coverage_check: %s\n' "${result}"
@@ -105,11 +121,11 @@ if [[ ${status} -ne 0 ]]; then
 fi
 
 chat_files=()
-if [[ -d internal/logic/chat ]]; then
-  while IFS= read -r file; do
-    is_allowed_generated_or_test_file "${file}" || chat_files+=("${file}")
-  done < <(find internal/logic/chat -name '*.go' -type f | sort)
-fi
+while IFS= read -r file; do
+  case "${file}" in
+    internal/logic/chat/*.go) chat_files+=("${file}") ;;
+  esac
+done <"${executable_files}"
 if [[ ${#chat_files[@]} -gt 0 ]]; then
   for file in "${chat_files[@]}"; do
     if ! grep -Fq "${module_name}/${file}:" "${profile}"; then

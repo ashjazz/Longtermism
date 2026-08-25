@@ -27,7 +27,7 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 	tests := []struct {
 		name             string
 		triggerErr       error
-		backend          fakeChatSmokeBackend
+		backend          *fakeChatSmokeBackend
 		wantReportStatus string
 		wantRunnerErr    error
 		wantFailure      chatSmokeFailure
@@ -36,7 +36,7 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 	}{
 		{
 			name: "correlates delayed infrastructure and AI facts within sixty seconds",
-			backend: fakeChatSmokeBackend{
+			backend: &fakeChatSmokeBackend{
 				tempoResponses: []chatSmokeQueryResponse{
 					{observations: []ChatObservation{{Marker: identity.Marker, RequestID: response.RequestID, AITraceID: response.AITraceID, ServiceTraceID: response.ServiceTraceID, SpanID: response.SpanID, ObservedAt: startedAt.Add(-time.Second)}}},
 					{observations: []ChatObservation{{Marker: identity.Marker, RequestID: response.RequestID, AITraceID: response.AITraceID, ServiceTraceID: response.ServiceTraceID, SpanID: response.SpanID, ObservedAt: startedAt.Add(time.Second)}}},
@@ -52,7 +52,7 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "records telemetry failure in the report without rewriting a successful model result",
-			backend: fakeChatSmokeBackend{
+			backend: &fakeChatSmokeBackend{
 				tempoResponses:      []chatSmokeQueryResponse{{err: errors.New("synthetic telemetry outage")}},
 				baselineLLMRequests: 41,
 				llmRequests:         42,
@@ -64,7 +64,7 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "rejects a marker hit when the AI identity belongs to another chat",
-			backend: fakeChatSmokeBackend{
+			backend: &fakeChatSmokeBackend{
 				tempoResponses:      []chatSmokeQueryResponse{{observations: []ChatObservation{{Marker: identity.Marker, RequestID: response.RequestID, AITraceID: "ai-trace-other", ServiceTraceID: response.ServiceTraceID, SpanID: response.SpanID, ObservedAt: startedAt.Add(time.Second)}}}},
 				baselineLLMRequests: 41,
 				llmRequests:         42,
@@ -77,7 +77,7 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 		{
 			name:             "preserves the original model failure while returning a schema-valid API failure report",
 			triggerErr:       errSyntheticModelFailure,
-			backend:          fakeChatSmokeBackend{},
+			backend:          &fakeChatSmokeBackend{},
 			wantReportStatus: "failed",
 			wantRunnerErr:    errSyntheticModelFailure,
 			wantFailure:      chatSmokeFailure{backend: "api", stage: "api", class: "backend_unavailable"},
@@ -85,7 +85,7 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 		{
 			name:             "preserves partial response identity on model failure",
 			triggerErr:       errSyntheticModelFailure,
-			backend:          fakeChatSmokeBackend{},
+			backend:          &fakeChatSmokeBackend{},
 			wantReportStatus: "failed",
 			wantRunnerErr:    errSyntheticModelFailure,
 			wantFailure:      chatSmokeFailure{backend: "api", stage: "api", class: "backend_unavailable"},
@@ -98,7 +98,7 @@ func TestChatSmokeRunnerContract(t *testing.T) {
 			clock := newPollerTestClock(startedAt)
 			triggerCalls := 0
 			report, err := RunChatSmoke(context.Background(), ChatSmokeRequest{Deadline: deadline, Profile: "grafana"}, ChatSmokeRunnerDependencies{
-				Backend:      &backend,
+				Backend:      backend,
 				Clock:        clock,
 				PollInterval: time.Second,
 				IdentityFactory: func(context.Context) (ChatSmokeIdentity, error) {

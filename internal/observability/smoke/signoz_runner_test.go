@@ -207,7 +207,7 @@ func TestSignozInfrastructureSmokeRunnerContract(t *testing.T) {
 
 	tests := []struct {
 		name                string
-		backend             fakeSignozInfrastructureBackend
+		backend             *fakeSignozInfrastructureBackend
 		runID               string
 		wantStatus          string
 		wantFailedBackend   string
@@ -219,7 +219,7 @@ func TestSignozInfrastructureSmokeRunnerContract(t *testing.T) {
 	}{
 		{
 			name: "polls delayed signoz observations before the smoke deadline",
-			backend: fakeSignozInfrastructureBackend{
+			backend: &fakeSignozInfrastructureBackend{
 				tracesResponses: []markerQueryResponse{
 					{},
 					{observations: []MarkerObservation{{Marker: "run-signoz-infra-ok", ObservedAt: startedAt.Add(time.Second)}}},
@@ -238,7 +238,7 @@ func TestSignozInfrastructureSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "recovers after a transient signoz trace query failure without leaking raw response",
-			backend: fakeSignozInfrastructureBackend{
+			backend: &fakeSignozInfrastructureBackend{
 				tracesResponses: []markerQueryResponse{
 					{err: classifiedInfrastructureQueryError{class: "backend_unavailable", raw: "raw-signoz-trace-response"}},
 					{observations: []MarkerObservation{{Marker: "run-signoz-infra-flaky", ObservedAt: startedAt.Add(time.Second)}}},
@@ -257,7 +257,7 @@ func TestSignozInfrastructureSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "records nonzero langfuse evidence as an AI-plane leak failure",
-			backend: fakeSignozInfrastructureBackend{
+			backend: &fakeSignozInfrastructureBackend{
 				tracesResponses: []markerQueryResponse{
 					{observations: []MarkerObservation{{Marker: "run-signoz-infra-leak", ObservedAt: startedAt.Add(time.Second)}}},
 				},
@@ -278,7 +278,7 @@ func TestSignozInfrastructureSmokeRunnerContract(t *testing.T) {
 		},
 		{
 			name: "skips AI negative checks when infra signals never arrive",
-			backend: fakeSignozInfrastructureBackend{
+			backend: &fakeSignozInfrastructureBackend{
 				before: 7,
 				after:  8,
 			},
@@ -301,7 +301,7 @@ func TestSignozInfrastructureSmokeRunnerContract(t *testing.T) {
 			backend := tt.backend
 			clock := newPollerTestClock(startedAt)
 			report, err := RunSignozInfrastructureSmoke(context.Background(), SignozInfrastructureSmokeRequest{Deadline: deadline, Profile: "signoz"}, SignozInfrastructureSmokeRunnerDependencies{
-				Backend:      &backend,
+				Backend:      backend,
 				Clock:        clock,
 				PollInterval: time.Second,
 				// Marker 故意与 runID 不同：runner 必须从 runID 派生 marker，
