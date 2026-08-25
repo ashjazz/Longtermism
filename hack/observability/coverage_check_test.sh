@@ -62,6 +62,11 @@ run_case() {
   if [[ "${name}" == "untracked_production_file" ]]; then
     printf 'package observability\n\nfunc Untracked() int { return 4 }\n' >"${root}/internal/observability/untracked.go"
   fi
+  if [[ "${name}" == "declaration_only_file" ]]; then
+    # Go coverprofile 不会列出只有 interface/type/const/var 声明、没有函数体语句的文件。
+    # 它们没有可执行分母，不能因为 profile 中缺席而让整个门禁失败。
+    printf 'package observability\n\ntype Boundary interface { Value() int }\n' >"${root}/internal/observability/ports.go"
+  fi
 
   set +e
   output="$(cd "${root}" && bash "${CHECKER_PATH}" --profile "${profile}" --base main --threshold 80 --scope internal/observability 2>&1)"
@@ -81,6 +86,7 @@ run_case missing_package_profile fail 1 true
 # 学习/实验文件可由 .gitignore 排除；它们不是项目源码，也不应污染项目覆盖率门禁。
 run_case ignored_untracked_production_file pass 1 false
 run_case untracked_production_file fail 1 false
+run_case declaration_only_file pass 1 false
 
 if [[ ${failures} -gt 0 ]]; then
   printf 'coverage_check_test: %d assertion(s) failed\n' "${failures}" >&2
