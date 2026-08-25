@@ -21,7 +21,8 @@
 的临时凭据/数据必须证明撤销或删除；外部注入的长期凭据只能记录 `not_created`，不得由 smoke 撤销。
 Compose healthy、静态资产、fake backend、UI 截图或历史报告都不能替代实际 backend 查询。
 
-本次逐项审计保留五个 blocker：最终 release gate、privacy live report、SigNoz query/health 端口、
+T166 初审保留的五个 blocker 中，T167 已用可复验的串行/fail-fast 聚合契约关闭最终 release gate
+的 requirements-quality 缺口。当前仍保留四个 blocker：privacy live report、SigNoz query/health 端口、
 alert firing/resolved live report，以及 reset hardening。其余勾选项只关闭 requirements-quality 问题；
 各 profile 的真实支持状态仍由专用 live checklist 与当前 v3 report 决定。
 
@@ -72,9 +73,8 @@ alert firing/resolved live report，以及 reset hardening。其余勾选项只�
 
 ## Acceptance Criteria Quality
 
-- [ ] CHK019 Can every release-gate requirement produce machine-readable pass/fail evidence without manual UI inspection? [Measurability, Workbench §决策 8]
-  - **Repository evidence**: `task:T163`; `test:internal/observability/smoke/schema_test.go::TestSmokeReportSchemaValidatorAcceptsEverySupportedScenario`
-  - **Live evidence**: `pending:T167` — the final release gate aggregate does not exist yet, so “every release gate” is not closed.
+- [X] CHK019 Can every release-gate requirement produce machine-readable pass/fail evidence without manual UI inspection? [Measurability, Workbench §决策 8]
+  - **Repository evidence**: `task:T167`; `test:hack/observability/final_make_targets_test.go::TestObsReleaseGateRunsSequentiallyAndFailsFast`; `test:internal/observability/smoke/schema_test.go::TestSmokeReportSchemaValidatorAcceptsEverySupportedScenario`
 - [X] CHK020 Are the required report fields sufficient to identify profile, marker, backend, failure stage, duration, and cleanup outcome without exposing secrets? [Measurability, Workbench §决策 8]
   - **Repository evidence**: `task:T163`; `test:internal/observability/smoke/schema_test.go::TestSmokeReportSchemaValidatorRejectsFinalClosedVocabularyFixtures`; `test:internal/observability/smoke/report_test.go::TestBuildSmokeReportAggregatesChecksAndOwnedCleanupEvidence`
 - [ ] CHK021 Are privacy acceptance criteria based on actual exported/backend-visible data in addition to mapper-level unit tests? [Measurability, Workbench §决策 7, §决策 8]

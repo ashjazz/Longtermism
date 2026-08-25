@@ -48,7 +48,9 @@ set_synthetic_signoz_environment() {
   export LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL="test-ai-plane-credential"
   export LONGTERMISM_SMOKE_APP_BASE_URL="http://127.0.0.1:8000"
   export LONGTERMISM_SMOKE_CHAT_AUTHORIZATION="test-chat-authorization"
-  export LONGTERMISM_SMOKE_CHAT_MANIFEST_ROOT="$(mktemp -d)"
+  local manifest_root
+  manifest_root="$(mktemp -d)"
+  export LONGTERMISM_SMOKE_CHAT_MANIFEST_ROOT="$(cd "${manifest_root}" && pwd -P)"
 }
 
 test_signoz_up_uses_dedicated_project() {
@@ -59,7 +61,7 @@ test_signoz_up_uses_dedicated_project() {
   set_synthetic_signoz_environment
 
   set +e
-  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-signoz-up 2>&1)"
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" make obs-signoz-up 2>&1)"
   status=$?
   set -e
   [[ "${status}" -eq 0 ]] || { printf 'obs-signoz-up failed: %s\n' "${output}" >&2; exit 1; }
@@ -79,7 +81,7 @@ test_signoz_e2e_failure_cleanup_is_scoped() {
   # infra smoke 失败（fake go 退出 1）：trap 必须执行 down 清理，且清理只针对
   # signoz project。trap 里的 compose 命令不经过 make 回显，证据在 fake 工具日志。
   set +e
-  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" FAKE_GO_EXIT=1 make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-signoz-e2e 2>&1)"
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" FAKE_GO_EXIT=1 OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" make obs-signoz-e2e 2>&1)"
   status=$?
   set -e
   [[ "${status}" -ne 0 ]] || { printf 'obs-signoz-e2e unexpectedly passed\n' "${output}" >&2; exit 1; }
@@ -99,7 +101,7 @@ test_signoz_e2e_success_runs_both_signoz_smokes() {
   set_synthetic_signoz_environment
 
   set +e
-  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-signoz-e2e 2>&1)"
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" make obs-signoz-e2e 2>&1)"
   status=$?
   set -e
   [[ "${status}" -eq 0 ]] || { printf 'obs-signoz-e2e failed: %s\n' "${output}" >&2; exit 1; }
@@ -120,7 +122,7 @@ test_signoz_preflight_names_missing_references() {
   # 不设置任何 smoke env：预检必须 fail closed 并只打印变量名。
   env -i PATH="${temporary}:${PATH}" HOME="${HOME}" FAKE_COMMAND_LOG="${log}" \
     bash -c '
-      cd "'"${REPO_ROOT}"'" && make OBSERVABILITY_LOCAL_ENV_FILE="'"${temporary}"'/missing.env" obs-signoz-infra-smoke
+      cd "'"${REPO_ROOT}"'" && OBSERVABILITY_LOCAL_ENV_FILE="'"${temporary}"'/missing.env" make obs-signoz-infra-smoke
     ' >"${temporary}/output.txt" 2>&1 || true
   set -e
   output="$(<"${temporary}/output.txt")"

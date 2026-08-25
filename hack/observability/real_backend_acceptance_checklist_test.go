@@ -86,13 +86,12 @@ func TestRealBackendAcceptanceChecklistTracksAll41ItemsWithConcreteEvidence(t *t
 }
 
 // TestRealBackendAcceptanceChecklistKeepsUnprovenLiveRequirementsOpen records the evidence audit,
-// not an aspirational target. These five items need a current live report or a missing hardening
+// not an aspirational target. These four items need a current live report or a missing hardening
 // task; static assets, fake backends and historical v2 reports cannot close them.
 func TestRealBackendAcceptanceChecklistKeepsUnprovenLiveRequirementsOpen(t *testing.T) {
 	checklist := readRealBackendAcceptanceChecklist(t, observabilityRepoRoot(t))
 	items := parseRealBackendAcceptanceItems(t, checklist)
 	wantOpen := map[string][]string{
-		"CHK019": {"pending:T167", "release gate"},
 		"CHK021": {"scenario=privacy", "schema-v3", "passed report"},
 		"CHK031": {"SigNoz", "3301", "8080"},
 		"CHK039": {"scenario=alert", "firing", "resolved"},

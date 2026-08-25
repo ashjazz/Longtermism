@@ -73,7 +73,7 @@ func TestQuickstartRunbookDefinesGateFrequencyDependenciesAndCost(t *testing.T) 
 		{
 			name:      "release candidate",
 			rowPrefix: "| Release candidate |",
-			required:  []string{"make verify", "make obs-coverage", "make obs-config-check", "make obs-grafana-e2e", "make obs-resilience-e2e", "make obs-signoz-e2e", "真实模型 API 可能计费"},
+			required:  []string{"make obs-release-gate", "make verify", "make obs-coverage", "make obs-config-check", "make obs-grafana-e2e", "make obs-resilience-e2e", "make obs-signoz-compat-gate", "make obs-signoz-e2e", "真实模型 API 可能计费"},
 		},
 		{
 			name:      "scheduled canary",

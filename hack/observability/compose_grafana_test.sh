@@ -343,10 +343,10 @@ health_recipe = target_recipe(makefile, "obs-stack-health").join("\n")
 infra_recipe = target_recipe(makefile, "obs-infra-smoke").join("\n")
 e2e_recipe = target_recipe(makefile, "obs-grafana-e2e").join("\n")
 bootstrap_recipe = target_recipe(makefile, "obs-langfuse-bootstrap-up").join("\n")
-langfuse_compose_definition = "OBS_LANGFUSE_COMPOSE = docker compose --project-name $(OBSERVABILITY_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml"
+langfuse_compose_definition = "override OBS_LANGFUSE_COMPOSE = docker compose --project-name $(SAFE_OBSERVABILITY_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml"
 fail_check("invalid_langfuse_compose_definition") unless makefile_text.include?(langfuse_compose_definition)
-grafana_compose_line = makefile_text.lines.find { |line| line.start_with?("OBS_GRAFANA_COMPOSE =") }.to_s.strip
-fail_check("invalid_grafana_compose_definition") unless grafana_compose_line == "OBS_GRAFANA_COMPOSE = $(OBS_LANGFUSE_COMPOSE) -f deploy/observability/compose.grafana.yaml"
+grafana_compose_line = makefile_text.lines.find { |line| line.start_with?("override OBS_GRAFANA_COMPOSE =") }.to_s.strip
+fail_check("invalid_grafana_compose_definition") unless grafana_compose_line == "override OBS_GRAFANA_COMPOSE = $(OBS_LANGFUSE_COMPOSE) -f deploy/observability/compose.grafana.yaml"
 fail_check("legacy_local_log_startup_dependency") if up_recipe.match?(/OBSERVABILITY_LOG_GID|resource\/log\/observability/)
 fail_check("invalid_grafana_up_target") unless up_recipe.include?("$(OBS_GRAFANA_COMPOSE) up -d")
 fail_check("invalid_langfuse_bootstrap_target") unless bootstrap_recipe.include?("$(OBS_LANGFUSE_COMPOSE) up -d --wait --wait-timeout 180 langfuse-web langfuse-worker") && !bootstrap_recipe.include?("compose.grafana.yaml") && !bootstrap_recipe.match?(/LANGFUSE_OTLP_AUTHORIZATION|LANGFUSE_OTEL_INGESTION_VERSION/)

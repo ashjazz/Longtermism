@@ -39,6 +39,8 @@ assert_contains_in_order() {
 }
 
 set_synthetic_smoke_environment() {
+  local root
+  root="$(cd "$1" && pwd -P)"
   export LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL="http://127.0.0.1:9090"
   export LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL="http://127.0.0.1:3100"
   export LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL="http://127.0.0.1:3200"
@@ -46,6 +48,15 @@ set_synthetic_smoke_environment() {
   export LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL="test-langfuse-credential"
   export LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL="http://127.0.0.1:8000"
   export LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL="test-ai-plane-credential"
+  export LONGTERMISM_SMOKE_APP_BASE_URL="http://127.0.0.1:8000"
+  export LONGTERMISM_SMOKE_CHAT_AUTHORIZATION="test-chat-authorization"
+  export LONGTERMISM_SMOKE_CHAT_MANIFEST_ROOT="${root}/longtermism-t167-chat-manifest"
+  export LONGTERMISM_SMOKE_SCORE_EVIDENCE_PATH="${root}/longtermism-t167-score-evidence.jsonl"
+  export LONGTERMISM_SMOKE_SCORE_PROJECTION_PATH="${root}/longtermism-t167-score-projection.json"
+  export LONGTERMISM_SMOKE_PRIVACY_ARTIFACT_ROOT="${root}/longtermism-t167-privacy-artifacts"
+  export LONGTERMISM_SMOKE_COLLECTOR_RUNTIME_CONFIG_DIGEST="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  export LONGTERMISM_SMOKE_COLLECTOR_COMPONENT_IDENTITY="otlphttp/loki"
+  export LONGTERMISM_SMOKE_EXPORT_ADMISSION_CORRELATION="t167-synthetic-correlation"
 }
 
 test_langfuse_bootstrap_starts_only_the_langfuse_profile() {
@@ -55,7 +66,7 @@ test_langfuse_bootstrap_starts_only_the_langfuse_profile() {
   setup_fake_tools "${temporary}"
 
   set +e
-  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-langfuse-bootstrap-up 2>&1)"
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" make obs-langfuse-bootstrap-up 2>&1)"
   status=$?
   set -e
   [[ "${status}" -eq 0 ]] || { printf 'bootstrap failed\n%s\n' "${output}" >&2; exit 1; }
@@ -89,11 +100,11 @@ test_e2e_success_and_idempotent_lifecycle() {
   temporary="$(mktemp -d)"
   log="${temporary}/commands.log"
   setup_fake_tools "${temporary}"
-  set_synthetic_smoke_environment
+  set_synthetic_smoke_environment "${temporary}"
   mkdir -p "${temporary}/reports"
 
   set +e
-  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-e2e 2>&1)"
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" make obs-grafana-e2e 2>&1)"
   status=$?
   set -e
   [[ "${status}" -eq 0 ]] || { printf 'e2e success path failed\n%s\n' "${output}" >&2; exit 1; }
@@ -105,9 +116,9 @@ test_e2e_success_and_idempotent_lifecycle() {
   [[ "${output}" != *"down -v"* ]] || { printf 'e2e output used destructive volume cleanup\n' >&2; exit 1; }
 
   : >"${log}"
-  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-up)
-  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-up)
-  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-down)
+  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" make obs-grafana-up)
+  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" make obs-grafana-up)
+  (cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" make obs-grafana-down)
   local lifecycle
   lifecycle="$(cat "${log}")"
   [[ "$(printf '%s\n' "${lifecycle}" | grep -c ' up -d --wait --wait-timeout 180$')" == "2" ]] || { printf 'up target was not repeatable\n%s\n' "${lifecycle}" >&2; exit 1; }
@@ -121,12 +132,12 @@ test_e2e_failure_still_cleans_up_and_preserves_reports() {
   log="${temporary}/commands.log"
   report="${REPO_ROOT}/build/observability/smoke-reports/t066-retained-test-report.json"
   setup_fake_tools "${temporary}"
-  set_synthetic_smoke_environment
+  set_synthetic_smoke_environment "${temporary}"
   mkdir -p "$(dirname "${report}")"
   printf '{}\n' >"${report}"
 
   set +e
-  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" FAKE_GO_EXIT=1 make OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" obs-grafana-e2e 2>&1)"
+  output="$(cd "${REPO_ROOT}" && PATH="${temporary}:${PATH}" FAKE_COMMAND_LOG="${log}" FAKE_GO_EXIT=1 OBSERVABILITY_LOCAL_ENV_FILE="${temporary}/missing.env" make obs-grafana-e2e 2>&1)"
   status=$?
   set -e
   [[ "${status}" -ne 0 ]] || { printf 'e2e succeeded despite smoke failure\n' >&2; exit 1; }

@@ -805,7 +805,7 @@ eval-smoke        -> 固定 dataset、eval evidence 与 trace 回链
 make obs-config-check
 make obs-platform-smoke
 make obs-grafana-up
-make obs-stack-health OBS_PROFILE=grafana
+OBS_PROFILE=grafana make obs-status
 make obs-infra-smoke
 ```
 
@@ -841,7 +841,7 @@ make obs-resilience-e2e
 
 ```bash
 make obs-signoz-up
-make obs-stack-health OBS_PROFILE=signoz
+OBS_PROFILE=signoz make obs-status
 make obs-signoz-e2e
 ```
 
@@ -852,7 +852,7 @@ make obs-direct-langfuse-smoke
 make obs-status
 make obs-grafana-down
 make obs-signoz-down
-make obs-reset OBS_PROFILE=grafana
+OBS_PROFILE=grafana make obs-reset
 ```
 
 - `obs-direct-langfuse-smoke` 仅用于隔离 Collector 与 Langfuse ingestion 问题，不属于常规应用拓扑。

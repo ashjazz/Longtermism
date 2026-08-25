@@ -1,13 +1,37 @@
-.PHONY: test test-race vet eval-smoke obs-smoke obs-platform-smoke verify obs-contract obs-smoke-offline obs-config-check obs-foundation-test obs-foundation-race obs-coverage obs-langfuse-bootstrap-up obs-langfuse-bootstrap-down obs-grafana-up obs-grafana-down obs-stack-health obs-infra-smoke obs-chat-smoke obs-langfuse-score-smoke obs-privacy-platform-smoke obs-direct-langfuse-smoke obs-grafana-e2e obs-signoz-up obs-signoz-down obs-signoz-infra-smoke obs-signoz-chat-smoke obs-signoz-e2e obs-exporter-failure-smoke obs-persistent-queue-smoke obs-score-worker-failure-smoke obs-resilience-e2e obs-reset
+.PHONY: test test-race vet eval-smoke obs-smoke obs-platform-smoke verify obs-contract obs-smoke-offline obs-config-check obs-foundation-test obs-foundation-race obs-coverage obs-langfuse-bootstrap-up obs-langfuse-bootstrap-down obs-grafana-up obs-grafana-down obs-stack-health obs-status obs-infra-smoke obs-chat-smoke obs-langfuse-score-smoke obs-privacy-platform-smoke obs-direct-langfuse-smoke obs-grafana-e2e obs-signoz-up obs-signoz-down obs-signoz-infra-smoke obs-signoz-chat-smoke obs-signoz-e2e obs-exporter-failure-smoke obs-persistent-queue-smoke obs-score-worker-failure-smoke obs-resilience-e2e obs-release-gate obs-signoz-compat-gate obs-reset
 
 # 两条启动路径必须固定到同一个 project，才能复用首次冷启动创建的 Langfuse 数据卷。
 # 本地 .env 文件可选：不存在时继续接受 shell export，存在时才交给 Compose 读取。
 OBSERVABILITY_COMPOSE_PROJECT ?= longtermism-observability
+OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT ?= longtermism-signoz
+OBS_PROFILE ?= grafana
 OBSERVABILITY_LOCAL_ENV_FILE ?= deploy/observability/.env.local
-OBSERVABILITY_LOCAL_ENV_OPTION := $(if $(wildcard $(OBSERVABILITY_LOCAL_ENV_FILE)),--env-file $(OBSERVABILITY_LOCAL_ENV_FILE),)
-OBS_LANGFUSE_COMPOSE = docker compose --project-name $(OBSERVABILITY_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml
+# GNU Make 会在 recipe 之前展开 command-line variable 中的 `$(...)`。因此这些
+# lifecycle 控制值只接受进程环境输入；命令行覆盖在读取其值前按 origin fail closed。
+# `MAKE`/`SHELL` 仍是受信构建控制面，不属于本 lifecycle 输入安全保证。
+ifneq ($(filter command line,$(origin OBSERVABILITY_COMPOSE_PROJECT)),)
+$(error OBSERVABILITY_COMPOSE_PROJECT command-line override is not supported; set it in the environment before make)
+endif
+ifneq ($(filter command line,$(origin OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT)),)
+$(error OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT command-line override is not supported; set it in the environment before make)
+endif
+ifneq ($(filter command line,$(origin OBSERVABILITY_LOCAL_ENV_FILE)),)
+$(error OBSERVABILITY_LOCAL_ENV_FILE command-line override is not supported; set it in the environment before make)
+endif
+ifneq ($(filter command line,$(origin OBS_PROFILE)),)
+$(error OBS_PROFILE command-line override is not supported; set it in the environment before make)
+endif
+# `value` 捕获环境输入的原始字节，不执行其中的 Make 函数；simple 变量也不会二次
+# 展开。每个 lifecycle 在下一条 recipe 使用这些值前先运行 preflight 字符闭集门禁。
+override SAFE_OBSERVABILITY_COMPOSE_PROJECT := $(value OBSERVABILITY_COMPOSE_PROJECT)
+override SAFE_OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT := $(value OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT)
+override SAFE_OBSERVABILITY_LOCAL_ENV_FILE := $(value OBSERVABILITY_LOCAL_ENV_FILE)
+override SAFE_OBS_PROFILE := $(value OBS_PROFILE)
+export SAFE_OBSERVABILITY_COMPOSE_PROJECT SAFE_OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT SAFE_OBSERVABILITY_LOCAL_ENV_FILE SAFE_OBS_PROFILE
+override OBSERVABILITY_LOCAL_ENV_OPTION := $(if $(wildcard $(SAFE_OBSERVABILITY_LOCAL_ENV_FILE)),--env-file $(SAFE_OBSERVABILITY_LOCAL_ENV_FILE),)
+override OBS_LANGFUSE_COMPOSE = docker compose --project-name $(SAFE_OBSERVABILITY_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml
 # Collector 以固定 non-root 身份接收 OTLP logs；启动不再读取宿主 JSONL 或依赖宿主 GID。
-OBS_GRAFANA_COMPOSE = $(OBS_LANGFUSE_COMPOSE) -f deploy/observability/compose.grafana.yaml
+override OBS_GRAFANA_COMPOSE = $(OBS_LANGFUSE_COMPOSE) -f deploy/observability/compose.grafana.yaml
 
 # Level 0 默认离线门禁：只运行本地 Go 检查，既不启动 Docker，也不要求 LLM/Langfuse 凭据。
 verify: vet test
@@ -75,24 +99,34 @@ obs-platform-smoke:
 # 首次冷启动不能复用完整 profile：Compose 会在启动任何服务前解析 Collector 的
 # Langfuse project key。此 target 只加载 Langfuse 服务，创建项目/API key 后再走 warm start。
 obs-langfuse-bootstrap-up:
+	@bash hack/observability/live_gate_preflight.sh grafana-project
 	$(OBS_LANGFUSE_COMPOSE) up -d --wait --wait-timeout 180 langfuse-web langfuse-worker
 
 obs-langfuse-bootstrap-down:
+	@bash hack/observability/live_gate_preflight.sh grafana-project
 	$(OBS_LANGFUSE_COMPOSE) down
 
 # Level 1 是明确 opt-in 的本地 Grafana profile。默认 `verify` 绝不依赖 Docker 或
 # Langfuse 凭据；这些命令也不删除 named volumes，避免把诊断证据当作清理副作用丢失。
 obs-grafana-up:
+	@bash hack/observability/live_gate_preflight.sh grafana-project
 	$(OBS_GRAFANA_COMPOSE) up -d --wait --wait-timeout 180
 
 obs-grafana-down:
+	@bash hack/observability/live_gate_preflight.sh grafana-project
 	$(OBS_GRAFANA_COMPOSE) down
 
 # T066 当前只支持 Grafana profile。状态输出仅辅助诊断，正式通过必须依赖后续的
 # 查询式 infra smoke 报告，不能把 container healthy 当成 E2E 成功。
 obs-stack-health:
-	@test "$(OBS_PROFILE)" = "grafana" || { echo "OBS_PROFILE must be grafana" >&2; exit 2; }
+	@bash hack/observability/live_gate_preflight.sh grafana-project
+	@test "$$SAFE_OBS_PROFILE" = "grafana" || { echo "OBS_PROFILE must be grafana" >&2; exit 2; }
 	$(OBS_GRAFANA_COMPOSE) ps
+
+# 只读诊断入口：不解析 Compose env、不查询后端，也不产生 passed/support 声明。
+# 固定字段投影由 helper 完成，container healthy 不能替代 query E2E report。
+obs-status:
+	@bash hack/observability/status.sh
 
 obs-infra-smoke:
 	@missing=''; \
@@ -158,10 +192,11 @@ obs-direct-langfuse-smoke:
 # infra 基线 -> chat（产生投影）-> score（验证异步投影）-> privacy（八 surface 负向）。
 # direct 诊断不是该门禁的一部分，它只服务人工排障。
 obs-grafana-e2e:
+	@bash hack/observability/live_gate_preflight.sh grafana-e2e
 	@set -eu; \
 		trap '$(OBS_GRAFANA_COMPOSE) down' EXIT; \
 		$(MAKE) obs-grafana-up; \
-		$(MAKE) obs-stack-health OBS_PROFILE=grafana; \
+		$(MAKE) obs-stack-health; \
 		$(MAKE) obs-infra-smoke; \
 		$(MAKE) obs-chat-smoke; \
 		$(MAKE) obs-langfuse-score-smoke; \
@@ -173,15 +208,16 @@ obs-grafana-e2e:
 # 不改变主线优先级（checklists/signoz.md 定位声明）。
 # 独立 compose project：与 Grafana 主线互斥运行，Langfuse 栈在各自 project
 # 内独立实例化，观测卷互不可见（T141 契约），失败清理只触碰本 project。
-OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT ?= longtermism-signoz
-OBS_SIGNOZ_COMPOSE = docker compose --project-name $(OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml -f deploy/observability/compose.signoz.yaml
+override OBS_SIGNOZ_COMPOSE = docker compose --project-name $(SAFE_OBSERVABILITY_SIGNOZ_COMPOSE_PROJECT) --env-file deploy/observability/versions.env$(if $(OBSERVABILITY_LOCAL_ENV_OPTION), $(OBSERVABILITY_LOCAL_ENV_OPTION)) -f deploy/observability/compose.langfuse.yaml -f deploy/observability/compose.signoz.yaml
 
 obs-signoz-up:
+	@bash hack/observability/live_gate_preflight.sh signoz-project
 	$(OBS_SIGNOZ_COMPOSE) up -d --wait --wait-timeout 240
 
 # down 不带 -v：低敏 smoke 报告与 named-volume 中的故障证据保持可诊断，
 # 且清理严格限定本 compose project（门控：不触碰 Grafana 主线 project）。
 obs-signoz-down:
+	@bash hack/observability/live_gate_preflight.sh signoz-project
 	$(OBS_SIGNOZ_COMPOSE) down
 
 # 备选 profile 的 infra smoke：与主线同一查询式验收（绝不以 compose healthy
@@ -216,6 +252,7 @@ obs-signoz-chat-smoke:
 # （三信号+Langfuse trace/score）。score/privacy 的证据面绑定主线后端，不在
 # 备选 E2E 内伪装。失败时 trap 清理只针对本 project 的 compose down。
 obs-signoz-e2e:
+	@bash hack/observability/live_gate_preflight.sh signoz-e2e
 	@set -eu; \
 		trap '$(OBS_SIGNOZ_COMPOSE) down' EXIT; \
 		$(MAKE) obs-signoz-up; \
@@ -245,11 +282,30 @@ obs-score-worker-failure-smoke:
 # 服务再 down：中断（INT/TERM）后 paused services 必须被恢复，不能靠 down 兜底
 # 掩盖"服务仍处于 paused"的运营事实。
 obs-resilience-e2e:
+	@bash hack/observability/live_gate_preflight.sh resilience-e2e
 	@set -eu; \
 		trap '$(OBS_GRAFANA_COMPOSE) unpause 2>/dev/null || true; $(OBS_GRAFANA_COMPOSE) down' EXIT INT TERM; \
 		$(MAKE) obs-grafana-up; \
-		$(MAKE) obs-stack-health OBS_PROFILE=grafana; \
+		$(MAKE) obs-stack-health; \
 		go run ./cmd/obs-smoke resilience --live
+
+# 最终主线 release gate 必须严格串行。聚合层不接管 profile lifecycle；每个 live
+# child 自己负责 trap/cleanup。任一阶段非零即停止，绝不以 status/旧报告降级通过。
+# coverage 保留 quickstart 已接受的 RC 要求，不能因为增加聚合入口而静默降级。
+obs-release-gate:
+	@set -eu; \
+		$(MAKE) --no-print-directory verify; \
+		$(MAKE) --no-print-directory obs-coverage; \
+		$(MAKE) --no-print-directory obs-config-check; \
+		$(MAKE) --no-print-directory obs-grafana-e2e; \
+		$(MAKE) --no-print-directory obs-resilience-e2e
+
+# SigNoz 是独立、显式 opt-in 的兼容性门禁；它不进入默认 PR 或 Grafana release
+# graph，也不隐藏地清理另一个 Compose project。真实查询失败必须原样传播。
+obs-signoz-compat-gate:
+	@set -eu; \
+		$(MAKE) --no-print-directory obs-config-check; \
+		$(MAKE) --no-print-directory obs-signoz-e2e
 
 # 破坏性重置：无 CONFIRM_RESET=1 直接拒绝（exit 2），不进入 reset 脚本。
 # reset 本身 label-scoped：只删当前 project + longtermism.observability=true

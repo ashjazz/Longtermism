@@ -91,6 +91,7 @@ Compose fail-fast，不会静默改端口。
 
 ```bash
 cp deploy/observability/.env.local.example deploy/observability/.env.local
+chmod 0600 deploy/observability/.env.local
 ```
 
 首次空 volume 启动前，按 [deploy/observability/README.md](../../deploy/observability/README.md)
@@ -161,7 +162,7 @@ make obs-config-check
 
 证据边界：
 
-- `make verify` 当前真实 recipe 仅为 `go vet ./...` + `go test ./...`；最终 release 聚合目标属于后续任务，不能把尚未实现的 fmt/build/security gate 记在它名下。
+- `make verify` 当前真实 recipe 仅为 `go vet ./...` + `go test ./...`；最终 RC 由已实现的 `make obs-release-gate` 串行聚合 verify、coverage、config、Grafana E2E 与 resilience E2E，不能把尚未实现的 fmt/build/security gate 记在它名下。
 - `make obs-contract` 运行观测装配、local smoke 与 OTel mapper 的离线测试。
 - `make obs-smoke-offline` 运行受控 observability-chain eval，不连接真实 Collector。
 - `make obs-platform-smoke` 使用 `-mod=readonly`、`-count=1` 与 30 秒 timeout，证明 local payload/identity/privacy contract；全部真实 backend checks 必须是 `skipped/not_verified_local_profile`。
@@ -185,11 +186,12 @@ make obs-coverage
 ```bash
 make obs-config-check
 make obs-grafana-up
-make obs-stack-health OBS_PROFILE=grafana
+OBS_PROFILE=grafana make obs-status
 ```
 
-首次启动必须先完成 §3.3 cold bootstrap。`obs-stack-health` 只打印 Grafana project 的 Compose
-状态，不是通过证据。应用必须已按 §3.4 在另一个终端运行。
+首次启动必须先完成 §3.3 cold bootstrap。`obs-status` 不读取 Compose env，只按 project label
+投影 `service/state/health/version`，并固定声明 `evidence=diagnostic_only` 与
+`query_evidence=not_run`；container healthy 不是通过证据。应用必须已按 §3.4 在另一个终端运行。
 
 ### 5.2 Infra-only 查询式 smoke
 
@@ -298,8 +300,9 @@ make obs-signoz-chat-smoke
 make obs-signoz-down
 ```
 
-备选 profile 没有 `obs-stack-health` 支持，
-也不包含主线专属 score/privacy 深度 smoke 或 Grafana alerts；健康与兼容性必须由 SigNoz 三信号查询、
+备选 profile 不使用会解析 Compose 配置的 `obs-stack-health`；需要容器 inventory 时运行
+`OBS_PROFILE=signoz make obs-status`，但它不包含主线专属 score/privacy 深度 smoke 或 Grafana alerts。
+健康与兼容性必须由 SigNoz 三信号查询、
 Langfuse AI trace/score checks 和新报告证明。真实 chat 仍产生模型 API 费用。
 
 当前 3301 publication/8080 healthcheck 差异、dashboard 导入和 query filter 仍需首次真实 E2E 校准；
@@ -338,7 +341,7 @@ make obs-grafana-down
 
 ```bash
 make obs-config-check
-make obs-stack-health OBS_PROFILE=grafana
+OBS_PROFILE=grafana make obs-status
 find build/observability/smoke-reports -maxdepth 1 -type f -name '*.json' -print
 ```
 
@@ -363,7 +366,10 @@ jq '{schema_version,run_id,profile,scenario,status,checks,cleanup}' "$REPORT_PAT
 | `cleanup` | paused containers、queue/storage/run residue、临时凭据与临时数据所有权 |
 
 `model_upstream` 只用 provider response 归因，不能借 Collector/Grafana 失败证据改写为 observability
-故障。SigNoz 没有可用的 `obs-status`/health target；使用分段 query smoke 或完整 E2E 诊断。
+故障。两个 profile 分别可用 `OBS_PROFILE=grafana make obs-status` 或
+`OBS_PROFILE=signoz make obs-status` 查看低敏容器 inventory，
+但该命令不查询 Prometheus/Grafana/SigNoz/Langfuse，也不生成 SmokeReport；必须使用分段 query
+smoke 或完整 E2E 才能形成验收证据。
 
 ## 11. Cleanup 与安全 reset
 
@@ -444,7 +450,7 @@ confirm 模式、`obs-reset` target 或传入 run-root；当前实现会接受 `
 | PR | `make verify`、`make obs-contract`、`make obs-smoke-offline`、`make obs-platform-smoke`、`make eval-smoke`、`make obs-config-check` | 无 Docker、无真实凭据、零外部 API 费用；module cache 缺失时可能下载 Go 依赖；只产生离线/静态证据 |
 | 观测配置变更 | PR 行全部命令 + `make obs-config-check`；涉及 Collector/backend/provisioning/retention 且有隔离容器环境时再运行 `make obs-grafana-e2e` | 静态部分无 Docker；live 部分需要 Docker、完整凭据和本机预算，真实模型 API 可能计费；必须保存新报告 |
 | 阶段里程碑 | Level 0 + `make obs-config-check` + `make obs-grafana-e2e` + `make obs-resilience-e2e` | 需要 Docker、Langfuse、真实模型与独占 profile，真实模型 API 可能计费；未收敛 sentinel 必须保持失败证据 |
-| Release candidate | `make verify` + `make obs-coverage` + `make obs-config-check` + `make obs-grafana-e2e` + `make obs-resilience-e2e`；声明 SigNoz 支持时另跑 `make obs-signoz-e2e` | 显式 Docker/credential/budget 前置，真实模型 API 可能计费；每个门禁只认本次 schema report/checklist |
+| Release candidate | 显式运行 `make obs-release-gate`（固定展开 `make verify` + `make obs-coverage` + `make obs-config-check` + `make obs-grafana-e2e` + `make obs-resilience-e2e`）；声明 SigNoz 支持时另跑独立的 `make obs-signoz-compat-gate`（内部运行 config check + `make obs-signoz-e2e`） | 显式 Docker/credential/budget 前置，真实模型 API 可能计费；任一阶段失败即停止，每个 live 门禁只认本次 schema report/checklist，status 不参与通过判定 |
 | Scheduled canary | operator job 运行 `make obs-grafana-e2e`；已有 SigNoz 支持声明时独立运行 `make obs-signoz-e2e`，resilience 只放在获批维护窗口 | 非合并门禁；需要隔离 Docker、secret manager、告警路由和调用预算，真实模型 API 可能计费；失败发运维告警 |
 
 推荐把 scheduled canary 的具体 cron 频率交给部署环境配置，而不是硬编码进仓库。最低要求是在每个
