@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -816,6 +817,26 @@ func (r *liveScenarioTestRunner) Run(context.Context) (*smoke.SmokeReport, error
 	return r.report, r.err
 }
 
+// recordingLiveScenarioRunner 只用于 composition 契约：它记录共享命令是否在
+// constructor 已经返回错误后仍进入 Run，同时把 Close 透传给真实 runner，避免
+// RED 阶段因当前缺陷成功构造 runner 而泄漏 manifest store 的文件描述符。
+type recordingLiveScenarioRunner struct {
+	delegate liveScenarioCommandRunner
+	runCalls *int
+}
+
+func (r recordingLiveScenarioRunner) Run(ctx context.Context) (*smoke.SmokeReport, error) {
+	(*r.runCalls)++
+	return r.delegate.Run(ctx)
+}
+
+func (r recordingLiveScenarioRunner) Close() error {
+	if closer, ok := r.delegate.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 func newLiveScenarioTestReport(t *testing.T, scenario, status string) *smoke.SmokeReport {
 	t.Helper()
 	var privacyEvidence []smoke.PrivacySmokeReportEvidenceInput
@@ -1324,6 +1345,311 @@ func TestDefaultLiveScenarioAssemblyConstructsWithoutNetwork(t *testing.T) {
 		if runner, err := newDefaultLiveScenarioRunner(config); err == nil || runner != nil {
 			t.Fatalf("unsafe langfuse endpoint produced runner=%v error=%v, want preflight rejection", runner, err)
 		}
+	})
+}
+
+// chat live 的 Grafana 查询能力必须来自 protected constructor，而不是仅靠调用方
+// 恰好传入一个 no-proxy transport。后者不会设置 smokeProtected，也不会在构造期拒绝
+// 非 loopback endpoint；生产上会导致付费模型已经执行后，三类证据查询才统一报
+// invalid_query。该 RED 契约把失败前移到 trigger、backend transport 和报告写入之前。
+func TestLiveChatGrafanaCompositionRequiresProtectedQueryClient(t *testing.T) {
+	const (
+		// TEST-NET 数字地址只违反 loopback 约束，不依赖 DNS，也不会因为 path、
+		// userinfo、query 等次要规则提前失败，从而精确守护 SSRF 边界。
+		unsafeEndpoint     = "http://192.0.2.10:9090"
+		chatCredential     = "synthetic-chat-credential-t203"
+		langfuseCredential = "synthetic-langfuse-credential-t203"
+		sensitiveQuery     = "sum(longtermism_llm_request_count_total)"
+	)
+
+	t.Run("ordinary query client remains fail closed", func(t *testing.T) {
+		transportCalls := 0
+		ordinary := backend.NewGrafanaQueryClient(backend.GrafanaQueryConfig{
+			PrometheusURL: "http://127.0.0.1:9090",
+			HTTPClient: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				transportCalls++
+				return nil, errors.New("synthetic transport must not be reached")
+			})},
+		})
+		chatBackend := backend.NewGrafanaChatSmokeBackend(backend.GrafanaChatSmokeBackendConfig{Grafana: ordinary})
+
+		_, err := chatBackend.BaselineLLMRequestCount(context.Background())
+		if err == nil {
+			t.Fatal("ordinary Grafana query client was accepted by the live chat backend")
+		}
+		if transportCalls != 0 {
+			t.Fatalf("ordinary Grafana query client transport calls = %d, want 0", transportCalls)
+		}
+		assertNoSensitiveCommandOutput(t, err.Error(), []string{
+			"127.0.0.1:9090",
+			"sum(longtermism_llm_request_count_total)",
+			"synthetic transport must not be reached",
+		})
+	})
+
+	t.Run("valid loopback composition reaches protected baseline query", func(t *testing.T) {
+		type observedBackendRequest struct {
+			path          string
+			query         string
+			authorization string
+		}
+
+		var backendTransportCalls atomic.Int32
+		baselineObserved := make(chan struct{})
+		var signalBaseline sync.Once
+		backendRequests := make(chan observedBackendRequest, 1)
+		localBackend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			backendTransportCalls.Add(1)
+			observed := observedBackendRequest{
+				path:          request.URL.Path,
+				query:         request.URL.Query().Get("query"),
+				authorization: request.Header.Get("Authorization"),
+			}
+			// exactly-once 由原子计数断言；这里只非阻塞采样首个请求，避免回归
+			// 产生第二次请求时 handler 卡住并让 httptest.Server.Close 永久等待。
+			select {
+			case backendRequests <- observed:
+			default:
+			}
+			signalBaseline.Do(func() { close(baselineObserved) })
+			writer.Header().Set("Content-Type", "application/json")
+			if _, err := io.WriteString(writer, `{"status":"success","data":{"resultType":"vector","result":[]}}`); err != nil {
+				t.Errorf("write synthetic backend response: %v", err)
+			}
+		}))
+		defer localBackend.Close()
+
+		var triggerCalls atomic.Int32
+		application := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			// RunChatSmoke 并发启动 baseline 与 trigger。这里让完全本地、合成的
+			// trigger 等待 baseline attempt，既证明 composition 的 protected
+			// capability，又不会把这个正向契约误写成真实付费模型调用。
+			select {
+			case <-baselineObserved:
+			case <-time.After(500 * time.Millisecond):
+			}
+			triggerCalls.Add(1)
+			writer.WriteHeader(http.StatusBadGateway)
+		}))
+		defer application.Close()
+
+		setLiveAssemblyEnvironment(t, map[string]string{
+			"LONGTERMISM_SMOKE_APP_BASE_URL":              application.URL,
+			"LONGTERMISM_SMOKE_CHAT_AUTHORIZATION":        chatCredential,
+			"LONGTERMISM_SMOKE_CHAT_MANIFEST_ROOT":        filepath.Join(t.TempDir(), "manifests"),
+			"LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL":      localBackend.URL,
+			"LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL":       localBackend.URL,
+			"LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL": localBackend.URL,
+			"LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL":   localBackend.URL,
+			"LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL": langfuseCredential,
+		})
+
+		runner, err := newDefaultLiveScenarioRunner(liveScenarioConfig{
+			Scenario: liveChatScenario,
+			Profile:  "grafana",
+			Deadline: time.Now().UTC().Add(10 * time.Second),
+		})
+		if err != nil || runner == nil {
+			t.Fatalf("valid loopback composition runner=%v error=%v, want concrete runner", runner, err)
+		}
+		if closer, ok := runner.(interface{ Close() error }); ok {
+			defer func() {
+				if closeErr := closer.Close(); closeErr != nil {
+					t.Errorf("close live chat runner: %v", closeErr)
+				}
+			}()
+		}
+
+		report, runErr := runner.Run(context.Background())
+		if runErr == nil || report == nil {
+			t.Errorf("synthetic trigger result report=%v error=%v, want bounded failure report", report, runErr)
+		}
+		if got := backendTransportCalls.Load(); got != 1 {
+			t.Errorf("protected baseline transport calls = %d, want exactly 1", got)
+		}
+		observedQuery := sensitiveQuery
+		select {
+		case request := <-backendRequests:
+			observedQuery = request.query
+			if request.path != "/api/v1/query" || !strings.Contains(request.query, "longtermism_llm_request_count_total") || len(request.query) > 4096 {
+				t.Errorf("baseline request path=%q query=%q, want bounded Prometheus count query", request.path, request.query)
+			}
+			if request.authorization != "" {
+				t.Errorf("baseline request authorization = %q, want empty", request.authorization)
+			}
+		default:
+			t.Error("protected baseline request was not observed")
+		}
+		if got := triggerCalls.Load(); got != 1 {
+			t.Errorf("synthetic local trigger calls = %d, want 1", got)
+		}
+		serializedReport, marshalErr := json.Marshal(report)
+		if marshalErr != nil {
+			t.Fatalf("marshal bounded failure report: %v", marshalErr)
+		}
+		runOutput := ""
+		if runErr != nil {
+			runOutput = runErr.Error()
+		}
+		assertNoSensitiveCommandOutput(t, runOutput+string(serializedReport), []string{
+			application.URL,
+			localBackend.URL,
+			observedQuery,
+			sensitiveQuery,
+			chatCredential,
+			langfuseCredential,
+		})
+	})
+
+	t.Run("unsafe Grafana endpoint returns sanitized construction error", func(t *testing.T) {
+		localBackend := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("backend transport must not be reached during composition")
+		}))
+		defer localBackend.Close()
+
+		setLiveAssemblyEnvironment(t, map[string]string{
+			"LONGTERMISM_SMOKE_APP_BASE_URL":              localBackend.URL,
+			"LONGTERMISM_SMOKE_CHAT_AUTHORIZATION":        chatCredential,
+			"LONGTERMISM_SMOKE_CHAT_MANIFEST_ROOT":        filepath.Join(t.TempDir(), "manifests"),
+			"LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL":      localBackend.URL,
+			"LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL":       localBackend.URL,
+			"LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL": unsafeEndpoint,
+			"LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL":   localBackend.URL,
+			"LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL": langfuseCredential,
+		})
+
+		runner, err := newDefaultLiveScenarioRunner(liveScenarioConfig{
+			Scenario: liveChatScenario,
+			Profile:  "grafana",
+			Deadline: time.Now().UTC().Add(10 * time.Second),
+		})
+		if runner != nil {
+			if closer, ok := runner.(interface{ Close() error }); ok {
+				if closeErr := closer.Close(); closeErr != nil {
+					t.Fatalf("close unexpectedly constructed runner: %v", closeErr)
+				}
+			}
+			t.Fatalf("unsafe Grafana endpoint produced runner %T, want nil", runner)
+		}
+		if !errors.Is(err, errLiveScenarioConfiguration) {
+			t.Fatalf("construction error = %v, want stable live configuration error", err)
+		}
+		assertNoSensitiveCommandOutput(t, err.Error(), []string{
+			unsafeEndpoint,
+			sensitiveQuery,
+			chatCredential,
+			langfuseCredential,
+		})
+	})
+
+	t.Run("unsafe Grafana endpoint aborts composition before paid trigger", func(t *testing.T) {
+		triggerCalls := 0
+		application := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			triggerCalls++
+			writer.WriteHeader(http.StatusBadGateway)
+			if _, err := io.WriteString(writer, unsafeEndpoint+" "+sensitiveQuery+" "+chatCredential+" "+langfuseCredential); err != nil {
+				t.Errorf("write synthetic trigger response: %v", err)
+			}
+		}))
+		defer application.Close()
+		backendTransportCalls := 0
+		localBackend := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			backendTransportCalls++
+		}))
+		defer localBackend.Close()
+
+		setLiveAssemblyEnvironment(t, map[string]string{
+			"LONGTERMISM_SMOKE_APP_BASE_URL":              application.URL,
+			"LONGTERMISM_SMOKE_CHAT_AUTHORIZATION":        chatCredential,
+			"LONGTERMISM_SMOKE_CHAT_MANIFEST_ROOT":        filepath.Join(t.TempDir(), "manifests"),
+			"LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL":      localBackend.URL,
+			"LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL":       localBackend.URL,
+			"LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL": unsafeEndpoint,
+			"LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL":   localBackend.URL,
+			"LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL": langfuseCredential,
+		})
+
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		constructorCalls := 0
+		runnerRunCalls := 0
+		var constructorRunner liveScenarioCommandRunner
+		var constructorErr error
+		writeCalls := 0
+		var serializedReport []byte
+		dependencies := liveScenarioCommandDependencies{
+			ResolveConfig: func(context.Context, string) (liveScenarioConfig, error) {
+				return liveScenarioConfig{
+					Scenario: liveChatScenario,
+					Profile:  "grafana",
+					Deadline: time.Now().UTC().Add(10 * time.Second),
+				}, nil
+			},
+			NewRunner: func(config liveScenarioConfig) (liveScenarioCommandRunner, error) {
+				constructorCalls++
+				constructorRunner, constructorErr = newDefaultLiveScenarioRunner(config)
+				if constructorRunner == nil || constructorErr != nil {
+					return constructorRunner, constructorErr
+				}
+				return recordingLiveScenarioRunner{delegate: constructorRunner, runCalls: &runnerRunCalls}, nil
+			},
+			WriteReport: func(_ string, report *smoke.SmokeReport) (string, error) {
+				writeCalls++
+				encoded, err := json.Marshal(report)
+				if err != nil {
+					return "", err
+				}
+				serializedReport = encoded
+				return filepath.Join(infrastructureSmokeReportDirectory, "chat-t203.json"), nil
+			},
+		}
+
+		exitCode := runLiveScenario(
+			context.Background(),
+			liveChatScenario,
+			[]string{"--live", "-profile", "grafana"},
+			&stdout,
+			&stderr,
+			dependencies,
+		)
+
+		if exitCode != 1 {
+			t.Errorf("runLiveScenario() exit = %d, want runtime failure 1", exitCode)
+		}
+		if constructorCalls != 1 {
+			t.Errorf("live runner constructor calls = %d, want 1", constructorCalls)
+		}
+		if constructorRunner != nil {
+			t.Errorf("live runner constructor returned %T, want nil for unsafe endpoint", constructorRunner)
+		}
+		if !errors.Is(constructorErr, errLiveScenarioConfiguration) {
+			t.Errorf("live runner constructor error = %v, want stable configuration error", constructorErr)
+		}
+		if runnerRunCalls != 0 {
+			t.Errorf("live runner Run calls = %d, want 0 after construction failure", runnerRunCalls)
+		}
+		if triggerCalls != 0 {
+			t.Errorf("application trigger calls = %d, want 0 before protected Grafana construction", triggerCalls)
+		}
+		if backendTransportCalls != 0 {
+			t.Errorf("backend transport calls = %d, want 0 before protected Grafana construction", backendTransportCalls)
+		}
+		if writeCalls != 0 {
+			t.Errorf("report write calls = %d, want 0 for construction failure", writeCalls)
+		}
+		if stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Errorf("construction failure output = stdout:%q stderr:%q, want empty", stdout.String(), stderr.String())
+		}
+		constructionOutput := ""
+		if constructorErr != nil {
+			constructionOutput = constructorErr.Error()
+		}
+		assertNoSensitiveCommandOutput(t, constructionOutput+stdout.String()+stderr.String()+string(serializedReport), []string{
+			unsafeEndpoint,
+			sensitiveQuery,
+			chatCredential,
+			langfuseCredential,
+		})
 	})
 }
 
