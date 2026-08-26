@@ -430,3 +430,60 @@ US1 + US2 + US3 验收完成
 - T192 + T193-T197 -> T198；T185 是历史 umbrella，只有 T198 验收通过后才允许标记完成。
 - T199 -> T200 -> T201 -> T176；没有新的真实 passed report 时 T176 保持未完成。
 - T181 保持 CLI RED；只有 T185/T198、T176/T201 和既有 T182-T184 全部完成，才允许继续 T108 并使 T181 GREEN。T108 完成后才允许 T109。
+
+## Phase 10：Bug Fix - 真实 Chat Live 证据闭环修复（User Story 2 / P1）
+
+**缺陷基线**：首次真实模型 chat 已取得 HTTP 200、真实 model/finish reason 和 Tempo/Loki 直接证据，但正式 smoke 因六类缺陷失败：CLI 为 chat backend 注入未受保护的 Grafana client；锁定的 self-hosted Langfuse v3 将 OTel correlation 放在 `metadata.attributes` 而 adapter 仍查询/解析旧顶层键；provider 缺失 `usage` 被误投影为真实零值；生产 provider attempt 未写入已存在的 LLM instruments；Prometheus 空序列和异步 export/scrape 未被正确轮询；单一 60 秒 wall deadline 没有为模型执行与后端证据收敛分别保留预算。本 Phase 只关闭这些已复现缺陷，不借机扩展 provider、平台或公共 API 能力。
+
+**用户故事目标**：在显式 opt-in、隔离凭据和真实 OpenAI-compatible provider 下，一次最小 chat 能返回真实且可验证的 model/finish/usage，并在有界证据窗口内由 Tempo、Loki、Langfuse 和 Prometheus 四个 backend 关联到同一运行；任一事实缺失、身份冲突或查询未实际发生都必须 fail-closed。
+
+**独立验收标准**：先用 fake provider、counting transport 和 fake clock 完成全离线回归，证明缺配置零外连、每次真实 provider network attempt 恰好记录一次低基数 request metric、缺失 `usage` 不会变成零 token 事实、四类 backend 可在各自收敛延迟后通过；随后仅在用户再次明确批准费用后执行一次真实 `chat --live`，新报告必须为 schema-valid `passed`、权限 0600、敏感字符串零命中，并同时包含真实 model/finish/usage 以及 Tempo/Loki/Langfuse/Prometheus 的同运行证据。
+
+### Contract calibration
+
+- [X] T202 [US2] 在 `specs/003-real-observability-backends/spec.md`、`specs/003-real-observability-backends/data-model.md`、`specs/003-real-observability-backends/contracts/runtime-configuration.md` 与 `specs/003-real-observability-backends/contracts/telemetry-contract.md` 校准本次 bug fix 的事实契约 per FR-004/FR-005/FR-011/FR-012/SC-002；质量门控：显式区分最大 60 秒 provider execution deadline 与 API 成功后最大 60 秒 evidence convergence deadline，并把总报告上限固定为 120 秒而非无界等待；`usage` 必须具有“provider 明确返回”语义，缺失不能解释为真实零值；锁定 Langfuse self-hosted v3 的 legacy v1 observations schema（native `traceId`/`id` + `metadata.attributes`）；LLM request/duration 每个真实 network attempt 恰好一次，token/cost 仅在相应事实可用时记录，所有 metric labels 继续受低基数 allowlist 约束。
+
+### Tests - RED
+
+- [ ] T203 [P] [US2] 在 `cmd/obs-smoke/main_test.go` 编写 chat live Grafana composition RED 契约；质量门控：证明 chat scenario 只能注入 `NewGrafanaSmokeQueryClient` 产生的 protected client，普通 `NewGrafanaQueryClient` 保持 fail-closed，构造失败在 trigger/transport 前退出且 endpoint、query、credential 不进入 stdout、error 或 report。
+- [ ] T204 [P] [US2] 在 `internal/observability/backend/langfuse_chat_smoke_test.go` 编写锁定 Langfuse self-hosted v3.185 observations fixture 的 RED 契约；质量门控：服务端 filter 只使用可靠 native `traceId`、observation `id` 与 bounded start-time window，客户端再严格验证 `metadata.attributes.longtermism.smoke.run_id`、`metadata.attributes.request.id`、`metadata.attributes.longtermism.ai.trace_id`；旧顶层键、foreign identity、重复/分页、窗口外、缺字段和超大响应均 fail-closed，禁止增加猜测式双 schema fallback。
+- [ ] T205 [P] [US2] 在 `pkg/ai/llm/openai/provider_test.go` 与 `pkg/ai/llm/llm_test.go` 编写非流式 usage presence RED 契约；质量门控：区分 JSON 中完全缺失 `usage`、显式合法零 usage、标准非零 usage、`null`、负数/总数不一致和超大值；只有 provider 明确返回且通过一致性校验的 usage 才能成为领域事实，错误不得包含 provider body、endpoint 或 credential。
+- [ ] T206 [P] [US2] 在 `internal/logic/chat/chat_test.go` 编写 chat usecase usage 防御 RED 契约；质量门控：即使 fake/未来 provider 绕过 OpenAI adapter，未报告 usage 也在 generation/evaluator/evidence/HTTP success 投影前归类为稳定 upstream invalid-response；显式零 usage 与合法非零 usage仍可区分，失败不得伪造 token/cost/eval evidence 或覆盖既有 request/AI identity。
+- [ ] T207 [P] [US2] 在 `pkg/ai/resilience/provider_wrapper_test.go` 编写 provider network-attempt observer RED 契约；质量门控：覆盖首次成功、可重试后成功、最终 429/5xx、timeout、caller cancellation、nil/invalid response，每次实际进入底层 provider adapter 恰好产生一条不可变 attempt fact，retry/backoff 本身不重复计数，observer 失败不改变 provider 业务结果且不接收 prompt、messages、credential 或原始错误体。
+- [ ] T208 [P] [US2] 在 `internal/observability/metrics_test.go` 编写 provider-attempt → OTel LLM instruments RED 契约；质量门控：request count/duration 对 success/failure/timeout/cancelled/invalid_response 各记录一次；usage 可用时才记录 input/output token，cost 可用时才记录 cost，unavailable 不以数值 0 冒充事实；provider/model/outcome/currency/estimate status 走显式 allowlist，request/trace/AI/run/prompt identity 永不成为 metric label。
+- [ ] T209 [P] [US2] 在 `internal/cmd/llm_provider_test.go` 与 `internal/cmd/chat_runtime_test.go` 编写 production metrics composition RED 契约；质量门控：共享 `ObservabilityBootstrap` 的 MeterProvider 只构造一个 attempt metrics adapter，并在 resilience wrapper 创建前注入；chat disabled/telemetry inactive/provider build failure 均不产生 metric，启用路径的 retry attempt 数与 counter delta 完全一致，禁止 usecase、HTTP middleware 与 wrapper 对同一 attempt 重复记录。
+- [ ] T210 [P] [US2] 在 `internal/observability/backend/grafana_chat_smoke_test.go` 编写 Prometheus 零基线 RED 契约；质量门控：固定查询为显式 `sum(longtermism_llm_request_count_total) or vector(0)`，空历史序列得到唯一标量 0，非空序列保持真实累计值；多结果、label 未聚合、NaN/负数/小数、畸形或超大响应继续由 strict decoder 拒绝，不能用 decoder 默认值制造零证据。
+- [ ] T211 [P] [US2] 在 `internal/observability/smoke/chat_runner_test.go` 编写双阶段 deadline 与 Prometheus delta polling RED 契约；质量门控：使用 fake clock 覆盖接近 60 秒的 provider 成功后仍获得独立、最多 60 秒的 evidence convergence 窗口；Tempo/Loki/Langfuse/Prometheus 均在各自延迟后重试，Prometheus 仅在 `after-baseline > 0` 时通过；provider 超时、evidence 超时、counter reset/倒退、旧 run、窗口外和 identity conflict 均产生稳定低敏失败且总运行不超过 120 秒，测试禁止 `time.Sleep()`。
+- [ ] T212 [P] [US2] 在 `internal/cmd/observability_exporter_test.go`、`internal/cmd/observability_runtime_config_test.go`、`hack/observability/collector_grafana_config_test.sh` 与 `hack/observability/compose_grafana_test.sh` 编写 local live profile 遥测收敛预算 RED 契约；质量门控：metric periodic export、Collector batch/tail decision 与 Prometheus scrape 的显式上限能够在 T202 的 60 秒 evidence window 内组合完成，配置缺失/非正数/超上限 fail-fast，普通生产默认与 SigNoz profile 不被静默改写，静态测试不得启动 Docker 或访问真实 endpoint。
+
+### Implementation - GREEN/REFACTOR
+
+- [ ] T213 [P] [US2] 在 `cmd/obs-smoke/main.go` 将 chat live composition 切换为受保护的 Grafana smoke query client；质量门控：使 T203 GREEN，显式处理 constructor error，Tempo/Loki/Prometheus 复用同一 protected transport policy，score/privacy/infra scenario 的既有 client 与 credential 边界保持不变。
+- [ ] T214 [P] [US2] 在 `internal/observability/backend/langfuse_chat_smoke.go` 实现锁定 Langfuse self-hosted v3 observations adapter；质量门控：使 T204 GREEN，仅以 native trace/observation identity 和 bounded window 缩小服务端结果，再从真实 `metadata.attributes` 做完整客户端 correlation 校验；结果数量/分页/body 继续有界，缺失事实返回稳定错误而不是回填 target，privacy Langfuse adapter 不受非必要改动。
+- [ ] T215 [P] [US2] 在 `pkg/ai/llm/llm.go` 与 `pkg/ai/llm/openai/provider.go` 实现不可混淆的 usage availability 领域语义和非流式协议映射；质量门控：使 T205 GREEN，JSON presence 由 adapter 显式捕获，合法显式零值与 missing/null 保持不同状态，缺失或不一致 usage 映射为稳定 invalid-response 且 raw upstream body 不越过 adapter；不为兼容旧 fixture 猜测 usage，调用方和测试 fixture 必须显式补齐事实。
+- [ ] T216 [US2] 在 `internal/logic/chat/chat.go`、`internal/logic/chat/evaluator.go` 与相关 fixture 实现 usage fail-closed 防御；质量门控：使 T206 GREEN，generation span、evaluator、local evidence、API Usage 和后续 metric 只消费已报告且一致的 usage，缺失事实不被零值填充；同步修正语义不完整的旧测试数据，不改变正常模型成功与 observability side-channel failure 分离契约。
+- [ ] T217 [P] [US2] 在 `pkg/ai/resilience/provider_wrapper.go` 与 `pkg/ai/resilience/provider_retry.go` 实现窄的 provider network-attempt fact/observer 端口；质量门控：使 T207 GREEN，在每次调用底层 adapter 的唯一边界用单调时钟结算 duration/outcome/requested+actual model/usage availability，重试每次独立结算且 observer panic/error 被隔离；核心端口不导入 OTel、Prometheus 或 app-layer 包，不携带高敏输入/响应正文。
+- [ ] T218 [P] [US2] 在 `internal/observability/llm_metrics.go` 与 `internal/observability/metrics.go` 实现 provider-attempt metrics adapter；质量门控：使 T208 GREEN，复用现有 `RecordLLM` instruments 但增加显式 usage/cost availability，request/duration 始终按 attempt 记录，token/cost unavailable 时不执行对应 Add；标签集合有限且实际 model 只允许配置 allowlist，adapter 写入失败只形成内部 telemetry failure，不反向改变 provider outcome。
+- [ ] T219 [US2] 在 `internal/cmd/llm_provider.go` 与 `internal/cmd/chat_runtime.go` 完成 attempt metrics adapter 的 composition-root 装配；质量门控：使 T209 GREEN，由现有全局 MeterProvider 和已校验 provider/model snapshot 构造一次并注入 T217，retry attempt 与 counter 一一对应；不得在 chat usecase/controller 再计同一请求，不创建第二个 telemetry lifecycle，关闭顺序继续由 `ObservabilityBootstrap` 单点负责。
+- [ ] T220 [P] [US2] 在 `internal/observability/backend/grafana_chat_smoke.go` 实现 Prometheus 显式零基线查询并校准最长 bounded chat query window；质量门控：使 T210 GREEN，decoder 仍要求单一 unlabeled vector，零值必须来自查询表达式的真实 `vector(0)` 响应；query client 保持 protected-only、body/结果上限和低敏错误映射，最长窗口与 T202 的总 120 秒上限一致但拒绝更长或反向窗口。
+- [ ] T221 [US2] 在 `internal/observability/smoke/chat_runner.go` 与 `cmd/obs-smoke/main.go` 实现 provider execution/evidence convergence 双阶段预算及 Prometheus delta polling；质量门控：使 T211 GREEN，baseline 在 trigger 前有界取得，API 成功时以真实完成时刻启动独立 evidence deadline，四 backend 在同一 run/identity 与各自短 query timeout 下轮询至通过或收敛窗口耗尽；任何失败仍先安全写 schema-valid report，provider 与 telemetry 错误域分离，总 wall cap 120 秒且取消立即传播。
+- [ ] T222 [P] [US2] 在 `internal/cmd/observability_runtime_config.go`、`internal/cmd/observability_exporter.go`、`manifest/config/config.grafana-smoke.example.yaml`、`deploy/observability/collector/collector-grafana.yaml` 与 `deploy/observability/prometheus/prometheus.yaml` 实现显式 local live 遥测收敛配置；质量门控：使 T212 GREEN，metric export interval、batch/tail decision 和 scrape interval 的最坏组合小于 evidence window并保留各自资源上限；环境变量只覆盖允许的 duration 字段，不引入 secret，Collector 仍为应用唯一出口，生产 profile 未配置时使用已记录的安全默认而非 smoke 隐式值。
+
+### Documentation and verification gates
+
+- [ ] T223 [US2] 在 `specs/003-real-observability-backends/quickstart.md`、`deploy/observability/README.md` 与 `specs/003-real-observability-backends/checklists/real-backend-acceptance.md` 更新 bug fix 运行与判读手册；质量门控：分别说明 execution/evidence timeout、Langfuse v3 schema/version 边界、usage-required provider contract、Prometheus zero-baseline/delta 语义和 live 前置凭据，不把旧 failed report 写成通过证据，不记录 endpoint、API key、authorization、原始 prompt/response 或其它敏感值。
+- [ ] T224 [US2] 执行本 Phase 的离线质量与安全门禁并把低敏结果写入 `specs/003-real-observability-backends/checklists/final-verification.md`；质量门控：至少运行所有 T203-T212 定向 RED→GREEN 证据、`git diff --check`、`make verify`、`go test -race ./pkg/ai/llm/... ./pkg/ai/resilience/... ./internal/logic/chat/... ./internal/observability/... ./internal/cmd/... ./cmd/obs-smoke/...`、覆盖率门禁、secret scan 与 `make obs-config-check`，counting transport 必须证明零意外外连；真实 provider、Docker backend 和付费调用仍保持未执行，任何失败或未运行项必须阻止 T225。
+- [ ] T225 [US2] 在用户再次明确批准本次费用后执行一次全新的 Grafana+Langfuse `chat --live` 并将脱敏复盘写入 `docs/journal/0014-real-chat-live-bug-fix.md` 与 `specs/003-real-observability-backends/checklists/real-backend-acceptance.md`；质量门控：仅接受本次 run 新生成的 schema-valid `passed` report，文件权限 0600、forbidden-string scan 为 0，API 事实含真实 actual model、finish reason 和 provider-reported usage，Tempo/Loki/Langfuse/Prometheus 四项均 attempted/passed 且 correlation/window 一致；运行后停止本次应用与容器但保留既有 named volumes，轮换/撤销临时凭据由其所有者执行，报告失败时记录稳定根因并保持任务未完成，禁止重复付费重试。
+
+### Phase 10 Dependency Gate
+
+- T202 是本 Phase 的事实语义前置；未先校准 SC-002、usage availability、Langfuse v3 schema 与 metric attempt 语义时，不得修改实现。
+- T203-T212 必须先各自取得 RED；T203 -> T213，T204 -> T214，T205 -> T215 -> T206 -> T216，T207 -> T217，T208 -> T218，T207-T209 + T217-T218 -> T219，T210 -> T220，T211 + T220 -> T221，T212 -> T222。
+- T213-T222 全部 GREEN 后才允许 T223；T223 -> T224，且 T224 的全离线门禁是唯一允许进入付费 live 的技术前置。
+- T225 必须串行、显式 opt-in 且等待用户对该次费用单独授权；旧 failed report、直接平台手工查询、容器 healthy、零请求/零计数或 skipped check 均不能替代新的 passed report。
+
+### Phase 10 Parallel execution opportunities
+
+- T203-T212 在 T202 完成后位于互不重叠的主要测试 surface，可并行取得 RED；同一文件涉及的 usage 契约按 T205 -> T206 顺序推进。
+- GREEN 阶段可并行推进 T213、T214、T215、T217、T218、T220、T222；T216、T219、T221 分别等待其领域模型、metrics port 和 query/polling 前置完成。
+- 文档、全离线门禁和真实付费 live 必须按 T223 -> T224 -> T225 串行执行，避免以未验证实现污染验收证据或产生重复费用。

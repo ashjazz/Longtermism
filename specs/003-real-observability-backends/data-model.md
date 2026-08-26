@@ -70,6 +70,20 @@ Resource 是所有信号共享的低基数身份，不携带 request/user/sessio
 - adapter 不得把 `ai_trace_id` 当作 OTel trace ID 或 Langfuse trace ID。
 - 跨服务 baggage 只允许已批准低敏字段；实际 OTel trace/span 由 TraceContext 传播。
 
+### Langfuse self-hosted v3 查询投影
+
+锁定的 Langfuse 3.185 只使用 legacy v1 `GET /api/public/observations`。服务端查询只用平台原生且可靠的 `traceId`、observation `id` 和 bounded `startTime` window 缩小候选集；返回行的 correlation 必须再由客户端从以下真实嵌套位置完整验证：
+
+| 领域事实 | Langfuse v3 返回位置 |
+| --- | --- |
+| smoke marker | `metadata.attributes.longtermism.smoke.run_id` |
+| request identity | `metadata.attributes.request.id` |
+| AI trace identity | `metadata.attributes.longtermism.ai.trace_id` |
+| service trace identity | 顶层 `traceId` |
+| semantic span identity | 顶层 `id` |
+
+旧的顶层 metadata key、target 回填、名称/时间猜测或 v1/v2 双 schema fallback 都不代表平台事实。缺失、冲突、重复、分页未闭合或窗口外结果必须 fail-closed。
+
 ## 5. ChatCommand / ChatResult
 
 ### ChatCommand
@@ -91,6 +105,31 @@ Resource 是所有信号共享的低基数身份，不携带 request/user/sessio
 | `usage` | UsageSummary | 低敏 token 计数 |
 | `identity` | CorrelationIdentity | request/service/AI 关联 |
 | `eval_summary` | EvalSummary? | 仅 debug；序列化后不超过 1 KiB |
+
+### ProviderUsage / UsageSummary
+
+normalized provider response 在进入 ChatResult 前必须携带显式 usage availability：
+
+| 字段 | 类型 | 规则 |
+| --- | --- | --- |
+| `availability` | enum | `reported` 或 `unavailable`；只由 provider adapter 根据协议响应存在性设置 |
+| `summary` | UsageSummary? | 仅 `reported` 时存在；各 token 计数非负且满足 provider/领域一致性约束 |
+
+`reported` 且所有计数为 0 是一个合法、可测试的 provider 事实；JSON 中缺失 `usage` 或显式 `null` 是 `unavailable`，不得通过 Go 零值变成前者。本阶段的非流式 chat success contract 要求 `reported`，因此 `unavailable` 在 generation、evaluator、evidence 和 HTTP success 投影之前归类为稳定的 upstream invalid-response。该失败仍保留已创建的 request/AI identity，但不制造 token、cost 或 eval 事实。
+
+### ProviderAttemptFact
+
+每次真正进入底层 provider adapter 的 network attempt 都产生一条不可变低敏事实；一次 resilience retry lifecycle 可以包含多条 attempt fact。
+
+| 字段 | 规则 |
+| --- | --- |
+| `provider`、`requested_model`、`actual_model?` | model 进入 metrics 前必须经过配置 allowlist；未知值收敛为 `other` |
+| `started_at`、`duration` | 使用单调时钟结算；duration 非负 |
+| `outcome` | 闭合集合 `succeeded`、`failed`、`timeout`、`cancelled`、`invalid_response` |
+| `usage` | `ProviderUsage`；只有 `reported` 才允许记录 token instruments |
+| `cost_availability`、`cost?` | `actual`、`estimated` 或 `unavailable`；只有可用时记录 cost instrument |
+
+request count 与 duration 对每个真实 network attempt 恰好记录一次，包括 retry；retry/backoff 动作本身不产生 attempt。fact 不携带 messages、prompt、credential、endpoint、provider body、原始错误文本或任何高基数 correlation identity，observer 失败也不改变 provider 业务结果。
 
 ## 6. APIEnvelope<T> / ResponseMeta
 
@@ -190,9 +229,14 @@ queued -> sending -> sent
 | `started_at` | timestamp | UTC；查询下界 |
 | `request_id` | string? | 请求完成后填充 |
 | `ai_trace_id` | string? | chat 场景填充 |
-| `deadline` | timestamp | 后端轮询上界 |
+| `provider_execution_deadline` | timestamp? | chat trigger 的第一阶段上界；不晚于 `started_at + 60s` |
+| `evidence_started_at` | timestamp? | API 成功完成的真实时刻；不得用运行开始时间或配置值猜测 |
+| `evidence_deadline` | timestamp | backend 轮询上界；chat 中不晚于 `evidence_started_at + 60s` |
+| `report_deadline` | timestamp | 整次 chat smoke 的最终上界；不晚于 `started_at + 120s` |
 
 run ID 与 marker 可进入 span/log/report，不进入 metrics labels。
+
+chat 的 backend query window 固定为 `[started_at, evidence_deadline]`，以覆盖发生在 API 完成前的 generation 事实；它最多 120 秒。provider 失败不会启动 evidence convergence success path，但仍必须在 `report_deadline` 前生成低敏失败报告。infra-only 继续使用单一 60 秒窗口，score projection 从本地 evidence 持久化后使用独立 120 秒窗口。
 
 ## 12. BackendCheckResult / SmokeReport
 

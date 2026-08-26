@@ -103,7 +103,12 @@ ai:
 
 Version-controlled configuration records env names, not values. The LLM safe snapshot contains the
 API-key env name plus `CredentialPresent` and `BaseURLPresent`; it never contains the resolved
-URL or key. Chat remains disabled until URL, model, and key requirements are complete.
+URL or key. Chat remains disabled until URL, model, and key requirements are complete. The
+effective provider execution timeout must be positive and no more than 60 seconds, including all
+configured retries/backoff under the single resilience lifecycle. A successful non-streaming
+provider response must explicitly contain a standard `usage` object; missing or `null` usage is an
+invalid upstream response, while an explicitly present all-zero usage object remains distinct and
+is validated normally.
 
 Score projection reads `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, and
 `LANGFUSE_SECRET_KEY` directly at composition. All absent means `not_configured`; a partial set
@@ -135,6 +140,27 @@ bounded replay registry.
 Evidence: `internal/cmd/observability_runtime_config_test.go —
 TestResolveChatSmokeRuntimeConfigRequiresCompleteProtectedAdmission`.
 
+### 2.4 Live-chat execution and evidence budgets
+
+Live chat uses two consecutive bounded phases rather than one shared deadline:
+
+| Phase | Start | Maximum | Ownership |
+| --- | --- | --- | --- |
+| provider execution | immediately before the protected trigger/provider lifecycle | 60 seconds | application `ai.llm.timeout`, capped by this contract |
+| evidence convergence | actual successful API completion | 60 seconds | smoke runner; polls Tempo, Loki, Langfuse and Prometheus |
+| complete chat report | smoke `started_at` | 120 seconds total | smoke runner hard cap |
+
+The metric baseline is obtained before the trigger under its own short timeout and may overlap
+provider execution; it must not extend the final report deadline. Evidence polling cannot begin
+with a stale precomputed timestamp, and a fast model does not donate unused execution budget to an
+evidence window longer than 60 seconds. Parent cancellation always shortens both phases.
+
+The local Grafana live profile must expose explicit metric periodic-export, Collector
+batch/tail-decision, and Prometheus scrape intervals whose documented worst-case composition fits
+inside the 60-second evidence window. Those intervals are operational configuration, not business
+facts; missing, non-positive or over-budget smoke overrides fail before the paid trigger. The
+ordinary production profile and SigNoz profile are not silently rewritten by chat smoke values.
+
 ## 3. Fail-fast matrix
 
 | Condition | Required behavior |
@@ -145,6 +171,8 @@ TestResolveChatSmokeRuntimeConfigRequiresCompleteProtectedAdmission`.
 | mode `collector` without valid endpoint, protocol, or timeout | startup error |
 | production plus insecure Collector transport | startup error in the current composition |
 | chat enabled without provider URL/key/model | startup error |
+| provider timeout non-positive or greater than 60 seconds | startup error |
+| successful provider envelope without explicit valid usage | stable upstream invalid-response before generation/eval/HTTP success projection |
 | `content_raw` outside local/test, without explicit opt-in, or inconsistent with opt-in | startup error |
 | unknown payload mode | startup error |
 | smoke disabled | infra-smoke route absent/404; chat smoke headers are rejected before provider work |
@@ -193,21 +221,30 @@ The smoke command—not the application—resolves:
 
 | Adapter | Endpoint reference | Credential reference | Bound |
 | --- | --- | --- | --- |
-| Langfuse | `LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL` | `LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL` | exact marker/window; read/count only |
+| Langfuse | `LONGTERMISM_SMOKE_LANGFUSE_QUERY_BASE_URL` | `LONGTERMISM_SMOKE_LANGFUSE_QUERY_CREDENTIAL` | native trace/observation ID + bounded window; nested correlation validation; read only |
 | AI plane | `LONGTERMISM_SMOKE_AI_PLANE_QUERY_BASE_URL` | `LONGTERMISM_SMOKE_AI_PLANE_QUERY_CREDENTIAL` | exact marker; no pipeline/queue mutation |
 | SigNoz | `LONGTERMISM_SMOKE_SIGNOZ_QUERY_BASE_URL` | `LONGTERMISM_SMOKE_SIGNOZ_INGESTION_KEY` | selected profile; no credential/query echo |
 | Prometheus | `LONGTERMISM_SMOKE_PROMETHEUS_QUERY_BASE_URL` | none | compiled query only |
 | Loki | `LONGTERMISM_SMOKE_LOKI_QUERY_BASE_URL` | none | compiled query only |
 | Tempo | `LONGTERMISM_SMOKE_TEMPO_QUERY_BASE_URL` | none | compiled query only |
 
-These adapters are implemented, not future placeholders. Langfuse uses bounded
-`GET /api/public/observations`; the AI plane uses bounded
+These adapters are implemented, not future placeholders. The locked self-hosted Langfuse 3.185
+profile uses legacy v1 `GET /api/public/observations`; official compatibility guidance reserves
+Observations API v2 for self-hosted Langfuse v4+. The v3 server-side filter uses only native
+`traceId`, observation `id`, and the bounded start-time window. The client must then validate
+`metadata.attributes.longtermism.smoke.run_id`, `metadata.attributes.request.id`, and
+`metadata.attributes.longtermism.ai.trace_id` from the returned row. It must not query obsolete
+top-level metadata keys, copy target values into results, or attempt a v1/v2 fallback. The AI plane uses bounded
 `GET /api/v1/observability/smoke/marker-count`. Both use a Basic credential at the client boundary,
 forbid redirects, revalidate loopback resolution, cap a response at 1 MiB, and use at most a
 30-second request sub-timeout. The reusable query adapter permits a window up to 150 seconds so the
-120-second persistent-queue drain scenario is representable; ordinary infra/live-chat command
-windows remain capped at 60 seconds. Missing credentials/query failures never become a zero count
+120-second persistent-queue drain scenario is representable; ordinary infra remains capped at 60
+seconds, while chat may query `[started_at, evidence_deadline]` up to the 120-second total report
+cap. Missing credentials/query failures never become a zero count
 or pass, and reports never carry endpoints, headers, raw responses, platform IDs, or payloads.
+
+Compatibility source: [Langfuse Observations API](https://langfuse.com/docs/api-and-data-platform/features/observations-api)
+and [Versions & Compatibility](https://langfuse.com/docs/compatibility).
 
 Evidence: `internal/observability/backend/langfuse_smoke_query_test.go` contract tests and
 `cmd/obs-smoke/main_test.go` scenario-reference tests.

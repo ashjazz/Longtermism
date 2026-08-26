@@ -40,7 +40,7 @@ marker. This role boundary is guarded by
 | --- | --- | --- | --- |
 | HTTP service completion | `HTTP <CANONICAL_METHOD> <trusted-route-template>` | `http.request.method`, `http.route`, `http.response.status_code`, `request.id`; `longtermism.smoke.run_id` may be present with an empty value, but only protected smoke may supply a non-empty value | [`internal/observability/http_logging_test.go`](../../../internal/observability/http_logging_test.go) — `TestHTTPCompletionLoggingMiddlewareWritesInfraSmokeCompletion`, `TestHTTPCompletionLoggingMiddlewareRejectsRawRouteFallback` |
 | AI bridge | `ai.chat` | the five explicit AI/correlation facts (`plane`, `designated`, `longtermism.ai.trace_id`, `ai.feature`, `request.id`), `ai.outcome`, optional stable `ai.failure_status`, optional protected smoke marker | [`internal/observability/chat_boundary_test.go`](../../../internal/observability/chat_boundary_test.go) — `TestChatAIExecutionBoundaryCreatesOwnedBridgeBelowActiveRoot`, `TestChatAIExecutionBoundaryRecordsTrustedSmokeMarker` |
-| generation | `ai.generation` | routing facts; `gen_ai.provider.name`, requested/actual model, finish reasons; input/output/reasoning/cache token counts; total latency; prompt version/hash; payload mode/redacted flag; outcome/failure; optional smoke marker | [`internal/observability/generation_test.go`](../../../internal/observability/generation_test.go) — `TestGenerationSpanAdapterRecordsNativeParentageAndExplicitFacts`, `TestGenerationSpanAdapterRecordsTrustedSmokeMarker` |
+| generation | `ai.generation` | routing facts; `gen_ai.provider.name`, requested/actual model, finish reasons; provider-reported input/output/reasoning/cache token counts; total latency; prompt version/hash; payload mode/redacted flag; outcome/failure; optional smoke marker | [`internal/observability/generation_test.go`](../../../internal/observability/generation_test.go) — `TestGenerationSpanAdapterRecordsNativeParentageAndExplicitFacts`, `TestGenerationSpanAdapterRecordsTrustedSmokeMarker` |
 | evaluator | `ai.evaluator` | routing facts; eval run, dataset name/version, sample, metric, score, optional threshold, regression status; optional smoke marker | [`internal/observability/evaluator_test.go`](../../../internal/observability/evaluator_test.go) — `TestEvaluatorSpanAdapterRecordsEvidenceWithNativeParentage`, `TestEvaluatorSpanAdapterRecordsTrustedSmokeMarker` |
 
 Resource attributes shared by all signals are required `service.name` and
@@ -53,6 +53,11 @@ Resource attributes, not HTTP-root span attributes. This boundary is guarded by
 Generation validation is guarded by
 [`internal/observability/generation_test.go`](../../../internal/observability/generation_test.go) —
 `TestGenerationSpanAdapterRecordsNativeParentageAndExplicitFacts`.
+
+Non-streaming success requires the provider adapter to mark usage as explicitly `reported`.
+Missing or `null` usage is `unavailable` and fails before a successful generation/evaluator span
+or local eval evidence is projected; it is never converted to zero-valued token attributes.
+An explicitly present, internally valid all-zero usage object remains a distinct reported fact.
 
 For an authenticated live-chat smoke, the same runner-owned marker is copied from trusted local
 context to the HTTP service span, `ai.chat`, `ai.generation`, `ai.evaluator`, and the controlled
@@ -127,6 +132,27 @@ and [`hack/observability/signoz_dashboard_test.go`](../../../hack/observability/
 Prometheus smoke therefore compares low-cardinality route/status or provider counter deltas; it
 never queries an identity label.
 
+### Provider-attempt recording semantics
+
+An LLM request metric represents one actual call into the bottom-level provider adapter, not one
+HTTP chat request and not one retry lifecycle. A retry that reaches the provider creates a new
+attempt; retry/backoff bookkeeping without a provider call creates none. For each attempt:
+
+- `longtermism.llm.request.count` and `longtermism.llm.duration` are recorded exactly once after a
+  terminal `succeeded`, `failed`, `timeout`, `cancelled`, or `invalid_response` outcome;
+- `longtermism.llm.tokens` is recorded only when usage availability is `reported`; unavailable
+  usage performs no token `Add`, even when the in-memory numeric fields are zero;
+- `longtermism.llm.cost` is recorded only for an `actual` or `estimated` cost fact; unavailable
+  cost performs no cost `Add` and cannot be represented as actual zero cost;
+- observer/export failure is a telemetry side-channel failure and cannot change the provider
+  response, retry decision, breaker outcome, or HTTP result.
+
+The provider-attempt fact carries only provider, allowlisted requested/actual model, terminal
+outcome, duration and explicit usage/cost availability. It never carries prompt/messages,
+credential, endpoint, upstream body/error text, or request/trace/AI/smoke identity. The instrument
+attribute sets in the table above remain exact; `invalid_response` is a bounded outcome value, and
+unknown configured/provider model values still collapse to `other`.
+
 ## 5. Structured completion logs
 
 Production completion logs are OTLP LogRecords sent through the same application provider
@@ -190,6 +216,28 @@ application instruments, span semantics or the AI filter.
   permitted payload fields. Platform attributes are created only by the Langfuse adapter.
 - The score API is a separate failure domain. It uses the native platform TraceID, optional
   observation SpanID and a stable projection ID; local eval evidence is persisted first.
+
+The locked self-hosted Langfuse 3.185 chat query uses legacy v1
+`GET /api/public/observations`; Observations API v2 is a self-hosted v4+ migration target, not a
+runtime fallback. Server-side filtering is restricted to native `traceId`, observation `id`, and
+the bounded start-time window. The returned candidate is accepted only when the client also finds
+an exact match at:
+
+```text
+metadata.attributes.longtermism.smoke.run_id
+metadata.attributes.request.id
+metadata.attributes.longtermism.ai.trace_id
+```
+
+Top-level `metadata.longtermism.smoke.run_id`, `metadata.request_id`, and
+`metadata.ai_trace_id` are not the locked v3 OTel projection. Missing/nested-shape conflict,
+foreign identity, duplicate rows, incomplete pagination, or a timestamp outside
+`[started_at, evidence_deadline]` fails closed; the adapter must never backfill correlation from
+the query target. The window is at most 120 seconds for chat because it spans provider execution
+plus the post-response evidence phase, while each individual platform request retains its short
+timeout and body/result limit. See the official
+[Observations API compatibility note](https://langfuse.com/docs/api-and-data-platform/features/observations-api)
+and [version matrix](https://langfuse.com/docs/compatibility).
 
 Collector transport and filtering are guarded by
 [`hack/observability/langfuse_collector_test.sh`](../../../hack/observability/langfuse_collector_test.sh)
