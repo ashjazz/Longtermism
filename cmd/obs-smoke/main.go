@@ -1049,10 +1049,17 @@ func newLiveChatCommandRunner(config liveScenarioConfig) (liveScenarioCommandRun
 			},
 		}, nil
 	}
-	grafana := backend.NewGrafanaQueryClient(backend.GrafanaQueryConfig{
+	// chat live 的三类 Grafana 证据必须共享 protected constructor 所拥有的
+	// loopback-only、禁用代理和拨号期 DNS 复验策略。不能只在调用方传一个
+	// no-proxy transport：那既不会赋予 smoke capability，也无法在付费 trigger
+	// 前拒绝不安全 endpoint。
+	grafana, err := backend.NewGrafanaSmokeQueryClient(backend.GrafanaQueryConfig{
 		TempoURL: tempoURL, LokiURL: lokiURL, PrometheusURL: prometheusURL,
-		HTTPClient: &http.Client{Transport: newLocalSmokeTransport()},
 	})
+	if err != nil {
+		_ = manifests.Close()
+		return nil, errLiveScenarioConfiguration
+	}
 	chatBackend := backend.NewGrafanaChatSmokeBackend(backend.GrafanaChatSmokeBackendConfig{Grafana: grafana, Langfuse: langfuse})
 	return &liveChatCommandRunner{
 		close: manifests.Close,

@@ -458,7 +458,7 @@ US1 + US2 + US3 验收完成
 
 ### Implementation - GREEN/REFACTOR
 
-- [ ] T213 [P] [US2] 在 `cmd/obs-smoke/main.go` 将 chat live composition 切换为受保护的 Grafana smoke query client；质量门控：使 T203 GREEN，显式处理 constructor error，Tempo/Loki/Prometheus 复用同一 protected transport policy，score/privacy/infra scenario 的既有 client 与 credential 边界保持不变。
+- [X] T213 [P] [US2] 在 `cmd/obs-smoke/main.go` 将 chat live composition 切换为受保护的 Grafana smoke query client；质量门控：使 T203 GREEN，显式处理 constructor error，Tempo/Loki/Prometheus 复用同一 protected transport policy，score/privacy/infra scenario 的既有 client 与 credential 边界保持不变。
 - [ ] T214 [P] [US2] 在 `internal/observability/backend/langfuse_chat_smoke.go` 实现锁定 Langfuse self-hosted v3 observations adapter；质量门控：使 T204 GREEN，仅以 native trace/observation identity 和 bounded window 缩小服务端结果，再从真实 `metadata.attributes` 做完整客户端 correlation 校验；结果数量/分页/body 继续有界，缺失事实返回稳定错误而不是回填 target，privacy Langfuse adapter 不受非必要改动。
 - [ ] T215 [P] [US2] 在 `pkg/ai/llm/llm.go` 与 `pkg/ai/llm/openai/provider.go` 实现不可混淆的 usage availability 领域语义和非流式协议映射；质量门控：使 T205 GREEN，JSON presence 由 adapter 显式捕获，合法显式零值与 missing/null 保持不同状态，缺失或不一致 usage 映射为稳定 invalid-response 且 raw upstream body 不越过 adapter；不为兼容旧 fixture 猜测 usage，调用方和测试 fixture 必须显式补齐事实。
 - [ ] T216 [US2] 在 `internal/logic/chat/chat.go`、`internal/logic/chat/evaluator.go` 与相关 fixture 实现 usage fail-closed 防御；质量门控：使 T206 GREEN，generation span、evaluator、local evidence、API Usage 和后续 metric 只消费已报告且一致的 usage，缺失事实不被零值填充；同步修正语义不完整的旧测试数据，不改变正常模型成功与 observability side-channel failure 分离契约。
