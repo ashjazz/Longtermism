@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -254,6 +255,11 @@ func TestProviderChatMapsRequestToOpenAICompatiblePayload(t *testing.T) {
 			"object":  "chat.completion",
 			"model":   "gpt-request-mapping",
 			"choices": []map[string]any{},
+			"usage": map[string]any{
+				"prompt_tokens":     0,
+				"completion_tokens": 0,
+				"total_tokens":      0,
+			},
 		})
 		if err != nil {
 			t.Fatalf("failed to encode placeholder response: %v", err)
@@ -340,6 +346,11 @@ func TestProviderChatPreservesExplicitZeroTemperature(t *testing.T) {
 					"message":       map[string]any{"content": "deterministic"},
 					"finish_reason": "stop",
 				},
+			},
+			"usage": map[string]any{
+				"prompt_tokens":     0,
+				"completion_tokens": 0,
+				"total_tokens":      0,
 			},
 		}); err != nil {
 			t.Fatalf("encode response payload: %v", err)
@@ -435,7 +446,7 @@ func TestProviderChatParsesSuccessfulResponse(t *testing.T) {
 	if got.FinishReason != llm.FinishStop {
 		t.Fatalf("Chat() finish reason = %q, want %q", got.FinishReason, llm.FinishStop)
 	}
-	assertUsage(t, got.Usage, llm.Usage{
+	assertReportedUsageForTest(t, got, llm.Usage{
 		InputTokens:  9,
 		OutputTokens: 4,
 		TotalTokens:  13,
@@ -532,15 +543,100 @@ func TestProviderChatParsesToolCallResponse(t *testing.T) {
 	})
 }
 
-func TestProviderChatParsesResponseDefaults(t *testing.T) {
+func TestProviderChatRequiresExplicitConsistentUsage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		includeUsage bool
+		usageJSON    string
+		wantUsage    llm.Usage
+		wantSuccess  bool
+	}{
+		{name: "missing usage", includeUsage: false},
+		{name: "null usage", includeUsage: true, usageJSON: `null`},
+		{name: "empty usage object", includeUsage: true, usageJSON: `{}`},
+		{name: "missing prompt tokens", includeUsage: true, usageJSON: `{"completion_tokens":4,"total_tokens":4}`},
+		{name: "missing completion tokens", includeUsage: true, usageJSON: `{"prompt_tokens":9,"total_tokens":9}`},
+		{name: "missing total tokens", includeUsage: true, usageJSON: `{"prompt_tokens":9,"completion_tokens":4}`},
+		{name: "negative prompt tokens", includeUsage: true, usageJSON: `{"prompt_tokens":-1,"completion_tokens":4,"total_tokens":3}`},
+		{name: "negative completion tokens", includeUsage: true, usageJSON: `{"prompt_tokens":9,"completion_tokens":-1,"total_tokens":8}`},
+		{name: "negative total tokens", includeUsage: true, usageJSON: `{"prompt_tokens":0,"completion_tokens":0,"total_tokens":-1}`},
+		{name: "total below components", includeUsage: true, usageJSON: `{"prompt_tokens":9,"completion_tokens":4,"total_tokens":12}`},
+		{name: "total above components", includeUsage: true, usageJSON: `{"prompt_tokens":9,"completion_tokens":4,"total_tokens":14}`},
+		{name: "usage exceeds safe bound", includeUsage: true, usageJSON: `{"prompt_tokens":100000001,"completion_tokens":0,"total_tokens":100000001}`},
+		{
+			name: "explicit zero usage", includeUsage: true,
+			usageJSON: `{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}`,
+			wantUsage: llm.Usage{}, wantSuccess: true,
+		},
+		{
+			name: "standard nonzero usage", includeUsage: true,
+			usageJSON: `{"prompt_tokens":9,"completion_tokens":4,"total_tokens":13}`,
+			wantUsage: llm.Usage{InputTokens: 9, OutputTokens: 4, TotalTokens: 13}, wantSuccess: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := openAIChatResponseWithUsageForTest(tt.includeUsage, tt.usageJSON)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if _, err := w.Write([]byte(body)); err != nil {
+					t.Errorf("write usage fixture: %v", err)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			provider, err := NewProvider(Config{
+				BaseURL: server.URL, APIKey: "secret-t205-api-key", DefaultModel: "request-model-t205",
+			})
+			if err != nil {
+				t.Fatal("NewProvider() returned an unexpected error")
+			}
+			got, chatErr := provider.Chat(context.Background(), &llm.ChatRequest{
+				Model: "request-model-t205", Messages: []llm.Message{{Role: llm.RoleUser, Content: "request-t205"}},
+			})
+
+			if tt.wantSuccess {
+				if chatErr != nil || got == nil {
+					t.Fatalf("Chat() response_present=%v error_present=%v, want true/false", got != nil, chatErr != nil)
+				}
+				assertReportedUsageForTest(t, got, tt.wantUsage)
+				return
+			}
+			if chatErr == nil || got != nil {
+				t.Errorf("Chat() response_present=%v error_present=%v, want false/true", got != nil, chatErr != nil)
+			}
+			if chatErr != nil {
+				var classified interface{ Class() string }
+				if !errors.As(chatErr, &classified) || classified.Class() != "invalid_response" {
+					t.Error("Chat() error lacks machine-readable invalid_response classification")
+				}
+			}
+			for index, forbidden := range []string{
+				"raw-t205-provider-body", "secret-t205-api-key", server.URL,
+				"Bearer", "actual-model-t205", "request-model-t205", "request-t205",
+			} {
+				if strings.Contains(strings.ToLower(chatErrString(chatErr)), strings.ToLower(forbidden)) {
+					t.Errorf("usage error leaked forbidden category %d", index)
+				}
+			}
+		})
+	}
+}
+
+func TestProviderChatPreservesOptionalResponseDefaultsWithExplicitZeroUsage(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// 供应商响应在真实环境中可能因为模型、代理层或协议版本差异缺少可选字段。
-		// adapter 要把缺省值稳定落到 llm.ChatResponse，而不是因为 usage、content 或
-		// finish_reason 缺失就 panic；这样 trace/eval 可以明确看到零值。
+		// content 与 finish_reason 在兼容供应商中可能缺省，但 usage 是非流式成功
+		// 契约的必需事实。显式零对象和字段缺失不能共享同一个 Go 零值语义。
 		err := json.NewEncoder(w).Encode(map[string]any{
 			"id":     "chatcmpl_defaults_test",
 			"object": "chat.completion",
@@ -550,6 +646,11 @@ func TestProviderChatParsesResponseDefaults(t *testing.T) {
 					"index":   0,
 					"message": map[string]any{"role": "assistant"},
 				},
+			},
+			"usage": map[string]any{
+				"prompt_tokens":     0,
+				"completion_tokens": 0,
+				"total_tokens":      0,
 			},
 		})
 		if err != nil {
@@ -588,7 +689,115 @@ func TestProviderChatParsesResponseDefaults(t *testing.T) {
 	if got.FinishReason != "" {
 		t.Fatalf("Chat() finish reason = %q, want empty default", got.FinishReason)
 	}
-	assertUsage(t, got.Usage, llm.Usage{})
+	assertReportedUsageForTest(t, got, llm.Usage{})
+}
+
+func openAIChatResponseWithUsageForTest(includeUsage bool, usageJSON string) string {
+	fields := []string{
+		`"id":"chatcmpl_usage_t205"`,
+		`"object":"chat.completion"`,
+		`"model":"actual-model-t205"`,
+		`"choices":[{"index":0,"message":{"role":"assistant","content":"raw-t205-provider-body"},"finish_reason":"stop"}]`,
+		`"synthetic_canary":"raw-t205-provider-body"`,
+	}
+	if includeUsage {
+		fields = append(fields, `"usage":`+usageJSON)
+	}
+	return "{" + strings.Join(fields, ",") + "}"
+}
+
+func chatErrString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func assertReportedUsageForTest(t *testing.T, response *llm.ChatResponse, want llm.Usage) {
+	t.Helper()
+
+	providerUsage := providerUsageValueForTest(t, response)
+	availability, summary := providerUsageFieldsForTest(t, providerUsage)
+	if availability.String() != "reported" {
+		t.Error("ProviderUsage availability is not reported")
+		return
+	}
+	if summary.IsNil() {
+		t.Error("reported ProviderUsage lacks summary")
+		return
+	}
+	got := usageFromReflectValueForTest(t, summary.Elem())
+	if got != want {
+		t.Errorf("ProviderUsage summary = %#v, want %#v", got, want)
+	}
+}
+
+func providerUsageValueForTest(t *testing.T, response *llm.ChatResponse) reflect.Value {
+	t.Helper()
+	responseValue := reflect.ValueOf(response).Elem()
+	responseType := responseValue.Type()
+	usageType := reflect.TypeOf(llm.Usage{})
+	usagePointerType := reflect.TypeOf((*llm.Usage)(nil))
+	var providerUsage reflect.Value
+	providerUsageCount := 0
+	hasSiblingSummary := false
+	for index := 0; index < responseType.NumField(); index++ {
+		fieldType := responseType.Field(index).Type
+		if fieldType.Kind() == reflect.Struct && fieldType.Name() == "ProviderUsage" {
+			providerUsage = responseValue.Field(index)
+			providerUsageCount++
+			continue
+		}
+		if fieldType == usageType || fieldType == usagePointerType {
+			hasSiblingSummary = true
+		}
+	}
+	if providerUsageCount != 1 || !providerUsage.IsValid() {
+		t.Fatal("ChatResponse must carry exactly one ProviderUsage value object")
+	}
+	if hasSiblingSummary {
+		t.Fatal("ChatResponse must not retain a sibling Usage summary beside ProviderUsage")
+	}
+	return providerUsage
+}
+
+func providerUsageFieldsForTest(t *testing.T, providerUsage reflect.Value) (reflect.Value, reflect.Value) {
+	t.Helper()
+	var availability reflect.Value
+	var summary reflect.Value
+	availabilityCount := 0
+	summaryCount := 0
+	for index := 0; index < providerUsage.NumField(); index++ {
+		field := providerUsage.Field(index)
+		if field.Kind() == reflect.String && field.Type().Name() != "" {
+			availability = field
+			availabilityCount++
+		}
+		if field.Type() == reflect.TypeOf((*llm.Usage)(nil)) {
+			summary = field
+			summaryCount++
+		}
+	}
+	if availabilityCount != 1 || summaryCount != 1 || !availability.IsValid() || !summary.IsValid() {
+		t.Fatal("ProviderUsage must carry exactly one availability enum and one optional summary")
+	}
+	return availability, summary
+}
+
+func usageFromReflectValueForTest(t *testing.T, usage reflect.Value) llm.Usage {
+	t.Helper()
+	read := func(name string) int {
+		field := usage.FieldByName(name)
+		if !field.IsValid() || field.Kind() != reflect.Int {
+			t.Fatalf("ProviderUsage summary lacks integer %s", name)
+		}
+		return int(field.Int())
+	}
+	return llm.Usage{
+		InputTokens: read("InputTokens"), OutputTokens: read("OutputTokens"),
+		ReasoningTokens: read("ReasoningTokens"), CacheReadTokens: read("CacheReadTokens"),
+		CacheWriteTokens: read("CacheWriteTokens"), TotalTokens: read("TotalTokens"),
+	}
 }
 
 func TestProviderChatParsesFinishReasonVariants(t *testing.T) {
@@ -719,7 +928,7 @@ func TestProviderChatParsesFinishReasonVariants(t *testing.T) {
 			if got.FinishReason != tt.wantReason {
 				t.Fatalf("Chat() finish reason = %q, want %q", got.FinishReason, tt.wantReason)
 			}
-			assertUsage(t, got.Usage, tt.wantUsage)
+			assertReportedUsageForTest(t, got, tt.wantUsage)
 		})
 	}
 }
@@ -1005,6 +1214,8 @@ func assertErrorMentions(t *testing.T, err error, want string) {
 	}
 }
 
+// assertUsage 仍由流式协议测试复用；非流式响应通过 ProviderUsage helper 同时验证
+// availability 与 token summary，避免只比较数字而漏掉 presence 事实。
 func assertUsage(t *testing.T, got llm.Usage, want llm.Usage) {
 	t.Helper()
 
