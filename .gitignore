@@ -30,16 +30,12 @@ Thumbs.db
 !deploy/observability/.env.local.example
 *.local.yaml
 
-# 真实观测 smoke 的本地低敏报告与运行时元数据（不得作为配置或证据源提交）
-/build/observability/smoke-reports/
-/build/observability/smoke-manifests/
-/build/observability/queue/
-/build/observability/volume-metadata/
+# 本地构建、测试和 live smoke 运行产物（不得作为配置或证据源提交）
+/build/
 # 运行目录下的任何相对路径变体（如 smoke CLI 以 CWD 相对路径写出的报告）
 cmd/obs-smoke/build/
 
 # 测试覆盖率
-/build/coverage/
 coverage.out
 coverage.html
 coverage/
